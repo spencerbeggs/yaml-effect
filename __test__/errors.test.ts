@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
 	YamlComposerError,
@@ -63,6 +64,110 @@ describe("YamlErrorDetail", () => {
 			column: 0,
 		});
 		expect(detail.code).toBe("UndefinedAlias");
+	});
+
+	it("rejects negative offset", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: -1,
+				length: 1,
+				line: 0,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects fractional offset", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0.5,
+				length: 1,
+				line: 0,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects negative length", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: -1,
+				line: 0,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects fractional length", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: 1.5,
+				line: 0,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects negative line", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: 1,
+				line: -1,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects fractional line", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: 1,
+				line: 1.5,
+				column: 0,
+			}),
+		).toThrow();
+	});
+
+	it("rejects negative column", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: 1,
+				line: 0,
+				column: -1,
+			}),
+		).toThrow();
+	});
+
+	it("rejects fractional column", () => {
+		expect(() =>
+			Schema.decodeUnknownSync(YamlErrorDetail)({
+				code: "UnexpectedCharacter",
+				message: "x",
+				offset: 0,
+				length: 1,
+				line: 0,
+				column: 0.5,
+			}),
+		).toThrow();
 	});
 });
 

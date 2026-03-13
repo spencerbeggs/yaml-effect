@@ -102,8 +102,8 @@ export type YamlErrorCode = Schema.Schema.Type<typeof YamlErrorCode>;
 export class YamlErrorDetail extends Schema.Class<YamlErrorDetail>("YamlErrorDetail")({
 	code: YamlErrorCode,
 	message: Schema.String,
-	offset: Schema.Number,
-	length: Schema.Number,
-	line: Schema.Number,
-	column: Schema.Number,
+	offset: Schema.Int.pipe(Schema.nonNegative()),
+	length: Schema.Int.pipe(Schema.nonNegative()),
+	line: Schema.Int.pipe(Schema.nonNegative()),
+	column: Schema.Int.pipe(Schema.nonNegative()),
 }) {}
