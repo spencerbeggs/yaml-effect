@@ -1,12 +1,12 @@
 {
-	"name": "@spencerbeggs/pnpm-module-template",
+	"name": "@spencerbeggs/yaml-effect",
 	"version": "0.0.0",
 	"private": true,
-	"description": "A template repository for developing and deploying Node.js modules from a pnpm monorepo structure.",
-	"homepage": "https://github.com/spencerbeggs/pnpm-module-template#readme",
+	"description": "A pure Effect-based YAML 1.2 parser and stringifier for TypeScript.",
+	"homepage": "https://github.com/spencerbeggs/yaml-effect#readme",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/spencerbeggs/pnpm-module-template.git"
+		"url": "https://github.com/spencerbeggs/yaml-effect.git"
 	},
 	"license": "MIT",
 	"author": {
@@ -45,7 +45,11 @@
 		"@savvy-web/commitlint": "^0.4.1",
 		"@savvy-web/lint-staged": "^0.5.2",
 		"@savvy-web/rslib-builder": "^0.18.1",
-		"@savvy-web/vitest": "^0.2.1"
+		"@savvy-web/vitest": "^0.2.1",
+		"effect": "^3.19.19"
+	},
+	"peerDependencies": {
+		"effect": "^3.19.19"
 	},
 	"packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be",
 	"devEngines": {
