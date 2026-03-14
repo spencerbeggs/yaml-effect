@@ -1,10 +1,11 @@
 # yaml-effect
 
-A pure [Effect](https://effect.website)-based YAML 1.2 parser, stringifier, and
-toolkit for TypeScript.
+[![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Every operation returns an `Effect`, enabling typed error handling,
-composability, and seamless integration with Effect-based applications.
+A pure [Effect](https://effect.website)-based YAML 1.2 parser, stringifier, and
+toolkit for TypeScript. Every operation returns an `Effect`, giving you typed
+errors, composability, and seamless integration with Effect-based applications.
 
 ## Features
 
@@ -32,10 +33,6 @@ composability, and seamless integration with Effect-based applications.
 
 ```bash
 npm install yaml-effect effect
-```
-
-```bash
-pnpm add yaml-effect effect
 ```
 
 > **Peer dependency:** `effect` (>= 3.x) must be installed alongside
@@ -235,6 +232,23 @@ const result3 = pipe("key: old\n", modify(["key"], "new"));
 All errors extend `Data.TaggedError` and carry detailed context (source text,
 error position, human-readable messages). Use `Effect.catchTag` to handle
 specific error types.
+
+## Documentation
+
+For detailed guides, configuration options, and advanced usage, see the
+[docs](./docs/) folder:
+
+- [Getting Started](./docs/getting-started.md) -- installation, first examples
+- [Parsing](./docs/parsing.md) -- `parse`, `parseDocument`, `parseAllDocuments`
+- [Stringification](./docs/stringify.md) -- `stringify`, `stringifyDocument`
+- [Schema Integration](./docs/schema-integration.md) -- Effect Schema composition
+- [Formatting](./docs/formatting.md) -- `format`, `formatAndApply`, `stripComments`
+- [Modification](./docs/modification.md) -- `modify`, `modifyAndApply`
+- [Equality](./docs/equality.md) -- `equals`, `equalsValue`
+- [Visitor](./docs/visitor.md) -- AST and CST streaming traversal
+- [AST Navigation](./docs/ast-navigation.md) -- `findNode`, `findNodeAtOffset`, type guards
+- [Low-Level APIs](./docs/low-level.md) -- `lex`, `createScanner`, `parseCST`
+- [Errors](./docs/errors.md) -- error taxonomy and handling patterns
 
 ## License
 

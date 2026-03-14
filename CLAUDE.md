@@ -3,32 +3,31 @@
 This file provides guidance to Claude Code when working with code in this
 repository.
 
-## Project Status
+## Project Overview
 
-This is a **base template repository** for developing and publishing Node.js
-modules to npm and GitHub Packages. It is not a working library — it contains
-placeholder source code in `src/` that should be replaced when starting a new
-project.
+`yaml-effect` is a pure Effect-based YAML 1.2 parser, stringifier, and
+document manipulation library for TypeScript. Published to npm as
+`yaml-effect`. Zero runtime dependencies beyond `effect`.
 
-The design documentation system is available via Claude Code skills and agents
-but no design docs exist yet in this template.
+Three-stage pipeline: Lexer (tokens) → Parser (CST) → Composer (AST with
+YAML 1.2 Core Schema type resolution). All operations return `Effect` values
+with typed error channels. APIs support dual calling convention via `Fn.dual`.
 
-## Getting Started (After Cloning This Template)
+## Design Documentation
 
-When starting a new project from this template, follow this lifecycle:
+Internal design docs live in `.claude/design/yaml-effect/`. Load only the
+docs relevant to the current task:
 
-1. **Rename the package** — Update `name` in `package.json` (e.g.,
-   `@spencerbeggs/my-new-lib`), update `repository.url` and `homepage`, and
-   update the `repo` field in `.changeset/config.json`
-2. **Replace placeholder code** — Delete the example `Foo`/`Bar` code in
-   `src/index.ts` and `src/index.test.ts`
-3. **Initialize design documentation** — Run `/design-init` to create your
-   first design document describing the library's architecture
-4. **Follow the design-first workflow** — Design docs → `/plan-create` →
-   implementation. This ensures Claude understands the full architecture before
-   writing code
-5. **Implement iteratively** — Use the plan to guide implementation, updating
-   design docs as the architecture evolves
+- `architecture.md` — Pipeline stages, module layout, Effect integration
+  patterns, architectural decisions
+- `parsing.md` — Lexer, parser, composer implementation details
+- `stringify.md` — AST/value to YAML text serialization
+- `schemas.md` — All Schema definitions: AST nodes, tokens, options, events
+- `schema-integration.md` — Effect Schema bridges (YamlFromString, etc.)
+- `errors.md` — Error taxonomy and tagged error patterns
+- `format-modify.md` — format, modify, applyEdits, stripComments
+- `equality.md` — equals, equalsValue comparison functions
+- `visitor.md` — AST and CST visitor patterns, streaming events
 
 ## Build Pipeline
 
@@ -75,7 +74,7 @@ Both targets publish with provenance attestation enabled.
 
 ## Savvy-Web Tool References
 
-This template depends on several `@savvy-web/*` packages. These are in active
+This project depends on several `@savvy-web/*` packages. These are in active
 development — if behavior seems unexpected, explore both the GitHub docs and the
 installed source.
 
