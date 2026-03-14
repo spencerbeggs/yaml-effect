@@ -10,7 +10,8 @@
 import { existsSync } from "node:fs";
 import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
-import { parse, stringify } from "../src/index.js";
+import { parse, parseAllDocuments, stringify } from "../src/index.js";
+import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
 import { SKIP, SKIP_ASSERTIONS, XFAIL } from "./utils/yaml-test-suite-skip-map.js";
 
@@ -27,6 +28,24 @@ const allCases = suiteAvailable ? loadAllTestCases() : [];
 
 function parseYaml(input: string): Either.Either<unknown, unknown> {
 	return Effect.runSync(Effect.either(parse(input)));
+}
+
+/**
+ * Parse a multi-document YAML stream, returning an array of plain JS values.
+ */
+function parseYamlMulti(input: string): Either.Either<unknown[], unknown> {
+	return Effect.runSync(
+		Effect.either(
+			parseAllDocuments(input).pipe(
+				Effect.map((docs) =>
+					docs.map((doc) => {
+						const anchors = buildAnchorMap(doc.contents);
+						return getNodeValue(doc.contents, anchors);
+					}),
+				),
+			),
+		),
+	);
 }
 
 function shouldSkipAssertion(id: string, assertion: string): boolean {
@@ -92,12 +111,21 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 				if (tc.json !== undefined && !shouldSkipAssertion(tc.id, "json")) {
 					const jsonFn = isXfail ? it.fails : it;
 					jsonFn("should match expected JSON output", () => {
-						const result = parseYaml(tc.yaml);
-						if (Either.isLeft(result)) {
-							expect.unreachable(`Parse failed for ${tc.id}`);
-							return;
+						if (tc.isMultiDocument) {
+							const result = parseYamlMulti(tc.yaml);
+							if (Either.isLeft(result)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							expect(deepEqual(Either.getOrThrow(result), tc.json)).toBe(true);
+						} else {
+							const result = parseYaml(tc.yaml);
+							if (Either.isLeft(result)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							expect(deepEqual(Either.getOrThrow(result), tc.json)).toBe(true);
 						}
-						expect(deepEqual(Either.getOrThrow(result), tc.json)).toBe(true);
 					});
 				}
 
@@ -119,19 +147,37 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 				if (!shouldSkipAssertion(tc.id, "roundtrip")) {
 					const rtFn = isXfail ? it.fails : it;
 					rtFn("should survive stringify roundtrip", () => {
-						const result = parseYaml(tc.yaml);
-						if (Either.isLeft(result)) {
-							expect.unreachable(`Parse failed for ${tc.id}`);
-							return;
+						if (tc.isMultiDocument) {
+							const result = parseYamlMulti(tc.yaml);
+							if (Either.isLeft(result)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							const values = Either.getOrThrow(result);
+							for (const value of values) {
+								const stringified = Effect.runSync(stringify(value));
+								const reparsed = parseYaml(stringified);
+								if (Either.isLeft(reparsed)) {
+									expect.unreachable(`Re-parse failed for ${tc.id}`);
+									return;
+								}
+								expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
+							}
+						} else {
+							const result = parseYaml(tc.yaml);
+							if (Either.isLeft(result)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							const value = Either.getOrThrow(result);
+							const stringified = Effect.runSync(stringify(value));
+							const reparsed = parseYaml(stringified);
+							if (Either.isLeft(reparsed)) {
+								expect.unreachable(`Re-parse failed for ${tc.id}`);
+								return;
+							}
+							expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
 						}
-						const value = Either.getOrThrow(result);
-						const stringified = Effect.runSync(stringify(value));
-						const reparsed = parseYaml(stringified);
-						if (Either.isLeft(reparsed)) {
-							expect.unreachable(`Re-parse failed for ${tc.id}`);
-							return;
-						}
-						expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
 					});
 				}
 			}
