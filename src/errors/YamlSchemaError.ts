@@ -33,7 +33,7 @@ export const YamlSchemaErrorBase = Data.TaggedError("YamlSchemaError");
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect, Schema } from "effect";
- * import { makeYamlSchema } from "@spencerbeggs/yaml-effect";
+ * import { makeYamlSchema } from "yaml-effect";
  *
  * const schema = makeYamlSchema(Schema.Struct({ name: Schema.String }));
  * const program = Schema.decode(schema)("not_a_mapping: true").pipe(

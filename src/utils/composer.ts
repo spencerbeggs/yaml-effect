@@ -1334,6 +1334,15 @@ function parseDirective(source: string): YamlDirective | null {
 
 /**
  * Build an anchor map by walking the AST, collecting nodes that have anchors.
+ *
+ * @internal
+ *
+ * @remarks
+ * Used by the schema-integration layer to resolve aliases when extracting
+ * plain JavaScript values from parsed YAML documents.
+ *
+ * @param node - The root AST node to walk.
+ * @returns A map from anchor names to their defining AST nodes.
  */
 export function buildAnchorMap(node: YamlNode | null): Map<string, YamlNode> {
 	const anchors = new Map<string, YamlNode>();
@@ -1360,6 +1369,22 @@ function collectAnchors(node: YamlNode | null, anchors: Map<string, YamlNode>): 
 	// YamlAlias has no anchor field — it references one.
 }
 
+/**
+ * Recursively extract a plain JavaScript value from a YAML AST node.
+ *
+ * @internal
+ *
+ * @privateRemarks
+ * This function differs from the `getNodeValue` in `ast.ts` by accepting an
+ * optional anchor map parameter. When provided, {@link YamlAlias} nodes are
+ * resolved to their target values via the map, enabling full alias/anchor
+ * round-trip support. The `ast.ts` version operates without anchor context
+ * and returns `null` for all alias nodes.
+ *
+ * @param node - The AST node to extract a value from (or `null`).
+ * @param anchors - Optional anchor map built by {@link buildAnchorMap}.
+ * @returns The plain JavaScript value (object, array, scalar, or `null`).
+ */
 export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNode>): unknown {
 	if (node === null) return null;
 	if (node instanceof YamlScalar) return node.value;
@@ -1385,6 +1410,28 @@ export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNo
 
 /**
  * Parse YAML text into a single {@link YamlDocument}.
+ *
+ * @remarks
+ * Returns the first document found in the input. If the input is empty,
+ * a document with `null` contents is returned. Fatal composer errors
+ * (undefined aliases, alias count exceeded, unexpected tokens) cause
+ * the Effect to fail with a {@link YamlComposerError}.
+ *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { parseDocument } from "yaml-effect";
+ *
+ * const program = parseDocument("name: Alice\nage: 30").pipe(
+ *   Effect.tap((doc) => Effect.log(`Document has ${doc.errors.length} errors`)),
+ * );
+ *
+ * Effect.runPromise(program);
+ * ```
+ *
+ * @param text - The YAML source text to parse.
+ * @param options - Optional parse options.
+ * @returns An `Effect` that resolves to a {@link YamlDocument}.
  *
  * @public
  */
@@ -1415,7 +1462,35 @@ export function parseDocument(
 }
 
 /**
- * Parse YAML text containing multiple documents into an array of {@link YamlDocument}.
+ * Parse YAML text containing multiple documents into an array of
+ * {@link YamlDocument}.
+ *
+ * @remarks
+ * Splits the input on `---` document-start markers. Each document is
+ * independently composed, and any fatal error in any document causes
+ * the entire Effect to fail.
+ *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { parseAllDocuments } from "yaml-effect";
+ *
+ * const yaml = `
+ * name: first
+ * ---
+ * name: second
+ * `;
+ *
+ * const program = parseAllDocuments(yaml).pipe(
+ *   Effect.tap((docs) => Effect.log(`Parsed ${docs.length} documents`)),
+ * );
+ *
+ * Effect.runPromise(program);
+ * ```
+ *
+ * @param text - The YAML source text containing one or more documents.
+ * @param options - Optional parse options.
+ * @returns An `Effect` that resolves to a read-only array of {@link YamlDocument}.
  *
  * @public
  */
@@ -1449,7 +1524,33 @@ export function parseAllDocuments(
 }
 
 /**
- * Convenience: parse YAML text and return the plain JavaScript value.
+ * Parse YAML text and return the plain JavaScript value.
+ *
+ * @remarks
+ * This is the highest-level parse function. It parses a single document,
+ * resolves anchors/aliases, enforces unique keys (by default), and returns
+ * the resulting JavaScript value (object, array, or scalar).
+ *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { parse } from "yaml-effect";
+ *
+ * const program = parse("name: Alice\nage: 30").pipe(
+ *   Effect.tap((value) => Effect.log(value)),
+ *   Effect.catchTag("YamlComposerError", (err) =>
+ *     Effect.logError(`Parse failed: ${err.message}`),
+ *   ),
+ * );
+ *
+ * Effect.runPromise(program);
+ * // => { name: "Alice", age: 30 }
+ * ```
+ *
+ * @param text - The YAML source text to parse.
+ * @param options - Optional parse options (e.g. `{ uniqueKeys: false }`).
+ * @returns An `Effect` that resolves to the parsed JavaScript value, or
+ *   fails with a {@link YamlComposerError}.
  *
  * @public
  */
@@ -1472,6 +1573,33 @@ export function parse(text: string, options?: Partial<YamlParseOptions>): Effect
 
 /**
  * Compose a single CST document node into a {@link YamlDocument}.
+ *
+ * @remarks
+ * This is the lower-level API for when you already have a CST node (e.g.
+ * from {@link parseCST | parseCST}) and want to compose it into a typed
+ * AST document without re-lexing/re-parsing.
+ *
+ * @example
+ * ```typescript
+ * import { Effect, Stream } from "effect";
+ * import { parseCST } from "yaml-effect/parser";
+ * import { composeDocumentFromCst } from "yaml-effect/composer";
+ *
+ * const yaml = "key: value";
+ *
+ * const program = Stream.runHead(parseCST(yaml)).pipe(
+ *   Effect.flatten,
+ *   Effect.flatMap((cst) => composeDocumentFromCst(cst, yaml)),
+ *   Effect.tap((doc) => Effect.log(doc)),
+ * );
+ *
+ * Effect.runPromise(program);
+ * ```
+ *
+ * @param cst - A CST document node produced by the parser.
+ * @param text - The original YAML source text (needed for error reporting).
+ * @param options - Optional parse options.
+ * @returns An `Effect` that resolves to a {@link YamlDocument}.
  *
  * @public
  */

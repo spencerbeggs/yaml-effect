@@ -62,6 +62,13 @@ describe("equals", () => {
 		expect(result).toBe(true);
 	});
 
+	it("treats NaN values as equal", () => {
+		const a = ".nan\n";
+		const b = ".nan\n";
+		const result = Effect.runSync(equals(a, b));
+		expect(result).toBe(true);
+	});
+
 	it("handles nested key order differences recursively", () => {
 		const a = "outer:\n  z: 1\n  a: 2\n";
 		const b = "outer:\n  a: 2\n  z: 1\n";
@@ -108,5 +115,52 @@ describe("equalsValue", () => {
 	it("handles scalar values", () => {
 		const result = Effect.runSync(equalsValue("42\n", 42));
 		expect(result).toBe(true);
+	});
+
+	it("treats NaN YAML as equal to JS NaN", () => {
+		const result = Effect.runSync(equalsValue(".nan\n", Number.NaN));
+		expect(result).toBe(true);
+	});
+
+	it("returns false for different types", () => {
+		const result = Effect.runSync(equalsValue("key: value\n", [1, 2]));
+		expect(result).toBe(false);
+	});
+
+	it("returns false for arrays of different length", () => {
+		const result = Effect.runSync(equalsValue("- 1\n- 2\n", [1]));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when b is array but a is not", () => {
+		const result = Effect.runSync(equalsValue("key: value\n", [1]));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when one side is null", () => {
+		const result = Effect.runSync(equalsValue("key: value\n", null));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when object keys differ", () => {
+		const result = Effect.runSync(equalsValue("a: 1\nb: 2\n", { a: 1, c: 2 }));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when comparing different types (string vs number)", () => {
+		// "hello" (string) vs 42 (number) — typeof mismatch
+		const result = Effect.runSync(equalsValue("hello\n", 42));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when comparing array to non-array object", () => {
+		// YAML array vs JS object — array vs non-array
+		const result = Effect.runSync(equalsValue("- 1\n- 2\n", { a: 1 }));
+		expect(result).toBe(false);
+	});
+
+	it("returns false when objects have different key counts", () => {
+		const result = Effect.runSync(equalsValue("a: 1\n", { a: 1, b: 2 }));
+		expect(result).toBe(false);
 	});
 });

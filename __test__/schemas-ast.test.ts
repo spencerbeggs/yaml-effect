@@ -7,13 +7,8 @@
 
 import { Equal, Schema, Utils } from "effect";
 import { describe, expect, it } from "vitest";
-import { YamlAlias } from "../src/schemas/YamlAlias.js";
+import { YamlAlias, YamlMap, YamlNode, YamlPair, YamlScalar, YamlSeq } from "../src/schemas/YamlAstNodes.js";
 import { YamlDirective, YamlDocument } from "../src/schemas/YamlDocument.js";
-import { YamlMap } from "../src/schemas/YamlMap.js";
-import { YamlNode } from "../src/schemas/YamlNode.js";
-import { YamlPair } from "../src/schemas/YamlPair.js";
-import { YamlScalar } from "../src/schemas/YamlScalar.js";
-import { YamlSeq } from "../src/schemas/YamlSeq.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

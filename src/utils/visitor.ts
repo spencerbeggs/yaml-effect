@@ -43,6 +43,18 @@ type Path = ReadonlyArray<string | number>;
 // walkNode — generator that yields events for a single AST node
 // ---------------------------------------------------------------------------
 
+/**
+ * Generator that yields visitor events for a single AST node and its children.
+ *
+ * @privateRemarks
+ * Dispatches on the runtime type of the node (YamlScalar, YamlAlias, YamlMap,
+ * YamlSeq) and emits the appropriate start/end bracket events for collections.
+ * Comments attached to nodes are emitted as CommentEvent before the node's own
+ * event. For maps, iteration delegates to {@link walkPair} for each item. For
+ * sequences, child nodes are recursively walked with an indexed path segment.
+ *
+ * @internal
+ */
 function* walkNode(node: YamlNode, path: Path, depth: number): Generator<YamlVisitorEvent> {
 	if (node instanceof YamlScalar) {
 		if (node.comment !== undefined) {
@@ -97,6 +109,18 @@ function* walkNode(node: YamlNode, path: Path, depth: number): Generator<YamlVis
 // walkPair — generator that yields events for a key-value pair
 // ---------------------------------------------------------------------------
 
+/**
+ * Generator that yields visitor events for a key-value pair in a mapping.
+ *
+ * @privateRemarks
+ * Resolves the key and value to scalar values (or `null` for complex types)
+ * and emits a PairEvent summarising the pair. Then walks into both the key
+ * and value nodes to emit their full sub-events. The path is extended with
+ * the string representation of the key so downstream consumers can track
+ * the location of each event within the document.
+ *
+ * @internal
+ */
 function* walkPair(pair: YamlPair, parentPath: Path, depth: number): Generator<YamlVisitorEvent> {
 	// Resolve the key scalar value (null for complex keys)
 	const resolvedKey = pair.key instanceof YamlScalar ? pair.key.value : null;
@@ -138,6 +162,17 @@ function* walkPair(pair: YamlPair, parentPath: Path, depth: number): Generator<Y
 // walkDocument — generator that yields all events for a single document
 // ---------------------------------------------------------------------------
 
+/**
+ * Generator that yields all visitor events for a single YAML document.
+ *
+ * @privateRemarks
+ * Emits individual DirectiveEvent nodes for each directive, then wraps the
+ * document contents in DocumentStartEvent / DocumentEndEvent. The root path
+ * is an empty array and depth starts at 0. If the document has no contents
+ * (empty document), only the start/end events are emitted.
+ *
+ * @internal
+ */
 function* walkDocument(doc: YamlDocument): Generator<YamlVisitorEvent> {
 	const path: Path = [];
 	const depth = 0;
@@ -189,6 +224,22 @@ function* walkDocument(doc: YamlDocument): Generator<YamlVisitorEvent> {
  * are generated. This makes it safe to use with `Stream.take` or similar
  * operators for early termination.
  *
+ * @example Streaming events and taking the first 5
+ * ```typescript
+ * import { Effect, Stream } from "effect"
+ * import type { YamlVisitorEvent } from "yaml-effect"
+ * import { visit } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\ntags:\n  - admin\n  - user\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const events: ReadonlyArray<YamlVisitorEvent> = yield* Stream.runCollect(
+ *     visit(yaml).pipe(Stream.take(5)),
+ *   ).pipe(Effect.map((chunk) => [...chunk]))
+ *   return events
+ * })
+ * ```
+ *
  * @param text - The YAML source text to visit.
  * @param options - Optional parse options forwarded to the composer.
  * @returns A `Stream` of `YamlVisitorEvent` values, failing with
@@ -225,6 +276,24 @@ export function visit(
  * Only events for which `predicate` returns `Option.some(value)` are included
  * in the result array.  Events that return `Option.none()` are silently
  * discarded.
+ *
+ * @example Collecting all scalar values from a document
+ * ```typescript
+ * import { Effect, Option } from "effect"
+ * import { isScalarEvent, visitCollect } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const values: ReadonlyArray<unknown> = yield* visitCollect(
+ *     yaml,
+ *     (event) =>
+ *       isScalarEvent(event) ? Option.some(event.value) : Option.none(),
+ *   )
+ *   // values contains: ["name", "John", "age", 30]
+ *   return values
+ * })
+ * ```
  *
  * @typeParam A - The type of values extracted by the predicate.
  * @param text - The YAML source text to visit.

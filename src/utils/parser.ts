@@ -847,6 +847,27 @@ function parseDocuments(tokens: ReadonlyArray<YamlToken>, text: string): CstNode
 /**
  * Parse YAML source text into a stream of CST nodes (one per document).
  *
+ * @remarks
+ * Each CST node preserves every character of the original input, including
+ * whitespace, comments, and structural indicators. No value interpretation
+ * occurs at this stage — `true` is still the string `"true"`.
+ *
+ * @example
+ * ```typescript
+ * import { Effect, Stream } from "effect";
+ * import { parseCST } from "yaml-effect";
+ *
+ * const program = parseCST("key: value").pipe(
+ *   Stream.runCollect,
+ *   Effect.map((chunk) => {
+ *     const docs = [...chunk];
+ *     console.log(docs[0].type); // "document"
+ *   }),
+ * );
+ *
+ * Effect.runSync(program);
+ * ```
+ *
  * @public
  */
 export function parseCST(text: string): Stream.Stream<CstNode, never> {
@@ -857,9 +878,8 @@ export function parseCST(text: string): Stream.Stream<CstNode, never> {
 
 /**
  * Parse YAML source text and collect all CST document nodes into an array.
- * Convenience function for testing.
  *
- * @public
+ * @internal
  */
 export function parseCSTAll(text: string): Effect.Effect<CstNode[], never> {
 	return lexAll(text).pipe(Effect.map((tokens) => parseDocuments(tokens, text)));

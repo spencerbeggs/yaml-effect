@@ -35,6 +35,13 @@ import { stringifyDocument } from "./stringify.js";
  * For more granular edits (multiple disjoint changes), a line-level pass
  * splits the middle region into per-line edits when possible.
  *
+ * @privateRemarks
+ * This function relies on the assumption that both strings share an identical
+ * structural skeleton (they were produced from the same AST). As a result, a
+ * simple prefix/suffix match is sufficient and a full Myers-diff algorithm is
+ * unnecessary. If the library ever needs to diff arbitrary strings, this
+ * function should be replaced with a proper diff implementation.
+ *
  * @internal
  */
 function computeEdits(original: string, modified: string): ReadonlyArray<YamlEdit> {
@@ -112,6 +119,38 @@ function computeEdits(original: string, modified: string): ReadonlyArray<YamlEdi
  * earlier edits do not shift the offsets of later ones. Offsets beyond the
  * string boundary are clamped. The original `edits` array is not mutated.
  *
+ * This function is a dual — it can be called either with both arguments
+ * directly, or partially applied with just the edits array.
+ *
+ * @example Direct usage
+ * ```typescript
+ * import type { ReadonlyArray } from "effect"
+ * import { Effect } from "effect"
+ * import type { YamlEdit } from "yaml-effect"
+ * import { applyEdits, format } from "yaml-effect"
+ *
+ * const yaml = "name:  John\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const edits: ReadonlyArray<YamlEdit> = yield* format(yaml)
+ *   const result: string = yield* applyEdits(yaml, edits)
+ *   return result
+ * })
+ * ```
+ *
+ * @example Pipeline usage (partial application)
+ * ```typescript
+ * import { Effect, pipe } from "effect"
+ * import { applyEdits, format } from "yaml-effect"
+ *
+ * const yaml = "name:  John\n"
+ *
+ * const program = pipe(
+ *   format(yaml),
+ *   Effect.flatMap(applyEdits(yaml)),
+ * )
+ * ```
+ *
  * @public
  */
 export const applyEdits: {
@@ -138,6 +177,13 @@ export const applyEdits: {
 
 /**
  * Recursively create a copy of a YamlNode with all comment fields removed.
+ *
+ * @privateRemarks
+ * This creates shallow copies of each node with the `comment` field omitted.
+ * YamlAlias nodes are returned as-is because they have no comment field.
+ * The function is pure — no nodes in the original tree are mutated.
+ *
+ * @internal
  */
 function stripNodeComments(node: YamlNode): YamlNode {
 	if (node instanceof YamlScalar) {
@@ -184,14 +230,34 @@ function stripNodeComments(node: YamlNode): YamlNode {
 // Internal: raw options shape (avoids Schema.Class validation for range)
 // ---------------------------------------------------------------------------
 
+/**
+ * Plain-object formatting options accepted by {@link format},
+ * {@link formatAndApply}, and {@link stripComments}.
+ *
+ * @remarks
+ * This interface mirrors {@link YamlFormattingOptions} but uses plain optional
+ * fields instead of Schema.Class validation, making it convenient for callers
+ * who do not need full schema-level validation. The `range` field restricts
+ * returned edits to a byte range within the source text.
+ *
+ * @public
+ */
 export interface RawFormatOptions {
+	/** Number of spaces per indentation level (default: 2). */
 	indent?: number;
+	/** Maximum line width before the stringifier wraps long scalars. */
 	lineWidth?: number;
+	/** Default quoting style for scalar values. */
 	defaultScalarStyle?: ScalarStyle;
+	/** Default style (`block` or `flow`) for collections. */
 	defaultCollectionStyle?: CollectionStyle;
+	/** When `true`, map keys are sorted alphabetically. */
 	sortKeys?: boolean;
+	/** When `true`, a trailing newline is appended to the output. */
 	finalNewline?: boolean;
+	/** When `true`, comments are preserved in the output. */
 	preserveComments?: boolean;
+	/** Restrict returned edits to this byte range within the source text. */
 	range?: { offset: number; length: number };
 }
 
@@ -199,6 +265,18 @@ export interface RawFormatOptions {
 // Internal: format a YAML document via AST round-trip
 // ---------------------------------------------------------------------------
 
+/**
+ * Internal implementation shared by {@link format} and {@link formatAndApply}.
+ *
+ * @privateRemarks
+ * Separates the `range` field from the rest of the options because
+ * `YamlFormattingOptions` (a Schema.Class) does not include `range` — range
+ * filtering is applied after stringification by the public `format` function.
+ * The `YamlFormattingOptions` instance is constructed from the remaining fields
+ * so that default values and validation are applied consistently.
+ *
+ * @internal
+ */
 function formatImpl(text: string, raw: RawFormatOptions): Effect.Effect<string, YamlFormatError> {
 	// Build YamlFormattingOptions without the range field (which requires a
 	// YamlRange class instance — range is handled separately in format()).
@@ -252,6 +330,23 @@ function formatImpl(text: string, raw: RawFormatOptions): Effect.Effect<string, 
  * stringifies back. Returns the diff as an array of {@link YamlEdit} objects.
  * When `options.range` is set, only edits within that range are returned.
  *
+ * @example Formatting with indent change and sorted keys
+ * ```typescript
+ * import { Effect } from "effect"
+ * import type { RawFormatOptions } from "yaml-effect"
+ * import { format } from "yaml-effect"
+ *
+ * const yaml = "b: 2\na: 1\n"
+ * const options: RawFormatOptions = { indent: 4, sortKeys: true }
+ *
+ * const program = Effect.gen(function* () {
+ *   const edits = yield* format(yaml, options)
+ *   // edits is an array of YamlEdit objects describing
+ *   // the changes needed to reformat the document
+ *   return edits
+ * })
+ * ```
+ *
  * @public
  */
 export function format(
@@ -284,8 +379,25 @@ export function format(
  * Format a YAML document in one step.
  *
  * @remarks
- * Convenience combining parse → apply options → stringify. Returns the
+ * Convenience combining parse, apply options, and stringify. Returns the
  * formatted string directly without computing a diff.
+ *
+ * @example One-step formatting
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { formatAndApply } from "yaml-effect"
+ *
+ * const yaml = "b: 2\na: 1\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const formatted: string = yield* formatAndApply(yaml, {
+ *     indent: 4,
+ *     sortKeys: true,
+ *   })
+ *   // formatted is the fully reformatted YAML string
+ *   return formatted
+ * })
+ * ```
  *
  * @public
  */
@@ -297,6 +409,17 @@ export function formatAndApply(text: string, options?: RawFormatOptions): Effect
 // Internal: create a YamlScalar from a JS value
 // ---------------------------------------------------------------------------
 
+/**
+ * Convert a plain JavaScript value into a YamlScalar AST node.
+ *
+ * @privateRemarks
+ * Only creates plain-style scalars with zero offset/length. This is
+ * intentional — the node is immediately stringified, so source position
+ * metadata is irrelevant. Complex values (objects, arrays) are not handled;
+ * callers are expected to pass scalar-compatible values only.
+ *
+ * @internal
+ */
 function jsValueToNode(value: unknown): YamlNode {
 	return new YamlScalar({
 		value,
@@ -310,6 +433,18 @@ function jsValueToNode(value: unknown): YamlNode {
 // Internal: modify a YAML document via AST manipulation
 // ---------------------------------------------------------------------------
 
+/**
+ * Apply a modification to a YamlDocument at a given path.
+ *
+ * @privateRemarks
+ * When the path is empty, the entire document contents are replaced (or
+ * cleared if `value` is `undefined`). Otherwise, delegates to
+ * {@link modifyNode} to walk the AST and apply the change at the target
+ * location. Throws synchronously on navigation failures — the caller
+ * (`modifyImpl`) catches and converts these into `YamlModificationError`.
+ *
+ * @internal
+ */
 function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): YamlDocument {
 	if (path.length === 0) {
 		return new YamlDocument({
@@ -336,6 +471,18 @@ function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): Yaml
 	});
 }
 
+/**
+ * Recursively navigate a YamlNode tree and apply a modification at the target depth.
+ *
+ * @privateRemarks
+ * Handles YamlMap (string-keyed lookup), YamlSeq (numeric index lookup), and
+ * throws on YamlScalar/YamlAlias when further navigation is requested.
+ * At the terminal depth: `undefined` removes the key/element, any other value
+ * replaces it (or inserts a new pair for maps). All nodes are shallow-copied
+ * so the original tree is never mutated.
+ *
+ * @internal
+ */
 function modifyNode(node: YamlNode, path: YamlPath, depth: number, value: unknown): YamlNode {
 	const segment = path[depth];
 	const isLast = depth === path.length - 1;
@@ -483,6 +630,17 @@ function modifyNode(node: YamlNode, path: YamlPath, depth: number, value: unknow
 // Internal: modify implementation
 // ---------------------------------------------------------------------------
 
+/**
+ * Shared implementation for {@link modify} and {@link modifyAndApply}.
+ *
+ * @privateRemarks
+ * Parses the source text into a YamlDocument, applies the AST modification
+ * via `modifyDocument`, then stringifies the result. Synchronous errors
+ * thrown by `modifyDocument` / `modifyNode` (e.g., path-not-found) are
+ * caught and lifted into `YamlModificationError` failures.
+ *
+ * @internal
+ */
 function modifyImpl(text: string, path: YamlPath, value: unknown): Effect.Effect<string, YamlModificationError> {
 	return parseDocument(text).pipe(
 		Effect.mapError(
@@ -528,6 +686,51 @@ function modifyImpl(text: string, path: YamlPath, value: unknown): Effect.Effect
  * applies the change, stringifies back, and diffs to produce edits.
  * Pass `undefined` as `value` to remove the property or element.
  *
+ * This function is a dual — it can be called with all three arguments
+ * directly, or partially applied with path and value first.
+ *
+ * @example Replacing a value
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { applyEdits, modify } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const edits = yield* modify(yaml, ["name"], "Jane")
+ *   const result = yield* applyEdits(yaml, edits)
+ *   return result
+ * })
+ * ```
+ *
+ * @example Inserting a new key
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { applyEdits, modify } from "yaml-effect"
+ *
+ * const yaml = "name: John\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const edits = yield* modify(yaml, ["email"], "john@example.com")
+ *   const result = yield* applyEdits(yaml, edits)
+ *   return result
+ * })
+ * ```
+ *
+ * @example Removing a key
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { applyEdits, modify } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const edits = yield* modify(yaml, ["age"], undefined)
+ *   const result = yield* applyEdits(yaml, edits)
+ *   return result
+ * })
+ * ```
+ *
  * @public
  */
 export const modify: {
@@ -547,7 +750,22 @@ export const modify: {
  * Modify a YAML document in one step.
  *
  * @remarks
- * Same as {@link modify} but returns the modified string directly.
+ * Same as {@link modify} but returns the modified string directly instead
+ * of computing a diff. This function is a dual — it can be called with all
+ * three arguments directly, or partially applied with path and value first.
+ *
+ * @example One-step modification
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { modifyAndApply } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const result: string = yield* modifyAndApply(yaml, ["name"], "Jane")
+ *   return result
+ * })
+ * ```
  *
  * @public
  */
@@ -574,6 +792,20 @@ export const modifyAndApply: {
  * With `replaceCh` (a single character): replaces each character of comment
  * text (including the `#` marker) with the given character to preserve
  * character offsets. Newlines are always preserved.
+ *
+ * @example Removing comments from YAML
+ * ```typescript
+ * import { Effect } from "effect"
+ * import { stripComments } from "yaml-effect"
+ *
+ * const yaml = "name: John # the user name\nage: 30 # years\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const stripped: string = yield* stripComments(yaml)
+ *   // stripped has all comments removed from the document
+ *   return stripped
+ * })
+ * ```
  *
  * @public
  */

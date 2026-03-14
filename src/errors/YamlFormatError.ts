@@ -31,7 +31,7 @@ export const YamlFormatErrorBase = Data.TaggedError("YamlFormatError");
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { format } from "@spencerbeggs/yaml-effect";
+ * import { format } from "yaml-effect";
  *
  * const program = format("malformed: [yaml").pipe(
  *   Effect.catchTag("YamlFormatError", (e) => {

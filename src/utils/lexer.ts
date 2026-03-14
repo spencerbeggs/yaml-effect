@@ -55,6 +55,22 @@ export interface YamlScanner {
 /**
  * Create a new YAML scanner for the given source text.
  *
+ * @remarks
+ * Returns a stateful, pull-based scanner. Call {@link YamlScanner.scan} to
+ * advance to the next token, then use `getToken*` methods to inspect it.
+ *
+ * @example
+ * ```typescript
+ * import { createScanner } from "yaml-effect";
+ *
+ * const scanner = createScanner("key: value");
+ * let kind = scanner.scan();
+ * while (kind !== null) {
+ *   console.log(kind, scanner.getTokenValue());
+ *   kind = scanner.scan();
+ * }
+ * ```
+ *
  * @public
  */
 export function createScanner(text: string): YamlScanner {
@@ -1056,9 +1072,25 @@ export function createScanner(text: string): YamlScanner {
 /**
  * Tokenize a YAML source string into an Effect {@link Stream} of {@link YamlToken}.
  *
+ * @remarks
  * Lexer errors are embedded as `"error"` tokens in the success channel; the
  * downstream parser/composer will collect them and raise `YamlLexError`
  * if needed.
+ *
+ * @example
+ * ```typescript
+ * import { Effect, Stream } from "effect";
+ * import { lex } from "yaml-effect";
+ *
+ * const program = lex("key: value").pipe(
+ *   Stream.filter((t) => t.kind === "scalar"),
+ *   Stream.runCollect,
+ *   Effect.map((chunk) => [...chunk].map((t) => t.value)),
+ * );
+ *
+ * const scalars = Effect.runSync(program);
+ * console.log(scalars); // ["key", "value"]
+ * ```
  *
  * @public
  */

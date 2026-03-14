@@ -56,6 +56,11 @@ const INDICATOR_CHARS = new Set([
 
 /**
  * Returns true if a string value would be mis-resolved as a non-string YAML type.
+ *
+ * @privateRemarks
+ * Tests against all YAML 1.2 Core Schema type patterns (null, bool, int, float,
+ * inf, nan). Any string matching these patterns must be quoted to preserve its
+ * string identity during a parse round-trip.
  */
 function wouldBeResolved(s: string): boolean {
 	if (s === "") return true;
@@ -73,6 +78,12 @@ function wouldBeResolved(s: string): boolean {
 
 /**
  * Returns true if a string requires quoting to be safely represented as a plain scalar.
+ *
+ * @privateRemarks
+ * Checks multiple conditions beyond type-conflict detection: empty strings,
+ * embedded newlines, leading indicator characters or whitespace, and inline
+ * comment/mapping-value patterns (`: `, ` #`). This is the single gate that
+ * decides whether a plain scalar is safe or must be wrapped in quotes.
  */
 function requiresQuoting(s: string): boolean {
 	// Empty string must be quoted
@@ -154,6 +165,13 @@ function renderBlockFolded(s: string, indent: string): string {
 /**
  * Renders a string value as a YAML scalar using the requested style.
  * Falls back to double-quoted if the requested style is unsafe for the value.
+ *
+ * @privateRemarks
+ * Multi-line strings are routed to block styles regardless of the requested
+ * style (except double-quoted). For single-line strings, plain style delegates
+ * to {@link requiresQuoting} and falls back to double-quoted when the value
+ * would be ambiguous. Block literal and block folded styles are always
+ * accepted for single-line strings even though the output is unusual.
  */
 function renderString(s: string, style: ScalarStyle, indent: string): string {
 	if (s.includes("\n")) {
@@ -185,6 +203,12 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 
 /**
  * Renders a number value as a YAML scalar string.
+ *
+ * @privateRemarks
+ * Maps JavaScript special number values to their YAML 1.2 Core Schema
+ * equivalents: `NaN` becomes `.nan`, positive infinity becomes `.inf`,
+ * and negative infinity becomes `-.inf`. All other numbers use
+ * `String(n)` which produces valid YAML integer or float literals.
  */
 function renderNumber(n: number): string {
 	if (Number.isNaN(n)) return ".nan";
@@ -535,6 +559,40 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
  * (`Infinity`, `-Infinity`, `NaN`) are rendered as `.inf`, `-.inf`, and
  * `.nan` respectively. Circular references cause a {@link YamlStringifyError}.
  *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { stringify } from "yaml-effect";
+ *
+ * const data = { name: "Alice", tags: ["admin", "user"], active: true };
+ *
+ * const program = stringify(data).pipe(
+ *   Effect.tap((yaml) => Effect.log(yaml)),
+ * );
+ *
+ * Effect.runPromise(program);
+ * // name: Alice
+ * // tags:
+ * //   - admin
+ * //   - user
+ * // active: true
+ * ```
+ *
+ * @example Customizing output format
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { stringify } from "yaml-effect";
+ *
+ * const program = stringify({ key: "value" }, {
+ *   indent: 4,
+ *   defaultCollectionStyle: "flow",
+ *   finalNewline: false,
+ * }).pipe(Effect.tap((yaml) => Effect.log(yaml)));
+ *
+ * Effect.runPromise(program);
+ * // {key: value}
+ * ```
+ *
  * @param value - The value to stringify.
  * @param options - Optional formatting options. Defaults are used for any
  *   omitted fields.
@@ -577,6 +635,22 @@ export function stringify(
  * rendering. Collection nodes use their `style` field (`"block"` or
  * `"flow"`). Nodes without an explicit style fall back to the defaults in
  * `options`.
+ *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { parseDocument } from "yaml-effect";
+ * import { stringifyDocument } from "yaml-effect";
+ *
+ * const program = parseDocument("name: Alice\nage: 30").pipe(
+ *   Effect.flatMap((doc) => stringifyDocument(doc)),
+ *   Effect.tap((yaml) => Effect.log(yaml)),
+ * );
+ *
+ * Effect.runPromise(program);
+ * // name: Alice
+ * // age: 30
+ * ```
  *
  * @param doc - The parsed YAML document whose AST to serialize.
  * @param options - Optional formatting options.

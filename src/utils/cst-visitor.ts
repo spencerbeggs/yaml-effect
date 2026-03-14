@@ -62,22 +62,69 @@ type Path = ReadonlyArray<string | number>;
 // Node classification helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Test whether a CST node is structural trivia (whitespace, newline, anchor, or tag).
+ *
+ * @privateRemarks
+ * Trivia nodes are skipped during traversal — they carry no semantic content
+ * and are only meaningful for source fidelity. Anchors and tags are classified
+ * as trivia here because they are metadata attached to the following content
+ * node rather than standalone events.
+ *
+ * @internal
+ */
 function isTriviaCstNode(node: CstNode): boolean {
 	return node.type === "whitespace" || node.type === "newline" || node.type === "anchor" || node.type === "tag";
 }
 
+/**
+ * Test whether a CST node is a scalar (flow-scalar or block-scalar).
+ *
+ * @privateRemarks
+ * Both flow and block scalars carry raw source text. The distinction matters
+ * for the parser but not for the visitor's key/value classification logic.
+ *
+ * @internal
+ */
 function isScalarCstNode(node: CstNode): boolean {
 	return node.type === "flow-scalar" || node.type === "block-scalar";
 }
 
+/**
+ * Test whether a CST node is specifically a block-map.
+ *
+ * @privateRemarks
+ * Distinguished from {@link isMapCstNode} because the "scalar followed by
+ * block-map" sibling pattern only applies to block maps, not flow maps.
+ *
+ * @internal
+ */
 function isBlockMapCstNode(node: CstNode): boolean {
 	return node.type === "block-map";
 }
 
+/**
+ * Test whether a CST node is any kind of map (block-map or flow-map).
+ *
+ * @privateRemarks
+ * Used when the traversal needs to emit MapStart/MapEnd events regardless
+ * of the map's block vs flow representation.
+ *
+ * @internal
+ */
 function isMapCstNode(node: CstNode): boolean {
 	return node.type === "block-map" || node.type === "flow-map";
 }
 
+/**
+ * Test whether a CST node is any kind of sequence (block-seq or flow-seq).
+ *
+ * @privateRemarks
+ * Sequences are walked via {@link walkSiblings} for their children, as
+ * sequence entries do not have the key/value alternation of maps.
+ *
+ * @internal
+ */
 function isSeqCstNode(node: CstNode): boolean {
 	return node.type === "block-seq" || node.type === "flow-seq";
 }
@@ -96,6 +143,16 @@ function isSeqCstNode(node: CstNode): boolean {
  * then walks the block-map as a continuation of the same mapping pair.
  *
  * All other scalars in this context are emitted as {@link CstScalarEvent}.
+ *
+ * @privateRemarks
+ * This function is the entry point for both document-level and sequence-level
+ * children. It does not maintain key/value alternation state — that logic
+ * lives in {@link walkBlockMapChildren} and {@link walkFlowMapChildren}. The
+ * look-ahead via {@link findNextContent} is intentionally limited to one node
+ * because the CST guarantees that a block-map immediately follows its key
+ * scalar without intervening content nodes.
+ *
+ * @internal
  */
 function* walkSiblings(nodes: ReadonlyArray<CstNode>, path: Path, depth: number): Generator<YamlCstVisitorEvent> {
 	for (let i = 0; i < nodes.length; i++) {
@@ -166,6 +223,17 @@ function* walkSiblings(nodes: ReadonlyArray<CstNode>, path: Path, depth: number)
 // findNextContent — look ahead past trivia to the next content node
 // ---------------------------------------------------------------------------
 
+/**
+ * Look ahead past trivia and comment nodes to find the next content node.
+ *
+ * @privateRemarks
+ * Used by {@link walkSiblings} and {@link walkBlockMapChildren} to detect
+ * the "scalar followed by block-map" pattern. Returns `undefined` when no
+ * content node exists after `startIdx`, which means the scalar is a
+ * standalone value rather than a mapping key.
+ *
+ * @internal
+ */
 function findNextContent(nodes: ReadonlyArray<CstNode>, startIdx: number): CstNode | undefined {
 	for (let i = startIdx; i < nodes.length; i++) {
 		const node = nodes[i];
@@ -192,6 +260,16 @@ function findNextContent(nodes: ReadonlyArray<CstNode>, startIdx: number): CstNo
  * - `expectingKey = false` initially (first non-trivia scalar is a value)
  * - After each value scalar or collection value, toggle to expecting a key
  * - After each key scalar, toggle to expecting a value
+ *
+ * @privateRemarks
+ * The `expectingKey` flag starts as `false` because the first key has already
+ * been consumed by the parent {@link walkSiblings} call and emitted as a
+ * CstKeyEvent. Nested block-maps are handled recursively; after a nested
+ * map is fully walked, the state resets to expecting a key for the next
+ * entry. The look-ahead for "scalar → block-map" applies here too, to
+ * detect nested mapping keys within the same block-map.
+ *
+ * @internal
  */
 function* walkBlockMapChildren(
 	children: ReadonlyArray<CstNode>,
@@ -296,6 +374,15 @@ function* walkBlockMapChildren(
  * Flow maps include all their content (including the opening `{` key scalars,
  * `:` separators, and closing `}`) as children.  All structural punctuation
  * is typed as `whitespace`.  Scalars alternate key/value starting with key.
+ *
+ * @privateRemarks
+ * Unlike block maps, flow maps contain their own keys as children, so
+ * `expectingKey` starts as `true`. Structural punctuation (`{`, `}`, `:`,
+ * `,`) is classified as `whitespace` by the CST parser and skipped as
+ * trivia. Nested collections (maps or sequences) found in the value
+ * position reset the state to expecting a key after they are fully walked.
+ *
+ * @internal
  */
 function* walkFlowMapChildren(
 	children: ReadonlyArray<CstNode>,
@@ -363,6 +450,16 @@ function* walkFlowMapChildren(
 // walkDocument — generator that yields all events for a single document node
 // ---------------------------------------------------------------------------
 
+/**
+ * Generator that yields all CST visitor events for a single document node.
+ *
+ * @privateRemarks
+ * Wraps the document's children in CstDocumentStartEvent / CstDocumentEndEvent
+ * and delegates child traversal to {@link walkSiblings}. The root path is an
+ * empty array, and child depth starts at 1 (the document itself is at depth 0).
+ *
+ * @internal
+ */
 function* walkDocument(doc: CstNode): Generator<YamlCstVisitorEvent> {
 	const path: Path = [];
 	const depth = 0;
@@ -389,6 +486,22 @@ function* walkDocument(doc: CstNode): Generator<YamlCstVisitorEvent> {
  * All content is delivered as raw source strings — `true` is still the string
  * `"true"`.  CST-level errors are surfaced as {@link CstErrorEvent} nodes; the
  * error channel is always `never`.
+ *
+ * @example Streaming CST events
+ * ```typescript
+ * import { Effect, Stream } from "effect"
+ * import type { YamlCstVisitorEvent } from "yaml-effect"
+ * import { visitCST } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const events: ReadonlyArray<YamlCstVisitorEvent> = yield* Stream.runCollect(
+ *     visitCST(yaml),
+ *   ).pipe(Effect.map((chunk) => [...chunk]))
+ *   return events
+ * })
+ * ```
  *
  * @param text - The YAML source text to visit.
  * @returns A `Stream` of `YamlCstVisitorEvent` values, never failing.
@@ -421,6 +534,24 @@ export function visitCST(text: string): Stream.Stream<YamlCstVisitorEvent, never
  * Only events for which `predicate` returns `Option.some(value)` are included
  * in the result array.  Events that return `Option.none()` are silently
  * discarded.
+ *
+ * @example Collecting all CST keys from a document
+ * ```typescript
+ * import { Effect, Option } from "effect"
+ * import { isCstKeyEvent, visitCSTCollect } from "yaml-effect"
+ *
+ * const yaml = "name: John\nage: 30\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   const keys: ReadonlyArray<string> = yield* visitCSTCollect(
+ *     yaml,
+ *     (event) =>
+ *       isCstKeyEvent(event) ? Option.some(event.source) : Option.none(),
+ *   )
+ *   // keys contains the raw source strings: ["name", "age"]
+ *   return keys
+ * })
+ * ```
  *
  * @typeParam A - The type of values extracted by the predicate.
  * @param text - The YAML source text to visit.

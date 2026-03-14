@@ -18,6 +18,25 @@ import { stringify, stringifyDocument } from "./stringify.js";
  * A Schema that decodes a YAML string into an unknown value and encodes
  * an unknown value back into a YAML string.
  *
+ * @example
+ * ```typescript
+ * import { Effect, Schema } from "effect";
+ * import { YamlFromString } from "yaml-effect";
+ *
+ * const decode = Schema.decode(YamlFromString);
+ * const encode = Schema.encode(YamlFromString);
+ *
+ * const program = decode("name: Alice\nage: 30").pipe(
+ *   Effect.tap((value) => Effect.log(value)),
+ *   // => { name: "Alice", age: 30 }
+ *   Effect.flatMap((value) => encode(value)),
+ *   Effect.tap((yaml) => Effect.log(yaml)),
+ *   // => "name: Alice\nage: 30\n"
+ * );
+ *
+ * Effect.runPromise(program);
+ * ```
+ *
  * @public
  */
 export const YamlFromString: Schema.Schema<unknown, string> = Schema.transformOrFail(Schema.String, Schema.Unknown, {
@@ -35,6 +54,16 @@ export const YamlFromString: Schema.Schema<unknown, string> = Schema.transformOr
  * @param parseOptions - Options to pass to the YAML parser.
  * @param stringifyOptions - Options to pass to the YAML stringifier.
  * @returns A Schema that decodes/encodes between YAML strings and unknown values.
+ *
+ * @example
+ * ```typescript
+ * import { makeYamlFromString } from "yaml-effect";
+ *
+ * const lenientYaml = makeYamlFromString(
+ *   { strict: false },
+ *   { indent: 4 },
+ * );
+ * ```
  *
  * @public
  */
@@ -59,6 +88,32 @@ export function makeYamlFromString(
  * @param options - Optional parse and stringify options.
  * @returns A composed Schema from YAML string to `A`.
  *
+ * @example
+ * ```typescript
+ * import { Effect, Schema } from "effect";
+ * import { makeYamlSchema } from "yaml-effect";
+ *
+ * const ConfigSchema = makeYamlSchema(
+ *   Schema.Struct({
+ *     host: Schema.String,
+ *     port: Schema.Number,
+ *     debug: Schema.Boolean,
+ *   }),
+ * );
+ *
+ * const program = Effect.gen(function* () {
+ *   const config = yield* Schema.decode(ConfigSchema)(
+ *     "host: localhost\nport: 3000\ndebug: true",
+ *   );
+ *   console.log(config.port); // 3000
+ *
+ *   const yaml = yield* Schema.encode(ConfigSchema)(config);
+ *   console.log(yaml); // "host: localhost\nport: 3000\ndebug: true\n"
+ * });
+ *
+ * Effect.runSync(program);
+ * ```
+ *
  * @public
  */
 export function makeYamlSchema<A, I, R>(
@@ -79,6 +134,21 @@ export function makeYamlSchema<A, I, R>(
  *
  * @param parseOptions - Options to pass to the YAML parser.
  * @returns A Schema that decodes/encodes between YAML strings and arrays of unknown values.
+ *
+ * @example
+ * ```typescript
+ * import { Effect, Schema } from "effect";
+ * import { YamlAllFromString } from "yaml-effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const docs = yield* Schema.decode(YamlAllFromString)(
+ *     "name: Alice\n---\nname: Bob",
+ *   );
+ *   console.log(docs); // [{ name: "Alice" }, { name: "Bob" }]
+ * });
+ *
+ * Effect.runSync(program);
+ * ```
  *
  * @public
  */
@@ -130,6 +200,25 @@ export const YamlAllFromString: Schema.Schema<ReadonlyArray<unknown>, string> = 
  *
  * @param parseOptions - Options to pass to the YAML parser.
  * @returns A Schema that decodes/encodes between YAML strings and YamlDocument instances.
+ *
+ * @example
+ * ```typescript
+ * import { Effect, Schema } from "effect";
+ * import type { YamlDocument } from "yaml-effect";
+ * import { makeYamlDocumentSchema } from "yaml-effect";
+ *
+ * const DocSchema = makeYamlDocumentSchema();
+ *
+ * const program = Effect.gen(function* () {
+ *   const doc: YamlDocument = yield* Schema.decode(DocSchema)(
+ *     "# comment\nkey: value",
+ *   );
+ *   console.log(doc.contents); // YamlMap node
+ *   console.log(doc.comment); // "comment"
+ * });
+ *
+ * Effect.runSync(program);
+ * ```
  *
  * @public
  */

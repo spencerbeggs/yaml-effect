@@ -569,6 +569,57 @@ describe("YAML 1.2 compliance: complex documents", () => {
 		expect(web.environment).toEqual({ NODE_ENV: "production", DEBUG: false });
 	});
 
+	it("parses document with mixed collection styles", () => {
+		const yaml = [
+			"block_map:",
+			"  key: value",
+			"flow_map: {a: 1, b: 2}",
+			"block_seq:",
+			"  - item1",
+			"  - item2",
+			"flow_seq: [1, 2, 3]",
+			"nested_flow: {outer: [1, {inner: true}]}",
+		].join("\n");
+		const result = val(yaml) as Record<string, unknown>;
+		expect(result.block_map).toEqual({ key: "value" });
+		expect(result.flow_map).toEqual({ a: 1, b: 2 });
+		expect(result.block_seq).toEqual(["item1", "item2"]);
+		expect(result.flow_seq).toEqual([1, 2, 3]);
+		expect(result.nested_flow).toEqual({ outer: [1, { inner: true }] });
+	});
+
+	it("parses document with block scalars", () => {
+		const yaml = ["literal: |", "  line1", "  line2", "folded: >", "  line1", "  line2"].join("\n");
+		const result = val(yaml) as Record<string, unknown>;
+		expect(typeof result.literal).toBe("string");
+		expect(typeof result.folded).toBe("string");
+	});
+
+	it("parses document with anchors and aliases across structures", () => {
+		const yaml = [
+			"defaults: &defaults",
+			"  timeout: 30",
+			"  retries: 3",
+			"dev:",
+			"  <<: *defaults",
+			"  debug: true",
+		].join("\n");
+		const result = val(yaml) as Record<string, unknown>;
+		expect(result.defaults).toEqual({ timeout: 30, retries: 3 });
+	});
+
+	it("parses document with single-quoted strings containing special chars", () => {
+		const yaml = "msg: 'it''s a test: {with} [special] chars'\n";
+		const result = val(yaml) as Record<string, unknown>;
+		expect(result.msg).toBe("it's a test: {with} [special] chars");
+	});
+
+	it("parses document with double-quoted escape sequences", () => {
+		const yaml = 'msg: "line1\\nline2\\ttab"\n';
+		const result = val(yaml) as Record<string, unknown>;
+		expect(result.msg).toBe("line1\nline2\ttab");
+	});
+
 	it("parses GitHub Actions-like workflow", () => {
 		const yaml = [
 			"name: CI",

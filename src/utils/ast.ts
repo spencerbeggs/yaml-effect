@@ -20,6 +20,32 @@ import type { YamlPath } from "../schemas/YamlShared.js";
 /**
  * Returns `true` if the value is a {@link YamlScalar} instance.
  *
+ * @example
+ * ```typescript
+ * import type { YamlNode } from "yaml-effect";
+ * import { isScalar, isMap, isSeq, isPair, isAlias, isNode, isDocument, parseDocument } from "yaml-effect";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument("name: Alice\nitems:\n  - one\n  - two");
+ *   const root = doc.contents!;
+ *
+ *   // Type guard narrows to specific node types
+ *   if (isMap(root)) {
+ *     const pair = root.items[0];
+ *     if (isPair(pair) && isScalar(pair.key)) {
+ *       console.log(pair.key.value); // "name"
+ *     }
+ *   }
+ *
+ *   // isNode matches any AST node type
+ *   console.log(isNode(root));     // true
+ *   console.log(isDocument(doc));  // true
+ *   console.log(isAlias(root));    // false
+ *   console.log(isSeq(root));     // false
+ * });
+ * ```
+ *
  * @public
  */
 export function isScalar(node: unknown): node is YamlScalar {
@@ -88,6 +114,29 @@ export function isDocument(node: unknown): node is YamlDocument {
  * Navigate to a node within the AST tree by following a path of string keys
  * (for mappings) and numeric indices (for sequences).
  *
+ * @example
+ * ```typescript
+ * import { findNode, parseDocument } from "yaml-effect";
+ * import { Effect, Option, pipe } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument("server:\n  host: localhost\n  ports:\n    - 8080\n    - 8443");
+ *   const root = doc.contents!;
+ *
+ *   // Direct style
+ *   const host = yield* findNode(root, ["server", "host"]);
+ *   // host: Option.Some<YamlScalar>
+ *
+ *   // Pipeline style
+ *   const port = yield* pipe(root, findNode(["server", "ports", 0]));
+ *   // port: Option.Some<YamlScalar> with value 8080
+ *
+ *   // Missing path returns Option.None
+ *   const missing = yield* findNode(root, ["server", "missing"]);
+ *   console.log(Option.isNone(missing)); // true
+ * });
+ * ```
+ *
  * @public
  */
 export const findNode: {
@@ -143,6 +192,24 @@ export const findNode: {
 /**
  * Find the deepest AST node that contains the given character offset.
  *
+ * @example
+ * ```typescript
+ * import { findNodeAtOffset, isScalar, parseDocument } from "yaml-effect";
+ * import { Effect, Option } from "effect";
+ *
+ * const yaml = "name: Alice";
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument(yaml);
+ *   const root = doc.contents!;
+ *
+ *   // Offset 6 points into the value "Alice"
+ *   const node = yield* findNodeAtOffset(root, 6);
+ *   if (Option.isSome(node) && isScalar(node.value)) {
+ *     console.log(node.value.value); // "Alice"
+ *   }
+ * });
+ * ```
+ *
  * @public
  */
 export const findNodeAtOffset: {
@@ -154,12 +221,28 @@ export const findNodeAtOffset: {
 		Effect.sync(() => findDeepestAtOffset(root, offset)),
 );
 
+/**
+ * @privateRemarks
+ * Tests whether a character offset falls within a node's span. Uses
+ * half-open interval `[nodeOffset, nodeOffset + nodeLength)` so that a
+ * cursor positioned immediately after a node is NOT considered inside it.
+ *
+ * @internal
+ */
 function containsOffset(node: YamlNode, offset: number): boolean {
 	const nodeOffset = getOffset(node);
 	const nodeLength = getLength(node);
 	return offset >= nodeOffset && offset < nodeOffset + nodeLength;
 }
 
+/**
+ * @privateRemarks
+ * Extracts the `offset` property from any AST node type. Returns `0` as a
+ * fallback if the node type is unrecognized (should never happen with the
+ * current union, but guards against future extensions).
+ *
+ * @internal
+ */
 function getOffset(node: YamlNode): number {
 	if (node instanceof YamlScalar) return node.offset;
 	if (node instanceof YamlMap) return node.offset;
@@ -168,6 +251,13 @@ function getOffset(node: YamlNode): number {
 	return 0;
 }
 
+/**
+ * @privateRemarks
+ * Extracts the `length` property from any AST node type. Returns `0` as a
+ * fallback if the node type is unrecognized.
+ *
+ * @internal
+ */
 function getLength(node: YamlNode): number {
 	if (node instanceof YamlScalar) return node.length;
 	if (node instanceof YamlMap) return node.length;
@@ -176,6 +266,15 @@ function getLength(node: YamlNode): number {
 	return 0;
 }
 
+/**
+ * @privateRemarks
+ * Recursively descends into the AST to find the deepest (most specific)
+ * node whose span contains the given offset. For mappings, both keys and
+ * values of each pair are checked. Returns `Option.none()` when the offset
+ * falls outside the node entirely.
+ *
+ * @internal
+ */
 function findDeepestAtOffset(node: YamlNode, offset: number): Option.Option<YamlNode> {
 	if (!containsOffset(node, offset)) {
 		return Option.none();
@@ -215,6 +314,24 @@ function findDeepestAtOffset(node: YamlNode, offset: number): Option.Option<Yaml
 /**
  * Return the path segments leading to the node at the given offset.
  *
+ * @example
+ * ```typescript
+ * import { getNodePath, parseDocument } from "yaml-effect";
+ * import { Effect, Option } from "effect";
+ *
+ * const yaml = "server:\n  host: localhost\n  ports:\n    - 8080";
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument(yaml);
+ *   const root = doc.contents!;
+ *
+ *   // Offset pointing into "localhost" value
+ *   const path = yield* getNodePath(root, 16);
+ *   if (Option.isSome(path)) {
+ *     console.log(path.value); // ["server", "host"]
+ *   }
+ * });
+ * ```
+ *
  * @public
  */
 export const getNodePath: {
@@ -230,6 +347,16 @@ export const getNodePath: {
 		}),
 );
 
+/**
+ * @privateRemarks
+ * Recursive helper that accumulates path segments as it descends toward the
+ * target offset. For mappings, the string key is pushed before recursing
+ * into the value; if the value does not contain the offset the segment is
+ * popped (backtracking). For sequences, the numeric index is pushed.
+ * Returns `true` once the target node is reached.
+ *
+ * @internal
+ */
 function buildPath(node: YamlNode, offset: number, path: Array<string | number>): boolean {
 	if (!containsOffset(node, offset)) {
 		return false;
@@ -285,12 +412,44 @@ function buildPath(node: YamlNode, offset: number, path: Array<string | number>)
  * - {@link YamlSeq} returns a plain JS array built from its items.
  * - {@link YamlAlias} returns the anchor name string (not resolved).
  *
+ * @example
+ * ```typescript
+ * import { getNodeValue, findNode, parseDocument } from "yaml-effect";
+ * import { Effect, Option } from "effect";
+ *
+ * const yaml = "server:\n  host: localhost\n  port: 8080";
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument(yaml);
+ *   const root = doc.contents!;
+ *
+ *   // Extract the entire document as a plain JS object
+ *   const value = yield* getNodeValue(root);
+ *   console.log(value); // { server: { host: "localhost", port: 8080 } }
+ *
+ *   // Extract a nested node's value
+ *   const hostNode = yield* findNode(root, ["server", "host"]);
+ *   if (Option.isSome(hostNode)) {
+ *     const hostValue = yield* getNodeValue(hostNode.value);
+ *     console.log(hostValue); // "localhost"
+ *   }
+ * });
+ * ```
+ *
  * @public
  */
 export function getNodeValue(node: YamlNode): Effect.Effect<unknown> {
 	return Effect.sync(() => extractValue(node));
 }
 
+/**
+ * @privateRemarks
+ * Pure synchronous helper that recursively converts an AST subtree into
+ * plain JavaScript values. Pairs with null values produce `null` in the
+ * resulting object. Aliases are NOT resolved — they return the raw anchor
+ * name string, since resolution requires the full document context.
+ *
+ * @internal
+ */
 function extractValue(node: YamlNode): unknown {
 	if (node instanceof YamlScalar) {
 		return node.value;

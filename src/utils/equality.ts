@@ -20,6 +20,14 @@ import { parse } from "./composer.js";
  * Object key order is ignored (recursively at all nesting levels).
  * Array order is significant.
  *
+ * @privateRemarks
+ * NaN is treated as equal to NaN (unlike `===`) because YAML `.nan` values
+ * parsed from two separate documents should compare as semantically
+ * equivalent. Object comparison is key-order-insensitive: it checks that
+ * both objects have the same set of keys and recursively compares values
+ * by key, rather than iterating in insertion order. This matches YAML's
+ * semantics where mapping key order is not significant.
+ *
  * @internal
  */
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -73,6 +81,25 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * significant. For multi-document input, only the first document is
  * compared.
  *
+ * @example
+ * ```typescript
+ * import { equals } from "yaml-effect";
+ * import { Effect, pipe } from "effect";
+ *
+ * const yamlA = "name: Alice\nage: 30";
+ * const yamlB = "age: 30\nname: Alice"; // different key order
+ *
+ * const program = Effect.gen(function* () {
+ *   // Direct style
+ *   const result = yield* equals(yamlA, yamlB);
+ *   console.log(result); // true (key order is ignored)
+ *
+ *   // Pipeline style
+ *   const pipeResult = yield* pipe(yamlA, equals(yamlB));
+ *   console.log(pipeResult); // true
+ * });
+ * ```
+ *
  * @public
  */
 export const equals: {
@@ -94,6 +121,20 @@ export const equals: {
  * @remarks
  * Only the YAML string is parsed; the JS value is used as-is. Same
  * comparison semantics as {@link equals}.
+ *
+ * @example
+ * ```typescript
+ * import { equalsValue } from "yaml-effect";
+ * import { Effect } from "effect";
+ *
+ * const yaml = "items:\n  - one\n  - two";
+ * const expected = { items: ["one", "two"] };
+ *
+ * const program = Effect.gen(function* () {
+ *   const result = yield* equalsValue(yaml, expected);
+ *   console.log(result); // true
+ * });
+ * ```
  *
  * @public
  */

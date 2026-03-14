@@ -203,6 +203,57 @@ describe("visit()", () => {
 		expect((directive as DirectiveEvent).parameters).toContain("1.2");
 	});
 
+	it("emits CommentEvent for scalar with comment", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("key: value # my comment")).pipe(Effect.map((c) => [...c])));
+		const comments = events.filter((e) => e._tag === "CommentEvent");
+		expect(comments.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("emits CommentEvent for map with comment", () => {
+		const yaml = "# map comment\nkey: value\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const comments = events.filter((e) => e._tag === "CommentEvent");
+		expect(comments.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("emits ScalarEvent with tag when node has tag", () => {
+		const yaml = "key: !!str 42\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const scalar = events.find((e) => e._tag === "ScalarEvent" && (e as ScalarEvent).tag !== undefined);
+		expect(scalar).toBeDefined();
+	});
+
+	it("emits ScalarEvent with anchor when node has anchor", () => {
+		const yaml = "key: &ref value\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const scalar = events.find((e) => e._tag === "ScalarEvent" && (e as ScalarEvent).anchor !== undefined);
+		expect(scalar).toBeDefined();
+	});
+
+	it("emits PairEvent with null value for complex value", () => {
+		const yaml = "outer:\n  inner: value\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const pairs = events.filter((e) => e._tag === "PairEvent");
+		// "outer" pair has a map value, so PairEvent.value should be null
+		const outerPair = pairs.find((e) => (e as PairEvent).key === "outer");
+		expect(outerPair).toBeDefined();
+		expect((outerPair as PairEvent).value).toBeNull();
+	});
+
+	it("emits SeqStartEvent with tag when seq has tag", () => {
+		const yaml = "!!set\n- a\n- b\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const seqStart = events.find((e) => e._tag === "SeqStartEvent");
+		expect(seqStart).toBeDefined();
+	});
+
+	it("handles null pair value (no value after key)", () => {
+		const yaml = "key:\n";
+		const events = Effect.runSync(Stream.runCollect(visit(yaml)).pipe(Effect.map((c) => [...c])));
+		const pair = events.find((e) => e._tag === "PairEvent");
+		expect(pair).toBeDefined();
+	});
+
 	it("supports early termination via Stream.take", () => {
 		const events = Effect.runSync(
 			Stream.runCollect(visit("a: 1\nb: 2\nc: 3").pipe(Stream.take(3))).pipe(Effect.map((c) => [...c])),

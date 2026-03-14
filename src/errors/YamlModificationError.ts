@@ -32,7 +32,7 @@ export const YamlModificationErrorBase = Data.TaggedError("YamlModificationError
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { modify } from "@spencerbeggs/yaml-effect";
+ * import { modify } from "yaml-effect";
  *
  * const program = modify("{}", ["deep", "path"], 42).pipe(
  *   Effect.catchTag("YamlModificationError", (e) => {

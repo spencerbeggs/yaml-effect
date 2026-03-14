@@ -45,6 +45,16 @@ export type CollectionStyle = Schema.Schema.Type<typeof CollectionStyle>;
  * string indices). Pass a `YamlRange` to formatting options to restrict
  * operations to a specific region of the document.
  *
+ * @example
+ * ```typescript
+ * import { YamlRange } from "yaml-effect";
+ *
+ * // Represents characters 10 through 24 of a YAML document
+ * const range = new YamlRange({ offset: 10, length: 15 });
+ * console.log(range.offset); // 10
+ * console.log(range.length); // 15
+ * ```
+ *
  * @public
  */
 export class YamlRange extends Schema.Class<YamlRange>("YamlRange")({
@@ -60,6 +70,20 @@ export class YamlRange extends Schema.Class<YamlRange>("YamlRange")({
  * to replace, and `content` for the replacement string. To insert without
  * removing text, set `length` to `0`. To delete without inserting, set
  * `content` to `""`.
+ *
+ * @example
+ * ```typescript
+ * import { YamlEdit } from "yaml-effect";
+ *
+ * // Replace 5 characters starting at offset 6 with "Bob"
+ * const replaceEdit = new YamlEdit({ offset: 6, length: 5, content: "Bob" });
+ *
+ * // Insert text at offset 0 without removing anything
+ * const insertEdit = new YamlEdit({ offset: 0, length: 0, content: "# header\n" });
+ *
+ * // Delete 3 characters starting at offset 10
+ * const deleteEdit = new YamlEdit({ offset: 10, length: 3, content: "" });
+ * ```
  *
  * @public
  */

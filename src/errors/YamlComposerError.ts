@@ -37,7 +37,7 @@ export const YamlComposerErrorBase = Data.TaggedError("YamlComposerError");
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { parse } from "@spencerbeggs/yaml-effect";
+ * import { parse } from "yaml-effect";
  *
  * const program = parse("a: *undefined_alias").pipe(
  *   Effect.catchTag("YamlComposerError", (e) => {

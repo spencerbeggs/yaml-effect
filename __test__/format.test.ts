@@ -222,6 +222,50 @@ describe("modify", () => {
 		expect(result).toContain("key: new");
 	});
 
+	it("replaces root value with empty path", () => {
+		const input = "hello\n";
+		const result = Effect.runSync(modify(input, [], "world").pipe(Effect.flatMap((edits) => applyEdits(input, edits))));
+		expect(result).toContain("world");
+	});
+
+	it("removes root value with empty path and undefined", () => {
+		const input = "hello\n";
+		const result = Effect.runSync(
+			modify(input, [], undefined).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("null");
+	});
+
+	it("removes non-existent key is no-op", () => {
+		const input = "name: Alice\n";
+		const edits = Effect.runSync(modify(input, ["nonexistent"], undefined));
+		expect(edits.length).toBe(0);
+	});
+
+	it("removes array element by index", () => {
+		const input = "items:\n  - apple\n  - banana\n  - cherry\n";
+		const result = Effect.runSync(
+			modify(input, ["items", 1], undefined).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).not.toContain("banana");
+	});
+
+	it("appends to array when index exceeds length", () => {
+		const input = "items:\n  - a\n";
+		const result = Effect.runSync(
+			modify(input, ["items", 5], "new").pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("new");
+	});
+
+	it("modifies nested array element", () => {
+		const input = "items:\n  - a\n  - b\n";
+		const result = Effect.runSync(
+			modify(input, ["items", 0], "replaced").pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("replaced");
+	});
+
 	it("fails with YamlModificationError on invalid path", () => {
 		const input = "name: Alice\n";
 		const result = Effect.runSync(Effect.either(modify(input, ["nonexistent", "deep"], "value")));
@@ -229,6 +273,18 @@ describe("modify", () => {
 		if (result._tag === "Left") {
 			expect(result.left).toBeInstanceOf(YamlModificationError);
 		}
+	});
+
+	it("fails when navigating through scalar", () => {
+		const input = "name: Alice\n";
+		const result = Effect.runSync(Effect.either(modify(input, ["name", "deep"], "value")));
+		expect(result._tag).toBe("Left");
+	});
+
+	it("fails when sequence index out of bounds during navigation", () => {
+		const input = "items:\n  - a\n";
+		const result = Effect.runSync(Effect.either(modify(input, ["items", 99, "deep"], "value")));
+		expect(result._tag).toBe("Left");
 	});
 });
 
@@ -292,6 +348,48 @@ describe("stripComments", () => {
 		const input = 'message: "hello # world"\n';
 		const result = Effect.runSync(stripComments(input));
 		expect(result).toContain("hello # world");
+	});
+
+	it("does not treat # inside single-quoted strings as comments (replaceCh mode)", () => {
+		const input = "message: 'hello # world'\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).toContain("hello # world");
+	});
+
+	it("does not treat # inside double-quoted strings as comments (replaceCh mode)", () => {
+		const input = 'message: "hello # world"\n';
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).toContain("hello # world");
+	});
+
+	it("handles escaped single quotes inside single-quoted strings (replaceCh mode)", () => {
+		const input = "message: 'it''s # here'\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).toContain("# here");
+	});
+
+	it("handles comment after tab (replaceCh mode)", () => {
+		const input = "key:\t# tab comment\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).not.toContain("#");
+	});
+
+	it("handles # at start of line (replaceCh mode)", () => {
+		const input = "# full line comment\nkey: value\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).not.toContain("#");
+	});
+
+	it("preserves # that is not preceded by whitespace (replaceCh mode)", () => {
+		const input = "color: '#ff0000'\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).toContain("#ff0000");
+	});
+
+	it("handles escaped backslash before quote in double-quoted string (replaceCh mode)", () => {
+		const input = 'key: "value\\\\" # comment\n';
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).not.toMatch(/# comment/);
 	});
 
 	it("fails with YamlFormatError on invalid YAML (removal mode)", () => {

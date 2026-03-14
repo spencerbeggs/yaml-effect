@@ -35,7 +35,7 @@ export const YamlParseErrorBase = Data.TaggedError("YamlParseError");
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { parse } from "@spencerbeggs/yaml-effect";
+ * import { parse } from "yaml-effect";
  *
  * const program = parse("key:\n\tvalue: 1").pipe(
  *   Effect.catchTag("YamlParseError", (e) => {

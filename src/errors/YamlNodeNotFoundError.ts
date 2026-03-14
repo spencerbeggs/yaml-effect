@@ -33,7 +33,7 @@ export const YamlNodeNotFoundErrorBase = Data.TaggedError("YamlNodeNotFoundError
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { parseDocument, findNode } from "@spencerbeggs/yaml-effect";
+ * import { parseDocument, findNode } from "yaml-effect";
  *
  * const program = parseDocument("a: 1").pipe(
  *   Effect.flatMap((doc) => findNode(doc.contents!, ["missing"])),

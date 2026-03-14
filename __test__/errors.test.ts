@@ -258,6 +258,15 @@ describe("YamlParseError", () => {
 		expect(error.message).toContain("YAML parse failed");
 		expect(error.message).toContain("Invalid indentation");
 	});
+
+	it("should pluralize for multiple errors", () => {
+		const details = [
+			new YamlErrorDetail({ code: "InvalidIndentation", message: "a", offset: 0, length: 1, line: 0, column: 0 }),
+			new YamlErrorDetail({ code: "DuplicateKey", message: "b", offset: 5, length: 1, line: 1, column: 0 }),
+		];
+		const error = new YamlParseError({ errors: details, text: "bad" });
+		expect(error.message).toContain("2 errors");
+	});
 });
 
 describe("YamlComposerError", () => {
@@ -284,6 +293,15 @@ describe("YamlComposerError", () => {
 		});
 		expect(error.message).toContain("YAML compose failed");
 		expect(error.message).toContain("Undefined alias");
+	});
+
+	it("should pluralize for multiple errors", () => {
+		const details = [
+			new YamlErrorDetail({ code: "UndefinedAlias", message: "a", offset: 0, length: 1, line: 0, column: 0 }),
+			new YamlErrorDetail({ code: "UndefinedAlias", message: "b", offset: 5, length: 1, line: 1, column: 0 }),
+		];
+		const error = new YamlComposerError({ errors: details, text: "bad" });
+		expect(error.message).toContain("2 errors");
 	});
 });
 

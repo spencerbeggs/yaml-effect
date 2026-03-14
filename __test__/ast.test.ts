@@ -266,4 +266,123 @@ describe("getNodeValue", () => {
 		const result = Effect.runSync(getNodeValue(node));
 		expect(result).toEqual({ a: { b: 1, c: [2, 3] } });
 	});
+
+	it("extracts map with non-scalar key", () => {
+		// Numeric key tests the String(extractValue(pair.key)) branch
+		const node = contents("1: one\n2: two");
+		const result = Effect.runSync(getNodeValue(node));
+		expect(result).toEqual({ 1: "one", 2: "two" });
+	});
+
+	it("extracts map with null value pair", () => {
+		const node = contents("key:");
+		const result = Effect.runSync(getNodeValue(node));
+		expect(result).toEqual({ key: null });
+	});
+});
+
+describe("getNodePath (sequence coverage)", () => {
+	it("returns path through nested sequence items", () => {
+		const root = contents("- a\n- b");
+		// offset 0 is within the sequence
+		const result = Effect.runSync(getNodePath(root, 0));
+		expect(Option.isSome(result)).toBe(true);
+	});
+
+	it("returns path to map key within sequence", () => {
+		const root = contents("- a: 1\n- b: 2");
+		// offset 0 is within the sequence
+		const result = Effect.runSync(getNodePath(root, 0));
+		expect(Option.isSome(result)).toBe(true);
+	});
+});
+
+describe("findNode (additional coverage)", () => {
+	it("returns none when navigating string segment through non-map", () => {
+		const root = contents("- 1\n- 2");
+		const result = Effect.runSync(findNode(root, ["key"]));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("returns none when navigating number segment through non-seq", () => {
+		const root = contents("key: value");
+		const result = Effect.runSync(findNode(root, [0]));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("returns none when pair value is null", () => {
+		// Create a map with a null-valued pair
+		const root = contents("key:");
+		const result = Effect.runSync(findNode(root, ["key"]));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("returns none when key is not found in map", () => {
+		const root = contents("a: 1\nb: 2");
+		const result = Effect.runSync(findNode(root, ["nonexistent"]));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("returns none when index is out of bounds in seq", () => {
+		const root = contents("- 1\n- 2");
+		const result = Effect.runSync(findNode(root, [99]));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("navigates through nested map", () => {
+		const root = contents("a:\n  b: value");
+		const result = Effect.runSync(findNode(root, ["a", "b"]));
+		expect(Option.isSome(result)).toBe(true);
+	});
+
+	it("navigates through nested seq", () => {
+		const root = contents("- - a\n  - b");
+		const result = Effect.runSync(findNode(root, [0, 1]));
+		expect(Option.isSome(result)).toBe(true);
+	});
+});
+
+describe("findNodeAtOffset (edge cases)", () => {
+	it("finds node at exact boundary offset", () => {
+		const root = contents("a: 1\nb: 2");
+		// offset 5 is start of "b"
+		const result = Effect.runSync(findNodeAtOffset(root, 5));
+		expect(Option.isSome(result)).toBe(true);
+	});
+
+	it("returns none for offset beyond document end", () => {
+		const root = contents("a: 1");
+		const result = Effect.runSync(findNodeAtOffset(root, 500));
+		expect(Option.isNone(result)).toBe(true);
+	});
+
+	it("finds node inside a sequence", () => {
+		const root = contents("- 10\n- 20\n- 30");
+		// offset 2 is within first item "10"
+		const result = Effect.runSync(findNodeAtOffset(root, 2));
+		expect(Option.isSome(result)).toBe(true);
+		const node = Option.getOrThrow(result);
+		expect(isScalar(node)).toBe(true);
+	});
+
+	it("finds value node inside a map pair", () => {
+		const root = contents("a: 1\nb: 2");
+		// offset 3 is within value "1"
+		const result = Effect.runSync(findNodeAtOffset(root, 3));
+		expect(Option.isSome(result)).toBe(true);
+		const node = Option.getOrThrow(result);
+		expect(isScalar(node)).toBe(true);
+		expect((node as InstanceType<typeof YamlScalar>).value).toBe(1);
+	});
+});
+
+describe("getNodePath (sequence items)", () => {
+	it("returns path with index through sequence", () => {
+		const root = contents("- 10\n- 20\n- 30");
+		// offset 7 is within "20"
+		const result = Effect.runSync(getNodePath(root, 7));
+		expect(Option.isSome(result)).toBe(true);
+		const path = Option.getOrThrow(result);
+		expect(path).toContain(1);
+	});
 });

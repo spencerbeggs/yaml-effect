@@ -6,7 +6,7 @@
 
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { YamlMap, YamlPair, YamlScalar, YamlSeq } from "../src/schemas/YamlAstNodes.js";
+import { YamlAlias, YamlMap, YamlPair, YamlScalar, YamlSeq } from "../src/schemas/YamlAstNodes.js";
 import { YamlDocument } from "../src/schemas/YamlDocument.js";
 import { YamlStringifyOptions } from "../src/schemas/YamlStringifyOptions.js";
 import { parse } from "../src/utils/composer.js";
@@ -441,6 +441,173 @@ describe("Task 16: stringifyDocument", () => {
 		});
 		expect(strDoc(doc).trim()).toBe("[1, 2]");
 	});
+
+	it("stringifies YamlAlias node", () => {
+		const doc = new YamlDocument({
+			contents: new YamlAlias({ name: "ref", offset: 0, length: 4 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("*ref");
+	});
+
+	it("stringifies map with null value pair", () => {
+		const doc = new YamlDocument({
+			contents: new YamlMap({
+				items: [
+					new YamlPair({
+						key: new YamlScalar({ value: "key", style: "plain", offset: 0, length: 3 }),
+						value: null,
+					}),
+				],
+				style: "block",
+				offset: 0,
+				length: 4,
+			}),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("key:");
+	});
+
+	it("stringifies map with multi-line block scalar value", () => {
+		const doc = new YamlDocument({
+			contents: new YamlMap({
+				items: [
+					new YamlPair({
+						key: new YamlScalar({ value: "text", style: "plain", offset: 0, length: 4 }),
+						value: new YamlScalar({ value: "line1\nline2\n", style: "block-literal", offset: 6, length: 20 }),
+					}),
+				],
+				style: "block",
+				offset: 0,
+				length: 30,
+			}),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		const result = strDoc(doc);
+		expect(result).toContain("text: |");
+	});
+
+	it("stringifies seq with nested block map items", () => {
+		const doc = new YamlDocument({
+			contents: new YamlSeq({
+				items: [
+					new YamlMap({
+						items: [
+							new YamlPair({
+								key: new YamlScalar({ value: "a", style: "plain", offset: 0, length: 1 }),
+								value: new YamlScalar({ value: 1, style: "plain", offset: 3, length: 1 }),
+							}),
+							new YamlPair({
+								key: new YamlScalar({ value: "b", style: "plain", offset: 5, length: 1 }),
+								value: new YamlScalar({ value: 2, style: "plain", offset: 8, length: 1 }),
+							}),
+						],
+						style: "block",
+						offset: 0,
+						length: 10,
+					}),
+				],
+				style: "block",
+				offset: 0,
+				length: 12,
+			}),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		const result = strDoc(doc);
+		expect(result).toContain("- a: 1");
+	});
+
+	it("stringifies document with comment", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: "hello", style: "plain", offset: 0, length: 5 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+			comment: "doc comment",
+		});
+		const result = strDoc(doc);
+		expect(result).toContain("# doc comment");
+	});
+
+	it("stringifies scalar with double-quoted style", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: "hello world", style: "double-quoted", offset: 0, length: 13 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		const result = strDoc(doc);
+		expect(result).toContain('"hello world"');
+	});
+
+	it("stringifies scalar with single-quoted style", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: "hello", style: "single-quoted", offset: 0, length: 7 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		const result = strDoc(doc);
+		expect(result).toContain("'hello'");
+	});
+
+	it("stringifies null scalar", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: null, style: "plain", offset: 0, length: 4 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("null");
+	});
+
+	it("stringifies boolean scalar", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: true, style: "plain", offset: 0, length: 4 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("true");
+	});
+
+	it("stringifies number scalar", () => {
+		const doc = new YamlDocument({
+			contents: new YamlScalar({ value: 42, style: "plain", offset: 0, length: 2 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("42");
+	});
+
+	it("stringifies empty map as {}", () => {
+		const doc = new YamlDocument({
+			contents: new YamlMap({ items: [], style: "block", offset: 0, length: 0 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("{}");
+	});
+
+	it("stringifies empty seq as []", () => {
+		const doc = new YamlDocument({
+			contents: new YamlSeq({ items: [], style: "block", offset: 0, length: 0 }),
+			errors: [],
+			warnings: [],
+			directives: [],
+		});
+		expect(strDoc(doc).trim()).toBe("[]");
+	});
 });
 
 // ===========================================================================
@@ -517,5 +684,190 @@ describe("Task 16: Roundtrip (stringify → parse → compare)", () => {
 
 	it("roundtrips empty array", async () => {
 		expect(await roundtrip([])).toEqual([]);
+	});
+
+	it("roundtrips Infinity", async () => {
+		const yaml = await Effect.runPromise(stringify(Number.POSITIVE_INFINITY));
+		expect(yaml.trim()).toBe(".inf");
+	});
+
+	it("roundtrips -Infinity", async () => {
+		const yaml = await Effect.runPromise(stringify(Number.NEGATIVE_INFINITY));
+		expect(yaml.trim()).toBe("-.inf");
+	});
+
+	it("roundtrips NaN", async () => {
+		const yaml = await Effect.runPromise(stringify(Number.NaN));
+		expect(yaml.trim()).toBe(".nan");
+	});
+
+	it("roundtrips multi-line block literal string", async () => {
+		const value = { text: "line1\nline2\nline3\n" };
+		const yaml = await Effect.runPromise(stringify(value));
+		expect(yaml).toContain("|");
+		const parsed = await roundtrip(value);
+		expect(parsed).toEqual(value);
+	});
+});
+
+// ===========================================================================
+// Additional coverage: string rendering edge cases
+// ===========================================================================
+
+describe("String rendering edge cases", () => {
+	it("quotes string that looks like boolean", () => {
+		const result = str("true");
+		expect(result.trim()).toMatch(/["']true["']|true/);
+	});
+
+	it("quotes string that looks like null", () => {
+		const result = str("null");
+		expect(result.trim()).toMatch(/["']null["']|null/);
+	});
+
+	it("quotes string that looks like number", () => {
+		const result = str("42");
+		expect(result.trim()).toMatch(/["']42["']|42/);
+	});
+
+	it("renders string with special chars in double quotes", () => {
+		const result = str("hello\nworld");
+		expect(result).toContain("|");
+	});
+
+	it("renders string with tab in double-quoted style", () => {
+		const result = str("hello\tworld", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\t");
+	});
+
+	it("renders string with carriage return in double-quoted style", () => {
+		const result = str("hello\rworld", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\r");
+	});
+
+	it("renders string with backslash in double-quoted style", () => {
+		const result = str("hello\\world", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\\\");
+	});
+
+	it("renders string with double quotes inside in double-quoted style", () => {
+		const result = str('say "hello"', { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain('\\"');
+	});
+
+	it("stringifies with single-quoted default style", () => {
+		const result = str("hello", { defaultScalarStyle: "single-quoted" });
+		expect(result.trim()).toBe("'hello'");
+	});
+
+	it("stringifies with double-quoted default style", () => {
+		const result = str("hello", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toBe('"hello"');
+	});
+
+	it("stringifies multi-line with block-folded style", () => {
+		const result = str("line1\nline2\n", { defaultScalarStyle: "block-folded" });
+		expect(result).toContain(">");
+	});
+
+	it("stringifies multi-line with single-quoted falls back to block-literal", () => {
+		const result = str("line1\nline2\n", { defaultScalarStyle: "single-quoted" });
+		expect(result).toContain("|");
+	});
+
+	it("stringifies string ending with double newline uses + chomp", () => {
+		const result = str("hello\n\n", { defaultScalarStyle: "block-literal" });
+		expect(result).toContain("|+");
+	});
+
+	it("stringifies string not ending with newline uses - chomp", () => {
+		const result = str("hello", { defaultScalarStyle: "block-literal" });
+		expect(result).toContain("|-");
+	});
+
+	it("stringifies string ending with single newline uses clip (no chomp indicator)", () => {
+		const result = str("hello\n", { defaultScalarStyle: "block-literal" });
+		expect(result).toMatch(/^\|\n/);
+	});
+
+	it("stringifies folded with + chomp for double newline ending", () => {
+		const result = str("hello\n\n", { defaultScalarStyle: "block-folded" });
+		expect(result).toContain(">+");
+	});
+
+	it("stringifies folded with - chomp for no newline ending", () => {
+		const result = str("hello", { defaultScalarStyle: "block-folded" });
+		expect(result).toContain(">-");
+	});
+
+	it("stringifies nested object value as block literal when multi-line", () => {
+		const result = str({ text: "line1\nline2\n" });
+		expect(result).toContain("text: |");
+	});
+
+	it("stringifies object with block-style array value", () => {
+		const result = str({ items: [1, 2, 3] });
+		expect(result).toContain("items:");
+		expect(result).toContain("- 1");
+	});
+
+	it("quotes empty string", () => {
+		const result = str("");
+		expect(result.trim()).toMatch(/^["']{2}$/);
+	});
+
+	it("quotes string that looks like octal number", () => {
+		const result = str("0o17");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string that looks like hex number", () => {
+		const result = str("0xFF");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string that looks like integer", () => {
+		const result = str("123");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string that looks like float", () => {
+		const result = str("3.14");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string that looks like infinity", () => {
+		const result = str(".inf");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string that looks like NaN", () => {
+		const result = str(".nan");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string starting with indicator char", () => {
+		const result = str("- not a seq item");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string starting with space", () => {
+		const result = str(" leading space");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string containing ': ' (mapping indicator)", () => {
+		const result = str("key: value");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string ending with colon", () => {
+		const result = str("trailing:");
+		expect(result.trim()).toMatch(/["']/);
+	});
+
+	it("quotes string containing ' #' (comment indicator)", () => {
+		const result = str("value #comment");
+		expect(result.trim()).toMatch(/["']/);
 	});
 });

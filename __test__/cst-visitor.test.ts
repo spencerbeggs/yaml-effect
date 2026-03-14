@@ -215,6 +215,76 @@ describe("visitCST()", () => {
 		}).not.toThrow();
 	});
 
+	it("handles nested block map (scalar key followed by block-map value)", () => {
+		const yaml = "parent:\n  child: value\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("CstKeyEvent");
+		expect(tags).toContain("CstValueEvent");
+		expect(tags).toContain("CstMapStartEvent");
+		expect(tags).toContain("CstMapEndEvent");
+	});
+
+	it("handles flow map as value in block map", () => {
+		const yaml = "key: {a: 1, b: 2}\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("CstMapStartEvent");
+		expect(tags).toContain("CstKeyEvent");
+		expect(tags).toContain("CstValueEvent");
+	});
+
+	it("handles sequence as value in block map", () => {
+		const yaml = "items:\n  - a\n  - b\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("CstSeqStartEvent");
+		expect(tags).toContain("CstSeqEndEvent");
+	});
+
+	it("handles alias as value in block map", () => {
+		const yaml = "anchor: &ref value\nalias: *ref\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const aliases = events.filter((e) => e._tag === "CstAliasEvent");
+		expect(aliases.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("handles flow map with nested flow map", () => {
+		const yaml = "key: {a: {b: 1}}\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const mapStarts = events.filter((e) => e._tag === "CstMapStartEvent");
+		expect(mapStarts.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it("handles flow map with sequence value", () => {
+		const yaml = "key: {a: [1, 2]}\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("CstSeqStartEvent");
+		expect(tags).toContain("CstSeqEndEvent");
+	});
+
+	it("handles flow map with alias", () => {
+		const yaml = "anchor: &ref value\nkey: {a: *ref}\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const aliases = events.filter((e) => e._tag === "CstAliasEvent");
+		expect(aliases.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("handles comment inside flow map", () => {
+		const yaml = "key: {a: 1 # comment\n, b: 2}\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const comments = events.filter((e) => e._tag === "CstCommentEvent");
+		expect(comments.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("handles deeply nested block maps", () => {
+		const yaml = "a:\n  b:\n    c: value\n";
+		const events = Effect.runSync(Stream.runCollect(visitCST(yaml)).pipe(Effect.map((c) => [...c])));
+		const mapStarts = events.filter((e) => e._tag === "CstMapStartEvent");
+		expect(mapStarts.length).toBeGreaterThanOrEqual(2);
+	});
+
 	it("supports early termination via Stream.take", () => {
 		const events = Effect.runSync(
 			Stream.runCollect(visitCST("a: 1\nb: 2\nc: 3").pipe(Stream.take(3))).pipe(Effect.map((c) => [...c])),

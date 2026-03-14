@@ -38,6 +38,27 @@ export class YamlDirective extends Schema.Class<YamlDirective>("YamlDirective")(
  *   content.
  * - `comment` — optional document-level comment text.
  *
+ * @example
+ * ```typescript
+ * import type { YamlNode } from "yaml-effect";
+ * import { isMap, isScalar, parseDocument } from "yaml-effect";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* parseDocument("name: Alice\nage: 30");
+ *
+ *   // Access the root AST node
+ *   const root: YamlNode | null = doc.contents;
+ *   if (root && isMap(root)) {
+ *     console.log(root.items.length); // 2
+ *   }
+ *
+ *   // Check for parse errors and warnings
+ *   console.log(doc.errors.length);   // 0
+ *   console.log(doc.warnings.length); // 0
+ * });
+ * ```
+ *
  * @public
  */
 export class YamlDocument extends Schema.Class<YamlDocument>("YamlDocument")({

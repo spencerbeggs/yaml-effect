@@ -34,7 +34,7 @@ export const YamlStringifyErrorBase = Data.TaggedError("YamlStringifyError");
  * @example Catching with `Effect.catchTag`
  * ```ts
  * import { Effect } from "effect";
- * import { stringify } from "@spencerbeggs/yaml-effect";
+ * import { stringify } from "yaml-effect";
  *
  * const program = stringify(circularValue).pipe(
  *   Effect.catchTag("YamlStringifyError", (e) => {

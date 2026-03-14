@@ -411,3 +411,618 @@ describe("Task 15: Anchors, aliases, comments, errors, multi-document, tags", ()
 		});
 	});
 });
+
+// ===========================================================================
+// Additional coverage: tagged scalar resolution
+// ===========================================================================
+
+describe("Tagged scalar resolution", () => {
+	it("resolves !!str to string", () => {
+		expect(val("!!str 42")).toBe("42");
+	});
+
+	it("resolves !!str with tag URI", () => {
+		expect(val("!!str true")).toBe("true");
+	});
+
+	it("resolves !!int to integer", () => {
+		expect(val("!!int 42")).toBe(42);
+	});
+
+	it("resolves !!int with octal", () => {
+		expect(val("!!int 0o17")).toBe(15);
+	});
+
+	it("resolves !!int with hex", () => {
+		expect(val("!!int 0xA")).toBe(10);
+	});
+
+	it("resolves !!int with invalid value as string", () => {
+		expect(val("!!int hello")).toBe("hello");
+	});
+
+	it("resolves !!float to float", () => {
+		expect(val("!!float 3.14")).toBe(3.14);
+	});
+
+	it("resolves !!float .inf to Infinity", () => {
+		expect(val("!!float .inf")).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	it("resolves !!float -.inf to -Infinity", () => {
+		expect(val("!!float -.inf")).toBe(Number.NEGATIVE_INFINITY);
+	});
+
+	it("resolves !!float .nan to NaN", () => {
+		expect(Number.isNaN(val("!!float .nan"))).toBe(true);
+	});
+
+	it("resolves !!float with invalid value as string", () => {
+		expect(val("!!float hello")).toBe("hello");
+	});
+
+	it("resolves !!bool true", () => {
+		expect(val("!!bool true")).toBe(true);
+	});
+
+	it("resolves !!bool TRUE", () => {
+		expect(val("!!bool TRUE")).toBe(true);
+	});
+
+	it("resolves !!bool false", () => {
+		expect(val("!!bool false")).toBe(false);
+	});
+
+	it("resolves !!bool FALSE", () => {
+		expect(val("!!bool FALSE")).toBe(false);
+	});
+
+	it("resolves !!bool with invalid value as string", () => {
+		expect(val("!!bool maybe")).toBe("maybe");
+	});
+
+	it("resolves !!null to null", () => {
+		expect(val("!!null ~")).toBeNull();
+	});
+
+	it("resolves unknown tag as raw string", () => {
+		expect(val("!custom value")).toBe("value");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: type resolution edge cases
+// ===========================================================================
+
+describe("Type resolution edge cases", () => {
+	it("resolves .nan to NaN", () => {
+		expect(Number.isNaN(val(".nan"))).toBe(true);
+	});
+
+	it("resolves .NaN to NaN", () => {
+		expect(Number.isNaN(val(".NaN"))).toBe(true);
+	});
+
+	it("resolves .NAN to NaN", () => {
+		expect(Number.isNaN(val(".NAN"))).toBe(true);
+	});
+
+	it("resolves .inf to Infinity", () => {
+		expect(val(".inf")).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	it("resolves .Inf to Infinity", () => {
+		expect(val(".Inf")).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	it("resolves -.inf to -Infinity", () => {
+		expect(val("-.inf")).toBe(Number.NEGATIVE_INFINITY);
+	});
+
+	it("resolves +.inf to Infinity", () => {
+		expect(val("+.inf")).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	it("resolves octal number 0o10", () => {
+		expect(val("0o10")).toBe(8);
+	});
+
+	it("resolves hex number 0xFF", () => {
+		expect(val("0xFF")).toBe(255);
+	});
+
+	it("resolves null variants", () => {
+		expect(val("null")).toBeNull();
+		expect(val("Null")).toBeNull();
+		expect(val("NULL")).toBeNull();
+		expect(val("~")).toBeNull();
+	});
+
+	it("resolves boolean variants", () => {
+		expect(val("true")).toBe(true);
+		expect(val("True")).toBe(true);
+		expect(val("TRUE")).toBe(true);
+		expect(val("false")).toBe(false);
+		expect(val("False")).toBe(false);
+		expect(val("FALSE")).toBe(false);
+	});
+
+	it("resolves scientific notation", () => {
+		expect(val("1.5e3")).toBe(1500);
+	});
+
+	it("resolves negative number", () => {
+		expect(val("-42")).toBe(-42);
+	});
+
+	it("resolves float with leading dot", () => {
+		expect(val(".5")).toBe(0.5);
+	});
+});
+
+// ===========================================================================
+// Additional coverage: block scalar edge cases
+// ===========================================================================
+
+describe("Block scalar edge cases", () => {
+	it("parses literal block scalar with clip chomp (default)", () => {
+		const result = val("|\n  hello\n  world");
+		expect(result).toBe("hello\nworld\n");
+	});
+
+	it("parses literal block scalar with keep chomp", () => {
+		const result = val("|+\n  hello\n  world\n");
+		expect(typeof result).toBe("string");
+		expect((result as string).endsWith("\n")).toBe(true);
+	});
+
+	it("parses literal block scalar with strip chomp (-)", () => {
+		const result = val("|-\n  hello\n  world\n");
+		expect(typeof result).toBe("string");
+		expect((result as string).endsWith("\n")).toBe(false);
+	});
+
+	it("parses folded block scalar", () => {
+		const result = val(">\n  hello\n  world");
+		expect(typeof result).toBe("string");
+	});
+
+	it("parses folded block scalar with strip chomp", () => {
+		const result = val(">-\n  hello\n  world\n");
+		expect(typeof result).toBe("string");
+		expect((result as string).endsWith("\n")).toBe(false);
+	});
+
+	it("parses folded block scalar with keep chomp", () => {
+		const result = val(">+\n  hello\n  world\n\n");
+		expect(typeof result).toBe("string");
+	});
+
+	it("parses block scalar with explicit indent", () => {
+		const result = val("|2\n  hello\n  world");
+		expect(typeof result).toBe("string");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: double-quoted escape sequences
+// ===========================================================================
+
+describe("Double-quoted escape sequences", () => {
+	it("handles \\n", () => {
+		expect(val('"hello\\nworld"')).toBe("hello\nworld");
+	});
+
+	it("handles \\t", () => {
+		expect(val('"hello\\tworld"')).toBe("hello\tworld");
+	});
+
+	it("handles \\\\ (escaped backslash)", () => {
+		expect(val('"hello\\\\world"')).toBe("hello\\world");
+	});
+
+	it('handles \\" (escaped quote)', () => {
+		expect(val('"hello\\"world"')).toBe('hello"world');
+	});
+
+	it("handles \\/ (escaped slash)", () => {
+		expect(val('"hello\\/world"')).toBe("hello/world");
+	});
+
+	it("handles \\0 (null char)", () => {
+		expect(val('"\\0"')).toBe("\0");
+	});
+
+	it("handles \\a (bell)", () => {
+		expect(val('"\\a"')).toBe("\x07");
+	});
+
+	it("handles \\e (escape)", () => {
+		expect(val('"\\e"')).toBe("\x1B");
+	});
+
+	it("handles \\v (vertical tab)", () => {
+		expect(val('"\\v"')).toBe("\x0B");
+	});
+
+	it("handles \\b (backspace)", () => {
+		expect(val('"\\b"')).toBe("\b");
+	});
+
+	it("handles \\f (form feed)", () => {
+		expect(val('"\\f"')).toBe("\f");
+	});
+
+	it("handles \\r (carriage return)", () => {
+		expect(val('"\\r"')).toBe("\r");
+	});
+
+	it("handles \\x hex escape", () => {
+		expect(val('"\\x41"')).toBe("A");
+	});
+
+	it("handles \\u unicode escape", () => {
+		expect(val('"\\u0041"')).toBe("A");
+	});
+
+	it("handles \\U unicode escape (8-digit)", () => {
+		expect(val('"\\U00000041"')).toBe("A");
+	});
+
+	it("handles escaped space", () => {
+		expect(String(val('"\\  "')).includes(" ")).toBe(true);
+	});
+
+	it("handles \\N (next line)", () => {
+		expect(val('"\\N"')).toBe("\u0085");
+	});
+
+	it("handles \\_ (non-breaking space)", () => {
+		expect(val('"\\_ "')).toContain("\u00A0");
+	});
+
+	it("handles \\L (line separator)", () => {
+		expect(val('"\\L"')).toBe("\u2028");
+	});
+
+	it("handles \\P (paragraph separator)", () => {
+		expect(val('"\\P"')).toBe("\u2029");
+	});
+
+	it("handles line fold continuation (backslash-newline skipping whitespace)", () => {
+		// backslash followed by newline => continuation (skip whitespace)
+		const result = val('"hello \\\n    world"');
+		expect(result).toBe("hello world");
+	});
+
+	it("handles bare newline in double-quoted as space fold", () => {
+		const result = val('"hello\nworld"');
+		expect(result).toBe("hello world");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: single-quoted strings
+// ===========================================================================
+
+describe("Single-quoted strings", () => {
+	it("preserves literal content", () => {
+		expect(val("'hello'")).toBe("hello");
+	});
+
+	it("handles escaped single quote", () => {
+		expect(val("'it''s'")).toBe("it's");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: anchor/alias scenarios
+// ===========================================================================
+
+describe("Anchor and alias scenarios", () => {
+	it("resolves alias in a sequence", () => {
+		const result = val("- &ref value\n- *ref");
+		expect(result).toEqual(["value", "value"]);
+	});
+
+	it("resolves alias in a mapping value", () => {
+		const result = val("a: &ref hello\nb: *ref");
+		expect(result).toEqual({ a: "hello", b: "hello" });
+	});
+
+	it("reports error for undefined alias", () => {
+		const result = Effect.runSync(Effect.either(parseDocument("a: *undefined")));
+		expect(result._tag).toBe("Left");
+	});
+
+	it("reports error when alias count exceeds max", () => {
+		const result = Effect.runSync(
+			Effect.either(parseDocument("a: &ref value\nb: *ref\nc: *ref\nd: *ref", { maxAliasCount: 2 })),
+		);
+		expect(result._tag).toBe("Left");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: document-level comments
+// ===========================================================================
+
+describe("Document-level comments", () => {
+	it("attaches document comment", () => {
+		const result = doc("# top comment\na: 1");
+		expect(result.comment).toBeDefined();
+	});
+
+	it("document without comment has undefined comment", () => {
+		const result = doc("a: 1");
+		expect(result.comment).toBeUndefined();
+	});
+});
+
+// ===========================================================================
+// Additional coverage: flow collections
+// ===========================================================================
+
+describe("Flow collections", () => {
+	it("parses nested flow map", () => {
+		const result = val("{a: {b: 1}}");
+		expect(result).toEqual({ a: { b: 1 } });
+	});
+
+	it("parses flow map with multiple pairs", () => {
+		const result = val("{a: 1, b: 2, c: 3}");
+		expect(result).toEqual({ a: 1, b: 2, c: 3 });
+	});
+
+	it("parses flow seq with mixed types", () => {
+		const result = val("[1, hello, true, null]");
+		expect(result).toEqual([1, "hello", true, null]);
+	});
+
+	it("parses nested flow seq", () => {
+		const result = val("[[1, 2], [3, 4]]");
+		expect(result).toEqual([
+			[1, 2],
+			[3, 4],
+		]);
+	});
+
+	it("parses flow map inside flow seq", () => {
+		const result = val("[{a: 1}, {b: 2}]");
+		expect(result).toEqual([{ a: 1 }, { b: 2 }]);
+	});
+
+	it("parses flow seq inside flow map", () => {
+		const result = val("{a: [1, 2]}");
+		expect(result).toEqual({ a: [1, 2] });
+	});
+});
+
+// ===========================================================================
+// Additional coverage: complex mapping structures
+// ===========================================================================
+
+describe("Complex mapping structures", () => {
+	it("parses flat block map (colon-separated pairs)", () => {
+		const result = val("a: 1\nb: 2\nc: 3");
+		expect(result).toEqual({ a: 1, b: 2, c: 3 });
+	});
+
+	it("parses block map with nested block map value", () => {
+		const result = val("outer:\n  inner: value");
+		expect(result).toEqual({ outer: { inner: "value" } });
+	});
+
+	it("parses block map with nested block seq value", () => {
+		const result = val("items:\n  - 1\n  - 2");
+		expect(result).toEqual({ items: [1, 2] });
+	});
+
+	it("parses block map with flow map value", () => {
+		const result = val("config: {a: 1, b: 2}");
+		expect(result).toEqual({ config: { a: 1, b: 2 } });
+	});
+
+	it("parses block map with flow seq value", () => {
+		const result = val("items: [1, 2, 3]");
+		expect(result).toEqual({ items: [1, 2, 3] });
+	});
+
+	it("parses block map with alias value", () => {
+		const result = val("a: &ref hello\nb: *ref");
+		expect(result).toEqual({ a: "hello", b: "hello" });
+	});
+
+	it("parses block seq with nested block map items", () => {
+		const result = val("- a: 1\n  b: 2\n- c: 3");
+		expect(result).toEqual([{ a: 1, b: 2 }, { c: 3 }]);
+	});
+
+	it("parses block seq with nested block seq items", () => {
+		const result = val("- - 1\n  - 2\n- - 3");
+		expect(result).toEqual([[1, 2], [3]]);
+	});
+
+	it("parses deeply nested structure", () => {
+		const result = val("a:\n  b:\n    c:\n      d: value");
+		expect(result).toEqual({ a: { b: { c: { d: "value" } } } });
+	});
+
+	it("parses null values in block maps", () => {
+		const result = val("key:\n  subkey: value");
+		const obj = result as Record<string, unknown>;
+		expect(obj.key).toEqual({ subkey: "value" });
+	});
+
+	it("handles comment between pairs in a block map", () => {
+		const result = val("a: 1\n# comment\nb: 2");
+		expect(result).toEqual({ a: 1, b: 2 });
+	});
+
+	it("handles empty flow map", () => {
+		const result = val("{}");
+		expect(result).toEqual({});
+	});
+
+	it("handles empty flow seq", () => {
+		const result = val("[]");
+		expect(result).toEqual([]);
+	});
+
+	it("handles flow map with alias value", () => {
+		const result = val("a: &ref hello\nb: {c: *ref}");
+		expect(result).toEqual({ a: "hello", b: { c: "hello" } });
+	});
+
+	it("handles block seq with alias items", () => {
+		const result = val("- &ref hello\n- *ref\n- *ref");
+		expect(result).toEqual(["hello", "hello", "hello"]);
+	});
+
+	it("handles flow seq with alias items", () => {
+		const result = val("a: &ref hello\nb: [*ref, *ref]");
+		expect(result).toEqual({ a: "hello", b: ["hello", "hello"] });
+	});
+});
+
+// ===========================================================================
+// Additional coverage: multi-line double-quoted strings
+// ===========================================================================
+
+describe("Multi-line double-quoted strings", () => {
+	it("folds newlines in double-quoted strings", () => {
+		const result = val('"hello\nworld"');
+		// Newline in double-quoted is folded to space
+		expect(typeof result).toBe("string");
+	});
+
+	it("handles line continuation with backslash-newline", () => {
+		const result = val('"hello\\\n  world"');
+		expect(typeof result).toBe("string");
+	});
+});
+
+// ===========================================================================
+// Additional coverage: multi-document
+// ===========================================================================
+
+describe("Multi-document parsing", () => {
+	it("parses multiple documents", () => {
+		const docs = Effect.runSync(parseAllDocuments("---\na: 1\n---\nb: 2"));
+		expect(docs.length).toBe(2);
+	});
+
+	it("each document has its own contents", () => {
+		const docs = Effect.runSync(parseAllDocuments("---\na: 1\n---\nb: 2"));
+		expect(docs[0].contents).toBeDefined();
+		expect(docs[1].contents).toBeDefined();
+	});
+});
+
+// ===========================================================================
+// Additional coverage: error handling paths
+// ===========================================================================
+
+describe("Error handling in composer", () => {
+	it("handles tab indentation as error", () => {
+		const result = Effect.runSync(Effect.either(parseDocument("a:\n\tb: 1")));
+		expect(result._tag).toBe("Left");
+	});
+
+	it("handles empty document", () => {
+		const result = doc("");
+		expect(result.contents).toBeNull();
+	});
+
+	it("handles document with only comments", () => {
+		const result = doc("# just a comment");
+		expect(result.comment).toBeDefined();
+	});
+
+	it("parses nested flow seq in block map", () => {
+		const result = val("a: [1, [2, 3]]");
+		expect(result).toEqual({ a: [1, [2, 3]] });
+	});
+
+	it("parses nested flow map in block seq", () => {
+		const result = val("- {a: 1}\n- {b: 2}");
+		expect(result).toEqual([{ a: 1 }, { b: 2 }]);
+	});
+
+	it("parses block map value that is a flow seq", () => {
+		const result = val("items: [a, b, c]");
+		expect(result).toEqual({ items: ["a", "b", "c"] });
+	});
+
+	it("parses block map with anchored values", () => {
+		const result = val("a: &x hello\nb: &y world\nc: *x\nd: *y");
+		expect(result).toEqual({ a: "hello", b: "world", c: "hello", d: "world" });
+	});
+
+	it("parses flow map with anchored values", () => {
+		const result = val("a: &ref val\nb: {k: *ref}");
+		expect(result).toEqual({ a: "val", b: { k: "val" } });
+	});
+
+	it("parses block seq with nested block maps", () => {
+		const result = val("- name: Alice\n  age: 30\n- name: Bob\n  age: 25");
+		expect(result).toEqual([
+			{ name: "Alice", age: 30 },
+			{ name: "Bob", age: 25 },
+		]);
+	});
+
+	it("parses flow seq inside block seq", () => {
+		const result = val("- [1, 2]\n- [3, 4]");
+		expect(result).toEqual([
+			[1, 2],
+			[3, 4],
+		]);
+	});
+
+	it("parses deeply nested flow structures", () => {
+		const result = val("{a: {b: {c: [1, {d: 2}]}}}");
+		expect(result).toEqual({ a: { b: { c: [1, { d: 2 }] } } });
+	});
+
+	it("parses block scalar with explicit indent indicator", () => {
+		const result = val("|2\n  hello\n  world");
+		expect(typeof result).toBe("string");
+	});
+
+	it("parses folded block scalar with content", () => {
+		const result = val(">\n  line1\n  line2\n  line3");
+		expect(typeof result).toBe("string");
+	});
+
+	it("parses block scalar with keep chomp and trailing newlines", () => {
+		const result = val("|+\n  hello\n\n\n");
+		expect(typeof result).toBe("string");
+		expect((result as string).endsWith("\n")).toBe(true);
+	});
+
+	it("parses folded block scalar folding lines", () => {
+		const result = val(">\n  hello\n  world");
+		expect(typeof result).toBe("string");
+	});
+
+	it("parses block map with flow-seq as nested value", () => {
+		const result = val("outer:\n  inner: [1, 2, 3]");
+		expect(result).toEqual({ outer: { inner: [1, 2, 3] } });
+	});
+
+	it("parses block map with flow-map as nested value", () => {
+		const result = val("outer:\n  inner: {a: 1}");
+		expect(result).toEqual({ outer: { inner: { a: 1 } } });
+	});
+
+	it("parses block map with alias in nested block-map", () => {
+		const result = val("ref: &val hello\nouter:\n  inner: *val");
+		expect(result).toEqual({ ref: "hello", outer: { inner: "hello" } });
+	});
+
+	it("parses block map with block-seq as nested value", () => {
+		const result = val("outer:\n  inner:\n    - 1\n    - 2");
+		expect(result).toEqual({ outer: { inner: [1, 2] } });
+	});
+});
