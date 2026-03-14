@@ -29,9 +29,9 @@ Load only the documents relevant to the task at hand. For example:
 - Debugging visitor events? Load `visitor.md` and `schemas.md`.
 - Understanding the full pipeline? Start with `architecture.md`.
 
-## Relationship to Historical Docs
+## Relationship to User-Facing Docs
 
-The phase-based design specs in `docs/superpowers/specs/` and implementation
-plans in `docs/superpowers/plans/` are historical documents from the
-development process. These `docs/design/` documents are the authoritative
-reference for the final implemented state.
+User-facing documentation lives in `docs/` (e.g., `docs/getting-started.md`,
+`docs/parsing.md`). These design docs in `.claude/design/yaml-effect/` are
+internal implementation references for developers and agents, not for end
+users.
