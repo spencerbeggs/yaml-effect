@@ -8,7 +8,7 @@
  * Every entry must include a reason string explaining WHY.
  *
  * Generated from first triage run on 2026-03-14.
- * Updated: multi-document harness fix (issue #6) — 757/895 assertions passing.
+ * Updated: multi-document harness, block scalar, tagged empty value, anchor name fixes — 771/902 assertions passing.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -16,9 +16,8 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser rejects valid YAML (16)
+	// Parser rejects valid YAML (14)
 	"2JQS": "Parser rejects valid YAML: Block Mapping with Missing Keys",
-	"2SXE": "Parser rejects valid YAML: Anchors With Colon in Name",
 	"3RLN/01": "Parser rejects valid YAML: Leading tabs in double quoted",
 	"3RLN/04": "Parser rejects valid YAML: Leading tabs in double quoted",
 	"6CA3": "Parser rejects valid YAML: Tab indented top flow",
@@ -32,7 +31,6 @@ export const XFAIL: Record<string, string> = {
 	Q5MG: "Parser rejects valid YAML: Tab at beginning of line followed by a flow mapping",
 	S3PD: "Parser rejects valid YAML: Spec Example 8.18. Implicit Block Mapping Entries",
 	V9D5: "Parser rejects valid YAML: Spec Example 8.19. Compact Block Mappings",
-	W5VH: "Parser rejects valid YAML: Allowed characters in alias",
 
 	// Parser accepts invalid YAML (87)
 	"236B": "Parser accepts invalid YAML: Invalid value after mapping",
@@ -138,6 +136,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"2EBW": ["output"],
 	"2G84/03": ["json", "roundtrip"],
 	"2LFX": ["output"],
+	"2SXE": ["output"],
 	"2XXW": ["output"],
 	"33X3": ["output"],
 	"35KP": ["json", "output"],
@@ -220,7 +219,6 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	A6F9: ["output"],
 	A984: ["json", "output"],
 	AB8U: ["json", "output"],
-	AVM7: ["json"],
 	AZ63: ["json"],
 	B3HG: ["output"],
 	BEC7: ["output"],
@@ -285,7 +283,6 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	L383: ["output"],
 	L94M: ["output"],
 	L9U5: ["json", "output"],
-	LE5A: ["json"],
 	LP6E: ["output"],
 	LQZ7: ["json", "output"],
 	LX3P: ["output"],
@@ -347,13 +344,13 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"VJP3/01": ["output"],
 	W42U: ["json", "output"],
 	W4TN: ["json", "output"],
-	WZ62: ["json", "output"],
+	WZ62: ["output"],
 	X38W: ["output"],
 	X8DW: ["json", "output"],
 	XLQ9: ["json", "output"],
 	XV9V: ["json", "output"],
 	XW4D: ["output"],
-	Y2GN: ["json", "output"],
+	Y2GN: ["output"],
 	"Y79Y/001": ["output"],
 	Z67P: ["output"],
 	Z9M4: ["output"],

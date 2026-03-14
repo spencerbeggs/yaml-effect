@@ -724,14 +724,8 @@ export function createScanner(text: string): YamlScanner {
 		const sCol = col;
 		advance(); // skip '&'
 		const nameStart = pos;
-		while (
-			pos < text.length &&
-			!isWhitespace(peek()) &&
-			!isNewline(peek()) &&
-			!isFlowIndicator(peek()) &&
-			peek() !== ":" &&
-			peek() !== "#"
-		) {
+		// YAML 1.2 ns-anchor-char: any non-whitespace char except c-flow-indicator
+		while (pos < text.length && !isWhitespace(peek()) && !isNewline(peek()) && !isFlowIndicator(peek())) {
 			advance();
 		}
 		const name = text.slice(nameStart, pos);
@@ -748,14 +742,8 @@ export function createScanner(text: string): YamlScanner {
 		const sCol = col;
 		advance(); // skip '*'
 		const nameStart = pos;
-		while (
-			pos < text.length &&
-			!isWhitespace(peek()) &&
-			!isNewline(peek()) &&
-			!isFlowIndicator(peek()) &&
-			peek() !== ":" &&
-			peek() !== "#"
-		) {
+		// YAML 1.2 ns-anchor-char: any non-whitespace char except c-flow-indicator
+		while (pos < text.length && !isWhitespace(peek()) && !isNewline(peek()) && !isFlowIndicator(peek())) {
 			advance();
 		}
 		const name = text.slice(nameStart, pos);
