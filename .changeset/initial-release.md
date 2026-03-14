@@ -1,5 +1,5 @@
 ---
-"@spencerbeggs/yaml-effect": minor
+"yaml-effect": minor
 ---
 
 ## Features

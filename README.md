@@ -1,11 +1,9 @@
 # yaml-effect
 
-[![npm version](https://img.shields.io/npm/v/@spencerbeggs/yaml-effect)](https://www.npmjs.com/package/@spencerbeggs/yaml-effect)
+[![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript.
-Zero runtime dependencies beyond Effect -- no wrappers, no ports, just a
-clean-room YAML 1.2 implementation designed for the Effect ecosystem.
+A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect — no wrappers, no ports, just a clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 
 ## Features
 
@@ -17,16 +15,9 @@ clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 
 ### Why does this module exist?
 
-If you just need to parse YAML into a JavaScript object, use
-[yaml](https://www.npmjs.com/package/yaml). It is depended upon by 13,000+
-packages, is battle-tested, and covers the full YAML 1.2 specification.
+If you just need to parse YAML into a JavaScript object, use [yaml](https://www.npmjs.com/package/yaml). It is depended upon by 13,000+ packages, is battle-tested, and covers the full YAML 1.2 specification.
 
-This library is for Effect-based programs that need deeper introspection and
-manipulation of YAML documents: typed parse errors you can `catchTag`, Schema
-pipelines that validate YAML strings into domain types, AST and CST access,
-non-destructive formatting and path-based modification, semantic equality
-comparisons, and SAX-style visitor streams that are composable in Effect
-pipelines.
+This library is for Effect-based programs that need deeper introspection and manipulation of YAML documents: typed parse errors you can `catchTag`, Schema pipelines that validate YAML strings into domain types, AST and CST access, non-destructive formatting and path-based modification, semantic equality comparisons, and SAX-style visitor streams that are composable in Effect pipelines.
 
 > **Note:** yaml-effect is new and may introduce breaking changes before a
 > 1.0.0 release.
@@ -34,17 +25,16 @@ pipelines.
 ## Installation
 
 ```bash
-npm install @spencerbeggs/yaml-effect effect
+npm install yaml-effect effect
 ```
 
-> **Peer dependency:** `effect` (>= 3.x) must be installed alongside
-> yaml-effect.
+> **Peer dependency:** `effect` (>= 3.x) must be installed alongside `yaml-effect`.
 
 ## Quick Start
 
 ```typescript
 import { Effect } from "effect";
-import { parse, stringify } from "@spencerbeggs/yaml-effect";
+import { parse, stringify } from "yaml-effect";
 
 const program = Effect.gen(function* () {
   const value = yield* parse("name: Alice\nage: 30");
@@ -59,8 +49,7 @@ Effect.runSync(program);
 
 ## Documentation
 
-For API reference, configuration options, and advanced usage, see
-[docs/](./docs/).
+For API reference, configuration options, and advanced usage, see [docs](./docs/).
 
 ## License
 
