@@ -1026,3 +1026,50 @@ describe("Error handling in composer", () => {
 		expect(result).toEqual({ outer: { inner: [1, 2] } });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// BigInt for large integers
+// ---------------------------------------------------------------------------
+
+describe("large integer handling", () => {
+	it("returns bigint for decimal exceeding MAX_SAFE_INTEGER", () => {
+		const result = val("99999999999999999999");
+		expect(typeof result).toBe("bigint");
+		expect(result).toBe(99999999999999999999n);
+	});
+
+	it("returns bigint for hex exceeding MAX_SAFE_INTEGER", () => {
+		const result = val("0xFFFFFFFFFFFFFFFF");
+		expect(typeof result).toBe("bigint");
+		expect(result).toBe(0xffffffffffffffffn);
+	});
+
+	it("returns bigint for octal exceeding MAX_SAFE_INTEGER", () => {
+		const result = val("0o1777777777777777777777");
+		expect(typeof result).toBe("bigint");
+	});
+
+	it("returns number for safe decimal integers", () => {
+		const result = val("42");
+		expect(typeof result).toBe("number");
+		expect(result).toBe(42);
+	});
+
+	it("returns number for safe hex integers", () => {
+		const result = val("0xFF");
+		expect(typeof result).toBe("number");
+		expect(result).toBe(255);
+	});
+
+	it("returns number for safe octal integers", () => {
+		const result = val("0o77");
+		expect(typeof result).toBe("number");
+		expect(result).toBe(63);
+	});
+
+	it("returns bigint for negative large decimal", () => {
+		const result = val("-99999999999999999999");
+		expect(typeof result).toBe("bigint");
+		expect(result).toBe(-99999999999999999999n);
+	});
+});

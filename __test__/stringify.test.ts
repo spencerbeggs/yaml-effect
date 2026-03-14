@@ -871,3 +871,70 @@ describe("String rendering edge cases", () => {
 		expect(result.trim()).toMatch(/["']/);
 	});
 });
+
+// ===========================================================================
+// BigInt stringification
+// ===========================================================================
+
+describe("BigInt stringification", () => {
+	it("stringifies a bigint value", () => {
+		expect(str(99999999999999999999n)).toBe("99999999999999999999\n");
+	});
+
+	it("stringifies negative bigint", () => {
+		expect(str(-42n)).toBe("-42\n");
+	});
+
+	it("stringifies bigint zero", () => {
+		expect(str(0n)).toBe("0\n");
+	});
+
+	it("stringifies bigint in object value", () => {
+		const result = str({ count: 99999999999999999999n });
+		expect(result).toContain("count: 99999999999999999999");
+	});
+});
+
+// ===========================================================================
+// Control character handling
+// ===========================================================================
+
+describe("Control character handling", () => {
+	it("quotes string containing C0 control character (BEL)", () => {
+		const result = str("hello\x07world");
+		expect(result.trim()).toMatch(/"/);
+	});
+
+	it("escapes control chars in double-quoted output", () => {
+		const result = str("a\x01b", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\x01");
+	});
+
+	it("escapes NUL character", () => {
+		const result = str("a\x00b", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\x00");
+	});
+
+	it("escapes form feed character", () => {
+		const result = str("a\x0cb", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\x0c");
+	});
+
+	it("escapes vertical tab character", () => {
+		const result = str("a\x0bb", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\x0b");
+	});
+
+	it("does not escape regular tab character", () => {
+		// Tab is not a C0 control char that gets \\x escaping
+		const result = str("a\tb", { defaultScalarStyle: "double-quoted" });
+		expect(result.trim()).toContain("\\t");
+		expect(result.trim()).not.toContain("\\x09");
+	});
+
+	it("forces quoting when string contains control chars", () => {
+		// Even with plain default, control chars force double-quoted output
+		const result = str("hello\x02world");
+		expect(result.trim()).toMatch(/"/);
+	});
+});

@@ -195,3 +195,64 @@ describe("makeYamlDocumentSchema", () => {
 		expect(doc.directives.length).toBeGreaterThan(0);
 	});
 });
+
+// ===========================================================================
+// Error formatting with position info
+// ===========================================================================
+
+describe("Schema error formatting", () => {
+	it("includes line/column in parse error for invalid YAML", () => {
+		const effect = Schema.decode(YamlFromString)("a:\n\tb: 1");
+		const result = Effect.runSync(Effect.either(effect));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			const msg = String(result.left);
+			expect(msg).toMatch(/line|column/i);
+		}
+	});
+
+	it("includes line/column in typed schema parse error", () => {
+		const PersonSchema = Schema.Struct({
+			name: Schema.String,
+			age: Schema.Number,
+		});
+		const schema = makeYamlSchema(PersonSchema);
+		// Invalid YAML with tab indentation triggers parser error with position
+		const effect = Schema.decode(schema)("a:\n\tb: 1");
+		const result = Effect.runSync(Effect.either(effect));
+		expect(result._tag).toBe("Left");
+	});
+
+	it("reports error without position for schema validation failure", () => {
+		const PersonSchema = Schema.Struct({
+			name: Schema.String,
+			age: Schema.Number,
+		});
+		const schema = makeYamlSchema(PersonSchema);
+		// Valid YAML but wrong shape — no line/column in this error
+		const effect = Schema.decode(schema)("name: Alice");
+		const result = Effect.runSync(Effect.either(effect));
+		expect(result._tag).toBe("Left");
+	});
+
+	it("includes line/column in multi-doc parse error", () => {
+		const effect = Schema.decode(YamlAllFromString)("a:\n\tb: 1");
+		const result = Effect.runSync(Effect.either(effect));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			const msg = String(result.left);
+			expect(msg).toMatch(/line|column/i);
+		}
+	});
+
+	it("includes line/column in document schema parse error", () => {
+		const schema = makeYamlDocumentSchema();
+		const effect = Schema.decode(schema)("a:\n\tb: 1");
+		const result = Effect.runSync(Effect.either(effect));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			const msg = String(result.left);
+			expect(msg).toMatch(/line|column/i);
+		}
+	});
+});
