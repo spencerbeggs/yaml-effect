@@ -1,5 +1,18 @@
 # yaml-effect
 
+## 0.1.1
+
+### Features
+
+* [`a3536be`](https://github.com/spencerbeggs/yaml-effect/commit/a3536befc8429b9a72d34ca7a5f2ae39ee5ec77f) Add official yaml-test-suite integration for YAML 1.2 compliance validation. The suite runs \~440 test cases from the community-standard test suite against our parser, checking parse correctness, JSON output, canonical stringifier output, and roundtrip fidelity. Known gaps are tracked via skip maps. A compliance GitHub Action generates dynamic badges showing parse and full compliance percentages.
+
+### Bug Fixes
+
+* [`900dc66`](https://github.com/spencerbeggs/yaml-effect/commit/900dc663d173b23e692c5ea1d468fcdc34485b8b) Fix tagged empty values: flush pending tag/anchor metadata as empty scalar when no value follows (e.g., `!!str` in flow maps and sequences)
+* Allow colon and other spec-permitted characters in anchor/alias names per YAML 1.2 `ns-anchor-char`
+* Preserve trailing whitespace-only lines in literal block scalars per spec section 8.1.3
+* Use `parseAllDocuments` for multi-document compliance test cases
+
 ## 0.1.0
 
 ### Features
