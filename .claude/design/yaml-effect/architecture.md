@@ -15,6 +15,7 @@ related:
   - errors.md
   - visitor.md
   - schema-integration.md
+  - compliance-testing.md
 dependencies: []
 ---
 
@@ -249,6 +250,13 @@ through Schema produces valid YAML output. Includes multi-document support
   applied in reverse offset order
 - **Mutable Scanner, Pure Everything Else:** Lexer state machine is the only
   mutable module
+
+## Compliance Testing
+
+YAML 1.2 spec compliance is validated via the official yaml-test-suite
+(~440 test cases) running as a separate Vitest project. See
+[compliance-testing.md](./compliance-testing.md) for the full design:
+test structure, skip map strategy, badge pipeline, and open gaps.
 
 ## Constraints and Trade-offs
 
