@@ -244,8 +244,7 @@ describe("YAML 1.2 compliance: block scalars", () => {
 		const yaml = "text: >\n  line1\n  line2\n";
 		const result = val(yaml) as { text: string };
 		// Folded scalars replace newlines with spaces within paragraphs
-		expect(typeof result.text).toBe("string");
-		expect(result.text.length).toBeGreaterThan(0);
+		expect(result.text).toBe("line1 line2\n");
 	});
 
 	it("parses literal block with strip chomping (|-)", () => {

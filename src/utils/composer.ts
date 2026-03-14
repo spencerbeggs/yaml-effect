@@ -653,14 +653,15 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 		if (!child) continue;
 
 		if (child.type === "error") {
+			const lc = lineCol(state.text, child.offset);
 			state.errors.push(
 				new YamlErrorDetail({
 					code: "UnexpectedToken",
 					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
 					offset: child.offset,
 					length: child.length,
-					line: 0,
-					column: child.offset,
+					line: lc.line,
+					column: lc.column,
 				}),
 			);
 			continue;
@@ -1180,14 +1181,15 @@ function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
 
 		// Error nodes from the lexer/parser (e.g. tab indentation)
 		if (child.type === "error") {
+			const lc = lineCol(state.text, child.offset);
 			state.errors.push(
 				new YamlErrorDetail({
 					code: "UnexpectedToken",
 					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
 					offset: child.offset,
 					length: child.length,
-					line: 0,
-					column: child.offset,
+					line: lc.line,
+					column: lc.column,
 				}),
 			);
 			i++;
