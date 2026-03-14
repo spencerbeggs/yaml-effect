@@ -17,6 +17,36 @@ export { YamlSchemaError } from "./errors/YamlSchemaError.js";
 export { YamlStringifyError } from "./errors/YamlStringifyError.js";
 export { CstNode, CstNodeType } from "./schemas/CstNode.js";
 export { YamlAlias } from "./schemas/YamlAlias.js";
+// CST Visitor
+export {
+	CstAliasEvent,
+	CstCommentEvent,
+	CstDirectiveEvent,
+	CstDocumentEndEvent,
+	CstDocumentStartEvent,
+	CstErrorEvent,
+	CstKeyEvent,
+	CstMapEndEvent,
+	CstMapStartEvent,
+	CstScalarEvent,
+	CstSeqEndEvent,
+	CstSeqStartEvent,
+	CstValueEvent,
+	YamlCstVisitorEvent,
+	isCstAliasEvent,
+	isCstCommentEvent,
+	isCstDirectiveEvent,
+	isCstDocumentEndEvent,
+	isCstDocumentStartEvent,
+	isCstErrorEvent,
+	isCstKeyEvent,
+	isCstMapEndEvent,
+	isCstMapStartEvent,
+	isCstScalarEvent,
+	isCstSeqEndEvent,
+	isCstSeqStartEvent,
+	isCstValueEvent,
+} from "./schemas/YamlCstVisitorEvent.js";
 export { YamlDirective, YamlDocument } from "./schemas/YamlDocument.js";
 export { YamlFormattingOptions } from "./schemas/YamlFormattingOptions.js";
 export { YamlMap } from "./schemas/YamlMap.js";
@@ -30,6 +60,32 @@ export type { YamlPath } from "./schemas/YamlShared.js";
 export { CollectionStyle, ScalarStyle, YamlEdit, YamlRange } from "./schemas/YamlShared.js";
 export { YamlStringifyOptions } from "./schemas/YamlStringifyOptions.js";
 export { YamlToken, YamlTokenKind } from "./schemas/YamlToken.js";
+// AST Visitor
+export {
+	AliasEvent,
+	CommentEvent,
+	DirectiveEvent,
+	DocumentEndEvent,
+	DocumentStartEvent,
+	MapEndEvent,
+	MapStartEvent,
+	PairEvent,
+	ScalarEvent,
+	SeqEndEvent,
+	SeqStartEvent,
+	YamlVisitorEvent,
+	isAliasEvent,
+	isCommentEvent,
+	isDirectiveEvent,
+	isDocumentEndEvent,
+	isDocumentStartEvent,
+	isMapEndEvent,
+	isMapStartEvent,
+	isPairEvent,
+	isScalarEvent,
+	isSeqEndEvent,
+	isSeqStartEvent,
+} from "./schemas/YamlVisitorEvent.js";
 // AST navigation
 // Type guards
 export {
@@ -47,9 +103,19 @@ export {
 } from "./utils/ast.js";
 // Core parse/stringify
 export { parse, parseAllDocuments, parseDocument } from "./utils/composer.js";
+export { visitCST, visitCSTCollect } from "./utils/cst-visitor.js";
 // Low-level APIs
-export { lex } from "./utils/lexer.js";
+export type { YamlScanner } from "./utils/lexer.js";
+export { createScanner, lex } from "./utils/lexer.js";
 export { parseCST } from "./utils/parser.js";
 // Schema integration
-export { YamlFromString, makeYamlFromString, makeYamlSchema } from "./utils/schema-integration.js";
+export {
+	YamlAllFromString,
+	YamlFromString,
+	makeYamlAllFromString,
+	makeYamlDocumentSchema,
+	makeYamlFromString,
+	makeYamlSchema,
+} from "./utils/schema-integration.js";
 export { stringify, stringifyDocument } from "./utils/stringify.js";
+export { visit, visitCollect } from "./utils/visitor.js";
