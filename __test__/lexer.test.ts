@@ -781,6 +781,52 @@ describe("Error channel type", () => {
 // ===========================================================================
 
 describe("Tab handling (issue #7)", () => {
+	describe("Change 2: tab-only blank/separator lines", () => {
+		it("emits whitespace for tab-only blank line between mappings (DK95/04)", () => {
+			// foo: 1\n<TAB>\nbar: 2
+			const yaml = "foo: 1\n\t\nbar: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+
+		it("emits whitespace for tab-only blank line before document marker (DK95/07)", () => {
+			// %YAML 1.2\n<TAB>\n---
+			const yaml = "%YAML 1.2\n\t\n---\n";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+
+	describe("Change 3: tab before flow-opening indicators", () => {
+		it("emits whitespace for tab before [ at start of line (6CA3)", () => {
+			// <TAB>[\n<TAB>]
+			const yaml = "\t[\n\t]";
+			const tokens = tokenize(yaml);
+			// The tab before [ should be whitespace, not error
+			// The tab before ] should also be ok (lineIndentLocked after [)
+			const errors = tokens.filter((t) => t.kind === "error");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("emits whitespace for tab before { at start of line (Q5MG)", () => {
+			// <TAB>{}
+			const yaml = "\t{}";
+			const tokens = tokenize(yaml);
+			const errors = tokens.filter((t) => t.kind === "error");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("still errors on tab before non-flow content (Y79Y/003 protection)", () => {
+			// Tab before plain scalar — not a flow opener
+			const yaml = "a: 1\n\tb: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+	});
+
 	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
 		it("decodes backslash followed by literal tab as tab character", () => {
 			// The backslash-escape uses a literal 0x09 byte, not the letter 't'

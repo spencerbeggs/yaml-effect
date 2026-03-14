@@ -16,14 +16,10 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser rejects valid YAML (9)
+	// Parser rejects valid YAML (5)
 	"2JQS": "Parser rejects valid YAML: Block Mapping with Missing Keys",
-	"6CA3": "Parser rejects valid YAML: Tab indented top flow",
-	"DK95/04": "Parser rejects valid YAML: Tabs that look like indentation",
-	"DK95/07": "Parser rejects valid YAML: Tabs that look like indentation",
 	HS5T: "Parser rejects valid YAML: Spec Example 7.12. Plain Lines",
 	KK5P: "Parser rejects valid YAML: Various combinations of explicit block mappings",
-	Q5MG: "Parser rejects valid YAML: Tab at beginning of line followed by a flow mapping",
 	S3PD: "Parser rejects valid YAML: Spec Example 8.18. Implicit Block Mapping Entries",
 	V9D5: "Parser rejects valid YAML: Spec Example 8.19. Compact Block Mappings",
 

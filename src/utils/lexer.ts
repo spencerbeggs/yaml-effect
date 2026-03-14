@@ -88,6 +88,8 @@ export function createScanner(text: string): YamlScanner {
 	let flowDepth = 0;
 	/** Whether we've emitted block-map-start / block-seq-start for the current indent. */
 	const blockStarted: Map<number, "map" | "seq"> = new Map();
+	/** Set when the block scalar scanner produces an empty value (contentIndent === 0). */
+	let afterEmptyBlockScalar = false;
 	/** Buffer of tokens to emit before scanning the next real token. */
 	const pending: YamlToken[] = [];
 	/** Mutable holder for the most recently produced token, set by the public {@link scan} method. */
@@ -228,6 +230,53 @@ export function createScanner(text: string): YamlScanner {
 		// YAML 1.2 §6.1: Tabs are not allowed as indentation characters.
 		// Detect tabs in leading whitespace (before lineIndent is locked).
 		if (!lineIndentLocked && peek() === "\t") {
+			if (flowDepth === 0) {
+				// Lookahead: is the rest of the line whitespace-only? (blank/separator line)
+				let lookPos = pos;
+				while (lookPos < text.length && (text[lookPos] === " " || text[lookPos] === "\t")) {
+					lookPos++;
+				}
+				const nextCh = lookPos < text.length ? text[lookPos] : undefined;
+				// Change 2: tab-only blank line → emit whitespace
+				// Guard: if we just emitted an empty block scalar (e.g. "foo: |\n\t\n"),
+				// the tab line could be intended as block scalar content with tab
+				// indentation, which is invalid. Do not exempt it.
+				if (!afterEmptyBlockScalar && (nextCh === undefined || nextCh === "\n" || nextCh === "\r")) {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+				// Change 3: tab before flow-opening indicator → emit whitespace
+				if (nextCh === "{" || nextCh === "[") {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+				// Default: tab as block indentation → error
+				while (pos < text.length && isWhitespace(peek())) {
+					advance();
+				}
+				return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+			}
+			// flowDepth > 0: lookahead to check if the tab precedes a
+			// flow-closing indicator (] or }), which is harmless whitespace.
+			// Tabs before content inside flow collections are still errors.
+			{
+				let lookPos = pos;
+				while (lookPos < text.length && (text[lookPos] === " " || text[lookPos] === "\t")) {
+					lookPos++;
+				}
+				const nextCh = lookPos < text.length ? text[lookPos] : undefined;
+				if (nextCh === "]" || nextCh === "}") {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+			}
+			// Default: tab as indentation in flow context → error
 			while (pos < text.length && isWhitespace(peek())) {
 				advance();
 			}
@@ -580,6 +629,7 @@ export function createScanner(text: string): YamlScanner {
 
 		if (contentIndent === 0) {
 			// No content lines found — empty block scalar
+			afterEmptyBlockScalar = true;
 			const value = chomp === "keep" ? "\n" : "";
 			return makeToken("scalar", value, start, sLine, sCol, pos - start);
 		}
@@ -838,6 +888,9 @@ export function createScanner(text: string): YamlScanner {
 		if (isWhitespace(ch)) {
 			return scanWhitespace();
 		}
+
+		// Clear the empty block scalar flag once we reach non-whitespace content.
+		afterEmptyBlockScalar = false;
 
 		// Comment (must be at start of line or preceded by whitespace — but here
 		// we're already after whitespace has been consumed as a separate token)
