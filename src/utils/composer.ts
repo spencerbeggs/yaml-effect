@@ -1335,7 +1335,7 @@ function parseDirective(source: string): YamlDirective | null {
 /**
  * Build an anchor map by walking the AST, collecting nodes that have anchors.
  */
-function buildAnchorMap(node: YamlNode | null): Map<string, YamlNode> {
+export function buildAnchorMap(node: YamlNode | null): Map<string, YamlNode> {
 	const anchors = new Map<string, YamlNode>();
 	collectAnchors(node, anchors);
 	return anchors;
@@ -1360,7 +1360,7 @@ function collectAnchors(node: YamlNode | null, anchors: Map<string, YamlNode>): 
 	// YamlAlias has no anchor field — it references one.
 }
 
-function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNode>): unknown {
+export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNode>): unknown {
 	if (node === null) return null;
 	if (node instanceof YamlScalar) return node.value;
 	if (node instanceof YamlMap) {
