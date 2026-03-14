@@ -8,7 +8,7 @@
  * Every entry must include a reason string explaining WHY.
  *
  * Generated from first triage run on 2026-03-14.
- * Updated: multi-document harness, block scalar, tagged empty value, anchor name fixes — 771/902 assertions passing.
+ * Updated: multi-document harness, block scalar, tagged empty value, anchor name, tab handling fixes — 799/895 assertions passing.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
