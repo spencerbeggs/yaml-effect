@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { YamlFormatError } from "../src/errors/YamlFormatError.js";
 import { YamlModificationError } from "../src/errors/YamlModificationError.js";
 import { YamlEdit } from "../src/schemas/YamlShared.js";
-import { applyEdits, format, formatAndApply, modify, modifyAndApply } from "../src/utils/format.js";
+import { applyEdits, format, formatAndApply, modify, modifyAndApply, stripComments } from "../src/utils/format.js";
 
 describe("applyEdits", () => {
 	it("applies a single replacement edit", () => {
@@ -250,5 +250,55 @@ describe("modifyAndApply", () => {
 		const input = "key: old\n";
 		const result = Effect.runSync(pipe(input, modifyAndApply(["key"], "new")));
 		expect(result).toContain("key: new");
+	});
+});
+
+describe("stripComments", () => {
+	it("removes inline comments", () => {
+		const input = "key: value # inline comment\n";
+		const result = Effect.runSync(stripComments(input));
+		expect(result).not.toContain("# inline comment");
+		expect(result).toContain("key: value");
+	});
+
+	it("removes full-line comments", () => {
+		const input = "# full line comment\nkey: value\n";
+		const result = Effect.runSync(stripComments(input));
+		expect(result).not.toContain("# full line comment");
+		expect(result).toContain("key: value");
+	});
+
+	it("preserves offsets with replaceCh", () => {
+		const input = "key: value # comment\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result.length).toBe(input.length);
+		expect(result).not.toContain("#");
+	});
+
+	it("preserves newlines with replaceCh", () => {
+		const input = "# comment\nkey: value\n";
+		const result = Effect.runSync(stripComments(input, " "));
+		expect(result).toContain("\n");
+		expect(result.split("\n").length).toBe(input.split("\n").length);
+	});
+
+	it("handles document with no comments", () => {
+		const input = "key: value\n";
+		const result = Effect.runSync(stripComments(input));
+		expect(result).toContain("key: value");
+	});
+
+	it("does not treat # inside quoted strings as comments", () => {
+		const input = 'message: "hello # world"\n';
+		const result = Effect.runSync(stripComments(input));
+		expect(result).toContain("hello # world");
+	});
+
+	it("fails with YamlFormatError on invalid YAML (removal mode)", () => {
+		const result = Effect.runSync(Effect.either(stripComments("*undefined_anchor")));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			expect(result.left).toBeInstanceOf(YamlFormatError);
+		}
 	});
 });

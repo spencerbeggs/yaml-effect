@@ -559,3 +559,106 @@ export const modifyAndApply: {
 	(text: string, path: YamlPath, value: unknown): Effect.Effect<string, YamlModificationError> =>
 		modifyImpl(text, path, value),
 );
+
+// ---------------------------------------------------------------------------
+// stripComments
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove all comments from a YAML document.
+ *
+ * @remarks
+ * Without `replaceCh`: parses the document, removes all comment fields from
+ * the AST, and stringifies back. Full-line comments are removed entirely.
+ *
+ * With `replaceCh` (a single character): replaces each character of comment
+ * text (including the `#` marker) with the given character to preserve
+ * character offsets. Newlines are always preserved.
+ *
+ * @public
+ */
+export function stripComments(text: string, replaceCh?: string): Effect.Effect<string, YamlFormatError> {
+	if (replaceCh !== undefined) {
+		// Offset-preserving mode: replace comment characters in the raw text
+		return Effect.sync(() => {
+			let result = "";
+			let i = 0;
+			let inComment = false;
+			let inSingleQuote = false;
+			let inDoubleQuote = false;
+
+			while (i < text.length) {
+				const ch = text[i];
+
+				if (inComment) {
+					if (ch === "\n") {
+						inComment = false;
+						result += ch;
+					} else {
+						result += replaceCh;
+					}
+				} else if (inDoubleQuote) {
+					result += ch;
+					if (ch === "\\" && i + 1 < text.length) {
+						i++;
+						result += text[i];
+					} else if (ch === '"') {
+						inDoubleQuote = false;
+					}
+				} else if (inSingleQuote) {
+					result += ch;
+					if (ch === "'" && i + 1 < text.length && text[i + 1] === "'") {
+						i++;
+						result += text[i];
+					} else if (ch === "'") {
+						inSingleQuote = false;
+					}
+				} else if (ch === '"') {
+					inDoubleQuote = true;
+					result += ch;
+				} else if (ch === "'") {
+					inSingleQuote = true;
+					result += ch;
+				} else if (ch === "#") {
+					const prev = i > 0 ? text[i - 1] : "\n";
+					if (prev === " " || prev === "\t" || prev === "\n" || i === 0) {
+						inComment = true;
+						result += replaceCh;
+					} else {
+						result += ch;
+					}
+				} else {
+					result += ch;
+				}
+
+				i++;
+			}
+
+			return result;
+		});
+	}
+
+	// Removal mode: parse, strip comments, stringify
+	return parseDocument(text).pipe(
+		Effect.mapError((e) => new YamlFormatError({ text, reason: e.message })),
+		Effect.flatMap((doc) => {
+			// Check for fatal parse errors
+			if (doc.errors.length > 0) {
+				return Effect.fail(new YamlFormatError({ text, reason: doc.errors[0].message }));
+			}
+
+			const contents = doc.contents ? stripNodeComments(doc.contents) : null;
+
+			const strippedDoc = new YamlDocument({
+				contents,
+				errors: doc.errors,
+				warnings: doc.warnings,
+				directives: doc.directives,
+			});
+
+			return stringifyDocument(strippedDoc).pipe(
+				Effect.mapError((e) => new YamlFormatError({ text, reason: e.message })),
+			);
+		}),
+	);
+}
