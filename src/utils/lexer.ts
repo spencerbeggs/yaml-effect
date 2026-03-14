@@ -1252,6 +1252,7 @@ export function createScanner(text: string): YamlScanner {
 			flowDepth = 0;
 			blockStarted.clear();
 			pending.length = 0;
+			afterEmptyBlockScalar = false;
 			state.currentToken = null;
 		},
 	};
