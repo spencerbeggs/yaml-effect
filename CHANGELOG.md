@@ -1,10 +1,10 @@
----
-"yaml-effect": minor
----
+# yaml-effect
 
-## Features
+## 0.1.0
 
-Initial release of yaml-effect — a pure Effect-based YAML 1.2 parser and stringifier for TypeScript.
+### Features
+
+* [`29f0954`](https://github.com/spencerbeggs/yaml-effect/commit/29f0954084098902942e91b73a1908c6c10e6614) Initial release of yaml-effect — a pure Effect-based YAML 1.2 parser and stringifier for TypeScript.
 
 - **Core Operations:** `parse` / `parseDocument` / `parseAllDocuments` for parsing YAML strings into plain JS values or full AST documents; `stringify` / `stringifyDocument` for converting back to YAML strings. Three-stage pipeline: lexer (tokenization) → parser (CST) → composer (AST with YAML 1.2 Core Schema type resolution).
 - **Schema Integration:** `YamlFromString` / `makeYamlFromString` for bidirectional YAML string ↔ unknown value transformation; `makeYamlSchema` for composing YAML parsing with any Effect Schema for fully typed roundtrips; `YamlAllFromString` / `makeYamlAllFromString` for multi-document support; `makeYamlDocumentSchema` for AST-preserving schemas.
