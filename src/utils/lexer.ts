@@ -18,11 +18,31 @@ import { YamlToken } from "../schemas/YamlToken.js";
 /**
  * A stateful YAML scanner that produces tokens one at a time.
  *
+ * Provides a pull-based accessor API: call {@link YamlScanner.scan} to advance
+ * to the next token, then use the `getToken*` methods to inspect the current
+ * token without advancing again.
+ *
  * @public
  */
 export interface YamlScanner {
-	/** Advance and return the next token, or `null` at end-of-input. */
-	scan(): YamlToken | null;
+	/** Advance to the next token and return its kind, or `null` at end-of-input. */
+	scan(): YamlTokenKind | null;
+	/** Return the kind of the current token without advancing, or `null` before any scan. */
+	getToken(): YamlTokenKind | null;
+	/** Return the value string of the current token. */
+	getTokenValue(): string;
+	/** Return the zero-based character offset of the current token start. */
+	getTokenOffset(): number;
+	/** Return the character length of the current token span. */
+	getTokenLength(): number;
+	/** Return the zero-based line number of the current token start. */
+	getTokenLine(): number;
+	/** Return the zero-based column of the current token start. */
+	getTokenColumn(): number;
+	/** Return the current scanner position (next character to be scanned). */
+	getPosition(): number;
+	/** Reset the scanner to the given character offset and rescan from there. */
+	setPosition(pos: number): void;
 }
 
 /**
@@ -47,6 +67,8 @@ export function createScanner(text: string): YamlScanner {
 	const blockStarted: Map<number, "map" | "seq"> = new Map();
 	/** Buffer of tokens to emit before scanning the next real token. */
 	const pending: YamlToken[] = [];
+	/** Mutable holder for the most recently produced token, set by the public {@link scan} method. */
+	const state = { currentToken: null as YamlToken | null };
 
 	// -----------------------------------------------------------------------
 	// Helpers
@@ -760,10 +782,10 @@ export function createScanner(text: string): YamlScanner {
 	}
 
 	// -----------------------------------------------------------------------
-	// Main scan
+	// Main scan (internal)
 	// -----------------------------------------------------------------------
 
-	function scan(): YamlToken | null {
+	function scanNext(): YamlToken | null {
 		// Drain pending tokens first
 		if (pending.length > 0) {
 			const next = pending.shift();
@@ -964,7 +986,60 @@ export function createScanner(text: string): YamlScanner {
 		return scanPlainScalar();
 	}
 
-	return { scan };
+	// -----------------------------------------------------------------------
+	// Public scanner interface
+	// -----------------------------------------------------------------------
+
+	return {
+		scan(): YamlTokenKind | null {
+			const token = scanNext();
+			state.currentToken = token;
+			return token === null ? null : token.kind;
+		},
+		getToken(): YamlTokenKind | null {
+			return state.currentToken === null ? null : state.currentToken.kind;
+		},
+		getTokenValue(): string {
+			return state.currentToken === null ? "" : state.currentToken.value;
+		},
+		getTokenOffset(): number {
+			return state.currentToken === null ? 0 : state.currentToken.offset;
+		},
+		getTokenLength(): number {
+			return state.currentToken === null ? 0 : state.currentToken.length;
+		},
+		getTokenLine(): number {
+			return state.currentToken === null ? 0 : state.currentToken.line;
+		},
+		getTokenColumn(): number {
+			return state.currentToken === null ? 0 : state.currentToken.column;
+		},
+		getPosition(): number {
+			return pos;
+		},
+		setPosition(newPos: number): void {
+			// Recompute line/col by replaying character advances from the start.
+			pos = 0;
+			line = 0;
+			col = 0;
+			while (pos < newPos && pos < text.length) {
+				if (text[pos] === "\n") {
+					line++;
+					col = 0;
+				} else {
+					col++;
+				}
+				pos++;
+			}
+			// Reset all mutable scanner state.
+			lineIndent = 0;
+			lineIndentLocked = false;
+			flowDepth = 0;
+			blockStarted.clear();
+			pending.length = 0;
+			state.currentToken = null;
+		},
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -982,8 +1057,16 @@ export function createScanner(text: string): YamlScanner {
  */
 export function lex(text: string): Stream.Stream<YamlToken, never> {
 	return Stream.unfold(createScanner(text), (scanner) => {
-		const token = scanner.scan();
-		if (token === null) return Option.none();
+		const kind = scanner.scan();
+		if (kind === null) return Option.none();
+		const token = new YamlToken({
+			kind,
+			value: scanner.getTokenValue(),
+			offset: scanner.getTokenOffset(),
+			length: scanner.getTokenLength(),
+			line: scanner.getTokenLine(),
+			column: scanner.getTokenColumn(),
+		});
 		return Option.some([token, scanner] as const);
 	});
 }
