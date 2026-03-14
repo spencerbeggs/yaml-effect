@@ -169,7 +169,7 @@ function consumeLeafToken(state: ParserState): CstNode | undefined {
 }
 
 /**
- * Parse a flow mapping: { ... }
+ * Parse a flow mapping (curly braces).
  */
 function parseFlowMapping(state: ParserState): CstNode {
 	const children: CstNode[] = [];
@@ -244,7 +244,7 @@ function parseFlowSequence(state: ParserState): CstNode {
 
 /**
  * Parse a block scalar token. The lexer already handles the block scalar
- * content (| or >), so we just need to wrap it.
+ * content (literal `|` or folded `\>`), so we just need to wrap it.
  */
 function parseBlockScalar(state: ParserState): CstNode {
 	const token = advance(state);
@@ -319,6 +319,9 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 
 		// Scalar (key), anchor, tag, alias
 		if (token.kind === "scalar" || token.kind === "anchor" || token.kind === "alias" || token.kind === "tag") {
+			// If this content token is at a lower indent than this mapping, it
+			// belongs to a parent scope.
+			if (token.column < indent && children.length > 0) break;
 			// Check if this is a block scalar
 			if (isBlockScalarToken(state)) {
 				children.push(parseBlockScalar(state));
@@ -333,6 +336,9 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		if (token.kind === "block-map-start") {
 			if (token.column > indent) {
 				children.push(parseBlockMapping(state, token.column));
+			} else if (token.column === indent) {
+				// Same-indent: lexer re-emitted scope marker; consume and continue
+				advance(state);
 			} else {
 				break;
 			}
@@ -467,8 +473,14 @@ function parseBlockSequence(state: ParserState, indent: number): CstNode {
 			continue;
 		}
 
-		if (token.kind === "block-seq-start" && token.column > indent) {
-			children.push(parseBlockSequence(state, token.column));
+		if (token.kind === "block-seq-start") {
+			if (token.column > indent) {
+				children.push(parseBlockSequence(state, token.column));
+			} else {
+				// Same-indent block-seq-start: the lexer re-emitted a scope
+				// marker after returning from deeper nesting. Consume and continue.
+				advance(state);
+			}
 			continue;
 		}
 
@@ -484,9 +496,21 @@ function parseBlockSequence(state: ParserState, indent: number): CstNode {
  * before the next newline / document boundary / sequence entry at this indent.
  */
 function hasImplicitMapAhead(state: ParserState, seqIndent: number): boolean {
+	let flowDepth = 0;
 	for (let i = state.pos; i < state.tokens.length; i++) {
 		const t = state.tokens[i];
 		if (!t) break;
+		// Track flow depth so we don't mistake a ":" inside { } or [ ] for a
+		// block mapping value indicator.
+		if (t.kind === "flow-map-start" || t.kind === "flow-seq-start") {
+			flowDepth++;
+			continue;
+		}
+		if (t.kind === "flow-map-end" || t.kind === "flow-seq-end") {
+			flowDepth--;
+			continue;
+		}
+		if (flowDepth > 0) continue;
 		if (t.kind === "newline") return false;
 		if (isDocumentBoundary(t)) return false;
 		if (t.kind === "block-seq-entry" && t.column <= seqIndent) return false;
@@ -518,6 +542,13 @@ function parseSequenceEntryContent(state: ParserState, seqIndent: number): CstNo
 		// Stop at next sequence entry at same indent
 		if (token.kind === "block-seq-entry" && token.column <= seqIndent) break;
 
+		// Nested sequence entry (deeper indent) without a prior block-seq-start:
+		// synthesise a nested sequence parse at this indent level.
+		if (token.kind === "block-seq-entry" && token.column > seqIndent) {
+			nodes.push(parseBlockSequence(state, token.column));
+			continue;
+		}
+
 		// Trivia
 		if (isTrivia(token)) {
 			nodes.push(...consumeTrivia(state));
@@ -531,6 +562,10 @@ function parseSequenceEntryContent(state: ParserState, seqIndent: number): CstNo
 		}
 
 		if (token.kind === "block-seq-start") {
+			// A block-seq-start at or below the current sequence indent is a
+			// re-emitted scope marker for a sibling entry — let the parent
+			// sequence handler consume it.
+			if (token.column <= seqIndent) break;
 			nodes.push(parseBlockSequence(state, token.column));
 			continue;
 		}
@@ -560,6 +595,9 @@ function parseSequenceEntryContent(state: ParserState, seqIndent: number): CstNo
 			token.kind === "alias" ||
 			token.kind === "tag"
 		) {
+			// If a content token appears at or below the sequence indent, it
+			// belongs to a parent scope (e.g. a sibling key in the parent mapping).
+			if (token.column <= seqIndent) break;
 			const leaf = consumeLeafToken(state);
 			if (leaf) nodes.push(leaf);
 			continue;
@@ -577,6 +615,10 @@ function parseSequenceEntryContent(state: ParserState, seqIndent: number): CstNo
  */
 function parseImplicitBlockMapping(state: ParserState, seqIndent: number): CstNode {
 	const children: CstNode[] = [];
+	// Track the indent of the first key in this implicit mapping so we can
+	// distinguish "same-level block-map-start" (continuation) from "deeper"
+	// (nested sub-mapping).
+	let entryIndent = -1;
 
 	while (!atEnd(state)) {
 		const token = peek(state);
@@ -609,13 +651,24 @@ function parseImplicitBlockMapping(state: ParserState, seqIndent: number): CstNo
 				children.push(parseBlockScalar(state));
 				continue;
 			}
+			// Track the indent of the first key
+			if (entryIndent < 0) {
+				entryIndent = token.column;
+			}
 			const leaf = consumeLeafToken(state);
 			if (leaf) children.push(leaf);
 			continue;
 		}
 
-		// Block structures at deeper indent
+		// Block-map-start at the same indent as our entries is just the lexer
+		// re-emitting a scope marker — consume it and keep going.
 		if (token.kind === "block-map-start") {
+			if (entryIndent >= 0 && token.column <= entryIndent) {
+				// Same-level or shallower: just skip the zero-width marker
+				advance(state);
+				continue;
+			}
+			// Deeper indent: nested sub-mapping
 			children.push(parseBlockMapping(state, token.column));
 			continue;
 		}

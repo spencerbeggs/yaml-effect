@@ -41,7 +41,7 @@ export function createScanner(text: string): YamlScanner {
 	let lineIndent = 0;
 	/** Whether `lineIndent` has been locked (set) for the current line. */
 	let lineIndentLocked = false;
-	/** Flow nesting depth (> 0 means we are inside flow context). */
+	/** Flow nesting depth (positive means we are inside flow context). */
 	let flowDepth = 0;
 	/** Whether we've emitted block-map-start / block-seq-start for the current indent. */
 	const blockStarted: Map<number, "map" | "seq"> = new Map();
@@ -81,6 +81,14 @@ export function createScanner(text: string): YamlScanner {
 		if (!lineIndentLocked) {
 			lineIndent = col;
 			lineIndentLocked = true;
+			// When dedenting, clear blockStarted entries for indentation levels
+			// deeper than the current line. This allows the same indent level
+			// to start a new block scope after returning from deeper nesting.
+			for (const key of blockStarted.keys()) {
+				if (key > lineIndent) {
+					blockStarted.delete(key);
+				}
+			}
 		}
 	}
 
@@ -127,7 +135,7 @@ export function createScanner(text: string): YamlScanner {
 	// Block-structure helpers
 	// -----------------------------------------------------------------------
 
-	function ensureBlockMap(indent: number, offset: number, tokLine: number, tokCol: number): void {
+	function ensureBlockMap(indent: number, offset: number, tokLine: number, _tokCol: number): void {
 		if (flowDepth > 0) return;
 		const started = blockStarted.get(indent);
 		if (started === "map") return;
@@ -136,15 +144,19 @@ export function createScanner(text: string): YamlScanner {
 			return;
 		}
 		blockStarted.set(indent, "map");
-		pending.push(makeToken("block-map-start", "", offset, tokLine, tokCol));
+		// Use `indent` (the line indent) as the column for the zero-width
+		// block-map-start marker so the parser can correctly determine which
+		// block scope this mapping belongs to.
+		pending.push(makeToken("block-map-start", "", offset, tokLine, indent));
 	}
 
-	function ensureBlockSeq(indent: number, offset: number, tokLine: number, tokCol: number): void {
+	function ensureBlockSeq(indent: number, offset: number, tokLine: number, _tokCol: number): void {
 		if (flowDepth > 0) return;
 		const started = blockStarted.get(indent);
 		if (started === "seq") return;
 		blockStarted.set(indent, "seq");
-		pending.push(makeToken("block-seq-start", "", offset, tokLine, tokCol));
+		// Use `indent` as the column for consistency with ensureBlockMap.
+		pending.push(makeToken("block-seq-start", "", offset, tokLine, indent));
 	}
 
 	// -----------------------------------------------------------------------

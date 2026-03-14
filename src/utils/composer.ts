@@ -408,46 +408,44 @@ interface NodeMeta {
 // Core compose logic
 // ---------------------------------------------------------------------------
 
-/**
- * The CST structure from the parser is:
- *
- * For `a: 1\nb: true`:
- *   document
- *     flow-scalar "a"          <-- first key
- *     block-map ": 1\nb: true"
- *       whitespace ":"
- *       whitespace " "
- *       flow-scalar "1"        <-- first value
- *       newline
- *       flow-scalar "b"        <-- second key
- *       whitespace ":"
- *       whitespace " "
- *       flow-scalar "true"     <-- second value
- *
- * For `- 1\n- two`:
- *   document
- *     block-seq "- 1\n- two"
- *       whitespace "-"
- *       whitespace " "
- *       flow-scalar "1"
- *       newline
- *       whitespace "-"
- *       whitespace " "
- *       flow-scalar "two"
- *
- * The document node can have:
- *   - directive children
- *   - comment children
- *   - anchor/tag children (preceding the content)
- *   - One content node which might be:
- *     a) flow-scalar/block-scalar directly
- *     b) block-map/block-seq/flow-map/flow-seq
- *     c) A flow-scalar key followed by a block-map (the key is a sibling)
- *   - alias child
- *
- * For block maps, the FIRST key sits as a sibling before the block-map node
- * in the document children. Additional keys are inside the block-map children.
- */
+// The CST structure from the parser is:
+//
+// For `a: 1\nb: true`:
+//   document
+//     flow-scalar "a"          -- first key
+//     block-map ": 1\nb: true"
+//       whitespace ":"
+//       whitespace " "
+//       flow-scalar "1"        -- first value
+//       newline
+//       flow-scalar "b"        -- second key
+//       whitespace ":"
+//       whitespace " "
+//       flow-scalar "true"     -- second value
+//
+// For `- 1\n- two`:
+//   document
+//     block-seq "- 1\n- two"
+//       whitespace "-"
+//       whitespace " "
+//       flow-scalar "1"
+//       newline
+//       whitespace "-"
+//       whitespace " "
+//       flow-scalar "two"
+//
+// The document node can have:
+//   - directive children
+//   - comment children
+//   - anchor/tag children (preceding the content)
+//   - One content node which might be:
+//     a) flow-scalar/block-scalar directly
+//     b) block-map/block-seq/flow-map/flow-seq
+//     c) A flow-scalar key followed by a block-map (the key is a sibling)
+//   - alias child
+//
+// For block maps, the FIRST key sits as a sibling before the block-map node
+// in the document children. Additional keys are inside the block-map children.
 
 function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlScalar {
 	const style = getScalarStyle(cst);
@@ -579,8 +577,8 @@ function scanName(text: string, start: number): string {
 /**
  * Compose a block map from its CST children, with an optional external first key.
  *
- * CST pattern for `a: 1\nb: true`:
- *   [flow-scalar("a"), block-map(children: [":"," ","1","\n","b",":"," ","true"])]
+ * CST pattern for `a: 1, b: true`:
+ *   `[flow-scalar("a"), block-map(children: [":"," ","1","\\n","b",":"," ","true"])]`
  *
  * The first key is external (sibling before block-map in document/parent).
  * Subsequent keys are inside the block-map children.
@@ -681,9 +679,11 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 			// before its block-map child).
 			const nextContent = findNextContentInList(children, i + 1);
 			if (nextContent?.node.type === "block-map") {
-				const key = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
+				// The scalar is the first key of the nested mapping — keys don't
+				// carry the pending anchor/tag; those belong on the map itself.
+				const key = makeScalar(child, state);
+				const map = composeBlockMap(nextContent.node, state, key, hasMeta(pendingMeta) ? pendingMeta : undefined);
 				pendingMeta = {};
-				const map = composeBlockMap(nextContent.node, state, key);
 				items.push({ kind: "node", node: map });
 				i = nextContent.idx; // skip to past the block-map
 				continue;
@@ -732,9 +732,9 @@ function hasMeta(m: NodeMeta): boolean {
 
 /**
  * Build pairs from a semantic item stream.
- * Pattern: node, value-sep, node => key:value pair
- * Pattern: node, value-sep (no node) => key:null pair
- * Pattern: value-sep, node => null:value pair
+ * Pattern: node, value-sep, node produces a key:value pair.
+ * Pattern: node, value-sep (no node) produces a key:null pair.
+ * Pattern: value-sep, node produces a null:value pair.
  */
 function buildPairs(items: SemanticItem[], pairs: YamlPair[]): void {
 	let i = 0;
@@ -1418,10 +1418,18 @@ export function parseAllDocuments(
  * @public
  */
 export function parse(text: string, options?: Partial<YamlParseOptions>): Effect.Effect<unknown, YamlComposerError> {
+	const uniqueKeys = options?.uniqueKeys ?? true;
 	return parseDocument(text, options).pipe(
-		Effect.map((doc) => {
+		Effect.flatMap((doc) => {
+			// When uniqueKeys is enabled (default), treat DuplicateKey warnings as errors.
+			if (uniqueKeys) {
+				const dupErrors = doc.warnings.filter((w) => w.code === "DuplicateKey");
+				if (dupErrors.length > 0) {
+					return Effect.fail(new YamlComposerError({ errors: dupErrors, text }));
+				}
+			}
 			const anchors = buildAnchorMap(doc.contents);
-			return getNodeValue(doc.contents, anchors);
+			return Effect.succeed(getNodeValue(doc.contents, anchors));
 		}),
 	);
 }
