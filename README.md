@@ -2,6 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![YAML 1.2 parse](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fcompliance.json&query=%24.parse.percentage&suffix=%25&label=YAML%201.2%20parse&color=yellow)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
+[![YAML 1.2 full](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fcompliance.json&query=%24.full.percentage&suffix=%25&label=YAML%201.2%20full&color=orange)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
 
 A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect — no wrappers, no ports, just a clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 
@@ -20,7 +22,12 @@ If you just need to parse YAML into a JavaScript object, use [yaml](https://www.
 This library is for Effect-based programs that need deeper introspection and manipulation of YAML documents: typed parse errors you can `catchTag`, Schema pipelines that validate YAML strings into domain types, AST and CST access, non-destructive formatting and path-based modification, semantic equality comparisons, and SAX-style visitor streams that are composable in Effect pipelines.
 
 > **Note:** yaml-effect is new and may introduce breaking changes before a
-> 1.0.0 release.
+> 1.0.0 release. We are actively working toward full YAML 1.2 spec
+> compliance. The library is validated against the official
+> [yaml-test-suite](https://github.com/yaml/yaml-test-suite) — our current
+> compliance is tracked in the badges above. The parser handles common YAML
+> well, but edge cases around tab handling, complex mapping keys, and strict
+> error rejection are still being addressed.
 
 ## Installation
 
