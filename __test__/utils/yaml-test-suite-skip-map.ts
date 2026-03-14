@@ -110,7 +110,7 @@ export const XFAIL: Record<string, string> = {
 	"VJP3/00": "Parser accepts invalid YAML: Flow collections over many lines",
 	W9L4: "Parser accepts invalid YAML: Literal block scalar with more spaces in first line",
 	X4QW: "Parser accepts invalid YAML: Comment without whitespace after block scalar indicator",
-	"Y79Y/003": "Parser accepts invalid YAML: Tabs in various contexts",
+	"Y79Y/002": "Lexer rejects valid YAML: Tab as separation space after flow indicator",
 	"Y79Y/004": "Parser accepts invalid YAML: Tabs in various contexts",
 	"Y79Y/005": "Parser accepts invalid YAML: Tabs in various contexts",
 	"Y79Y/006": "Parser accepts invalid YAML: Tabs in various contexts",
