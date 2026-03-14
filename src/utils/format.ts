@@ -184,7 +184,7 @@ function stripNodeComments(node: YamlNode): YamlNode {
 // Internal: raw options shape (avoids Schema.Class validation for range)
 // ---------------------------------------------------------------------------
 
-interface RawFormatOptions {
+export interface RawFormatOptions {
 	indent?: number;
 	lineWidth?: number;
 	defaultScalarStyle?: ScalarStyle;

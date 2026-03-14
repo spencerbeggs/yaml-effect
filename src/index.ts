@@ -107,6 +107,7 @@ export { visitCST, visitCSTCollect } from "./utils/cst-visitor.js";
 // Equality
 export { equals, equalsValue } from "./utils/equality.js";
 // Format & Modify
+export type { RawFormatOptions } from "./utils/format.js";
 export {
 	applyEdits,
 	format,
