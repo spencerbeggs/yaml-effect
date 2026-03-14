@@ -29,6 +29,22 @@ errors, composability, and seamless integration with Effect-based applications.
 - **Round-trip fidelity** — preserve comments, styles, and anchors through the
   Document AST
 
+### Why does this module exist?
+
+If you just need to parse YAML into a JavaScript object, use
+[yaml](https://www.npmjs.com/package/yaml). It is depended upon by 13,000+
+packages, is battle-tested, and covers the full YAML 1.2 specification.
+
+This library is for Effect-based programs that need deeper introspection and
+manipulation of YAML documents: typed parse errors you can `catchTag`, Schema
+pipelines that validate YAML strings into domain types, AST and CST access,
+non-destructive formatting and path-based modification, semantic equality
+comparisons, and SAX-style visitor streams that are composable in Effect
+pipelines.
+
+> **Note:** yaml-effect is new and may introduce breaking changes before a
+> 1.0.0 release.
+
 ## Installation
 
 ```bash
