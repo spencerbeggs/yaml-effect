@@ -845,6 +845,43 @@ describe("Tab handling (issue #7)", () => {
 		});
 	});
 
+	describe("Change 4: tab after block indicators", () => {
+		it("errors on tab after - indicator (Y79Y/004)", () => {
+			const yaml = "-\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on space+tab after - indicator (Y79Y/005)", () => {
+			const yaml = "- \t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after ? indicator (Y79Y/006)", () => {
+			const yaml = "?\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after : indicator (Y79Y/007)", () => {
+			const yaml = "? -\n:\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after ? with key (Y79Y/008)", () => {
+			const yaml = "?\tkey:";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+	});
+
 	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
 		it("decodes backslash followed by literal tab as tab character", () => {
 			// The backslash-escape uses a literal 0x09 byte, not the letter 't'
