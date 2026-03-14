@@ -827,6 +827,24 @@ describe("Tab handling (issue #7)", () => {
 		});
 	});
 
+	describe("Change 5a: mixed tab+space indentation", () => {
+		it("errors on space-then-tab indentation in block context (DK95/06)", () => {
+			// foo:\n  a: 1\n  <TAB>b: 2
+			const yaml = "foo:\n  a: 1\n  \tb: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("allows space-then-tab after indentation is locked", () => {
+			// After indentation is locked, tabs in whitespace are content
+			const yaml = "a:  \tb";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+
 	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
 		it("decodes backslash followed by literal tab as tab character", () => {
 			// The backslash-escape uses a literal 0x09 byte, not the letter 't'

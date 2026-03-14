@@ -285,6 +285,28 @@ export function createScanner(text: string): YamlScanner {
 		while (pos < text.length && isWhitespace(peek())) {
 			advance();
 		}
+		// Change 5a: mixed tab+space indentation check
+		// When whitespace starts with spaces but contains a tab, the tab
+		// may be invalid indentation (YAML 1.2 §6.1). We only flag an error
+		// when the number of leading spaces matches an existing block scope
+		// in blockStarted — meaning the tab is extending indentation at a
+		// known block level. Blank/separator lines (next char is newline/EOF)
+		// are exempt like Change 2.
+		if (!lineIndentLocked && flowDepth === 0 && sCol === 0) {
+			const ws = text.slice(start, pos);
+			const tabIdx = ws.indexOf("\t");
+			if (tabIdx > 0) {
+				const nextCh = pos < text.length ? text[pos] : undefined;
+				if (nextCh !== undefined && nextCh !== "\n" && nextCh !== "\r") {
+					// Check if the number of spaces before the tab aligns with
+					// an existing block scope — if so, the tab is trying to be
+					// indentation at that level.
+					if (blockStarted.has(tabIdx)) {
+						return makeToken("error", ws, start, sLine, sCol);
+					}
+				}
+			}
+		}
 		return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
 	}
 
