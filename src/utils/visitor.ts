@@ -21,6 +21,7 @@ import type { YamlVisitorEvent } from "../schemas/YamlVisitorEvent.js";
 import {
 	AliasEvent,
 	CommentEvent,
+	DirectiveEvent,
 	DocumentEndEvent,
 	DocumentStartEvent,
 	MapEndEvent,
@@ -100,7 +101,9 @@ function* walkPair(pair: YamlPair, parentPath: Path, depth: number): Generator<Y
 	// Resolve the key scalar value (null for complex keys)
 	const resolvedKey = pair.key instanceof YamlScalar ? pair.key.value : null;
 
-	// Resolve the value scalar value (null for complex values or absent values)
+	// Resolve the value scalar value.  Complex values (maps, sequences) resolve
+	// to `null` here — consumers should walk the subsequent sub-events emitted
+	// by `walkNode` to reconstruct the full structure.
 	const resolvedValue = pair.value instanceof YamlScalar ? pair.value.value : null;
 
 	// Build the path segment for this pair's key
@@ -135,9 +138,19 @@ function* walkPair(pair: YamlPair, parentPath: Path, depth: number): Generator<Y
 // walkDocument — generator that yields all events for a single document
 // ---------------------------------------------------------------------------
 
-function* walkDocument(doc: YamlDocument, _docIndex: number): Generator<YamlVisitorEvent> {
+function* walkDocument(doc: YamlDocument): Generator<YamlVisitorEvent> {
 	const path: Path = [];
 	const depth = 0;
+
+	// Emit individual DirectiveEvent for each directive before the document
+	for (const dir of doc.directives) {
+		yield new DirectiveEvent({
+			path,
+			depth,
+			name: dir.name,
+			parameters: dir.parameters.join(" "),
+		});
+	}
 
 	yield new DocumentStartEvent({
 		path,
@@ -192,7 +205,7 @@ export function visit(
 			Stream.fromIterable(
 				(function* () {
 					for (let i = 0; i < docs.length; i++) {
-						yield* walkDocument(docs[i], i);
+						yield* walkDocument(docs[i]);
 					}
 				})(),
 			),

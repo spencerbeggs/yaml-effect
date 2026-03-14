@@ -195,6 +195,14 @@ describe("visit()", () => {
 		expect((alias as AliasEvent).name).toBe("ref");
 	});
 
+	it("emits DirectiveEvent for YAML directives", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("%YAML 1.2\n---\na: 1")).pipe(Effect.map((c) => [...c])));
+		const directive = events.find((e) => e._tag === "DirectiveEvent");
+		expect(directive).toBeDefined();
+		expect((directive as DirectiveEvent).name).toBe("YAML");
+		expect((directive as DirectiveEvent).parameters).toContain("1.2");
+	});
+
 	it("supports early termination via Stream.take", () => {
 		const events = Effect.runSync(
 			Stream.runCollect(visit("a: 1\nb: 2\nc: 3").pipe(Stream.take(3))).pipe(Effect.map((c) => [...c])),
