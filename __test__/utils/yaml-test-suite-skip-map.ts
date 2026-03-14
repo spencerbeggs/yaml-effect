@@ -16,17 +16,12 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser rejects valid YAML (14)
+	// Parser rejects valid YAML (9)
 	"2JQS": "Parser rejects valid YAML: Block Mapping with Missing Keys",
-	"3RLN/01": "Parser rejects valid YAML: Leading tabs in double quoted",
-	"3RLN/04": "Parser rejects valid YAML: Leading tabs in double quoted",
 	"6CA3": "Parser rejects valid YAML: Tab indented top flow",
-	"DE56/02": "Parser rejects valid YAML: Trailing tabs in double quoted",
-	"DE56/03": "Parser rejects valid YAML: Trailing tabs in double quoted",
 	"DK95/04": "Parser rejects valid YAML: Tabs that look like indentation",
 	"DK95/07": "Parser rejects valid YAML: Tabs that look like indentation",
 	HS5T: "Parser rejects valid YAML: Spec Example 7.12. Plain Lines",
-	"KH5V/01": "Parser rejects valid YAML: Inline tabs in double quoted",
 	KK5P: "Parser rejects valid YAML: Various combinations of explicit block mappings",
 	Q5MG: "Parser rejects valid YAML: Tab at beginning of line followed by a flow mapping",
 	S3PD: "Parser rejects valid YAML: Spec Example 8.18. Implicit Block Mapping Entries",
@@ -145,8 +140,10 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"3MYT": ["json", "output"],
 	"3R3P": ["output"],
 	"3RLN/00": ["json"],
+	"3RLN/01": ["json"],
 	"3RLN/02": ["json"],
 	"3RLN/03": ["json"],
+	"3RLN/04": ["json"],
 	"3RLN/05": ["json"],
 	"3UYS": ["output"],
 	"4ABK": ["output"],
@@ -237,6 +234,8 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	DC7X: ["output"],
 	"DE56/00": ["json", "output"],
 	"DE56/01": ["json", "output"],
+	"DE56/02": ["json", "output"],
+	"DE56/03": ["json", "output"],
 	"DE56/04": ["json", "output"],
 	"DE56/05": ["json", "output"],
 	DFF7: ["output"],
@@ -278,6 +277,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	K527: ["output"],
 	K54U: ["output"],
 	K858: ["output", "roundtrip"],
+	"KH5V/01": ["output"],
 	"KH5V/02": ["output"],
 	KSS4: ["output"],
 	L383: ["output"],

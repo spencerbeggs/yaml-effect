@@ -775,3 +775,27 @@ describe("Error channel type", () => {
 		expect(errorTokens.length).toBeGreaterThan(0);
 	});
 });
+
+// ===========================================================================
+// Tab handling (issue #7)
+// ===========================================================================
+
+describe("Tab handling (issue #7)", () => {
+	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
+		it("decodes backslash followed by literal tab as tab character", () => {
+			// The backslash-escape uses a literal 0x09 byte, not the letter 't'
+			const yaml = '"hello\\\tbig"';
+			const tokens = tokenize(yaml);
+			const scalar = tokens.find((t) => t.kind === "scalar");
+			expect(scalar?.value).toBe("hello\tbig");
+		});
+
+		it("does not error on backslash-tab in double-quoted scalar (3RLN/01)", () => {
+			// "2 leading\n    \<TAB>tab"
+			const yaml = '"2 leading\n    \\\ttab"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+});

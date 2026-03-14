@@ -390,6 +390,7 @@ export function createScanner(text: string): YamlScanner {
 						value += "\r";
 						advance();
 						break;
+					case "\t":
 					case "t":
 						value += "\t";
 						advance();
