@@ -29,21 +29,62 @@ jobs:
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";
 
+          // Load skip maps to identify expected failures
+          const skipMapPath = "__test__/utils/yaml-test-suite-skip-map.ts";
+          const skipMapSrc = readFileSync(skipMapPath, "utf-8");
+
+          // Extract XFAIL test IDs (parse-level expected failures)
+          const xfailIds = new Set();
+          const xfailMatch = skipMapSrc.match(/export const XFAIL[^{]*\{([^]*?)\n\};/);
+          if (xfailMatch) {
+            for (const m of xfailMatch[1].matchAll(/^\t+["']?([^"'\s:]+)["']?\s*:/gm)) {
+              xfailIds.add(m[1]);
+            }
+          }
+
+          // Extract SKIP_ASSERTIONS entries
+          const skipAssertions = {};
+          const skipMatch = skipMapSrc.match(/export const SKIP_ASSERTIONS[^{]*\{([^]*?)\n\};/);
+          if (skipMatch) {
+            for (const m of skipMatch[1].matchAll(/["']?([^"'\s:]+)["']?\s*:\s*\[([^\]]+)\]/g)) {
+              skipAssertions[m[1]] = m[2];
+            }
+          }
+
           const data = JSON.parse(readFileSync("/tmp/compliance-results.json", "utf-8"));
           const results = data.testResults[0].assertionResults;
 
-          const total = results.length;
-          const passed = results.filter(r => r.status === "passed").length;
+          // Extract test ID from ancestorTitles like "[229Q] ..." or "[3RLN/01] ..."
+          function getTestId(r) {
+            const ancestor = r.ancestorTitles.find(t => /^\[.+\]/.test(t));
+            if (!ancestor) return null;
+            const match = ancestor.match(/^\[([^\]]+)\]/);
+            return match ? match[1] : null;
+          }
 
-          // Parse-level: count test cases (not assertions) where parse succeeds/fails correctly
+          // Parse-level: tests where parse succeeds/fails correctly
           const parseTests = results.filter(r =>
             r.title === "should parse successfully" || r.title === "should reject invalid YAML"
           );
-          const parsePassing = parseTests.filter(r => r.status === "passed").length;
           const parseTotal = parseTests.length;
+          const parsePassing = parseTests.filter(r => {
+            const id = getTestId(r);
+            return r.status === "passed" && !xfailIds.has(id);
+          }).length;
           const parsePercentage = Math.round((parsePassing / parseTotal) * 100);
 
-          // Full compliance: all assertions
+          // Full compliance: all assertions, excluding expected failures
+          const total = results.length;
+          const passed = results.filter(r => {
+            const id = getTestId(r);
+            if (xfailIds.has(id)) return false;
+            if (skipAssertions[id]) {
+              if (r.title.includes("JSON") && skipAssertions[id].includes("json")) return false;
+              if (r.title.includes("canonical") && skipAssertions[id].includes("output")) return false;
+              if (r.title.includes("roundtrip") && skipAssertions[id].includes("roundtrip")) return false;
+            }
+            return r.status === "passed";
+          }).length;
           const fullPercentage = Math.round((passed / total) * 100);
 
           function color(pct) {
@@ -79,19 +120,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Fetch badges branch if it exists
-          git fetch origin badges:badges 2>/dev/null || true
+          # Create badges branch from current main HEAD so GitHub
+          # doesn't show a "Compare & pull request" banner for it
+          git checkout -B badges HEAD
 
-          # Create orphan branch if it doesn't exist
-          if ! git rev-parse --verify badges >/dev/null 2>&1; then
-            git checkout --orphan badges
-            git rm -rf . 2>/dev/null || true
-          else
-            git checkout badges
-          fi
-
+          # Remove all tracked files, add only compliance.json
+          git rm -rf . 2>/dev/null || true
+          git checkout HEAD -- .gitignore 2>/dev/null || true
           cp /tmp/compliance.json compliance.json
           git add compliance.json
-          git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "chore: update compliance badge data"
           git push origin badges --force
