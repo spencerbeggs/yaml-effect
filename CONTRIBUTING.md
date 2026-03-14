@@ -11,9 +11,12 @@ provides guidelines and instructions for development.
 ## Development Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/spencerbeggs/yaml-effect.git
+# Clone the repository (--recurse-submodules fetches the yaml-test-suite fixtures)
+git clone --recurse-submodules https://github.com/spencerbeggs/yaml-effect.git
 cd yaml-effect
+
+# If you already cloned without submodules:
+git submodule update --init
 
 # Install dependencies
 pnpm install
@@ -32,7 +35,8 @@ pnpm run test
 | `pnpm run build` | Build dev + prod outputs via Turbo |
 | `pnpm run build:dev` | Build development output only |
 | `pnpm run build:prod` | Build production/npm output only |
-| `pnpm run test` | Run all tests |
+| `pnpm run test` | Run all tests (unit + compliance) |
+| `pnpm run test:compliance` | Run yaml-test-suite compliance tests only |
 | `pnpm run test:watch` | Run tests in watch mode |
 | `pnpm run test:coverage` | Run tests with v8 coverage report |
 | `pnpm run lint` | Check code with Biome |
@@ -75,6 +79,29 @@ The following checks run automatically:
 - ESM with `.js` extensions for relative imports
 - `node:` protocol for Node.js built-ins
 - Separate type imports: `import type { Foo } from "./bar.js"`
+
+## Testing
+
+Tests are organized into two Vitest projects:
+
+- **yaml-effect** (unit tests) — `__test__/*.test.ts` exercises individual
+  modules: lexer, parser, composer, stringifier, formatting, equality, etc.
+- **compliance** (integration tests) — `__test__/yaml-test-suite.test.ts` runs
+  the official [yaml-test-suite](https://github.com/yaml/yaml-test-suite)
+  against our parser.
+
+The compliance suite lives in a git submodule at
+`__test__/fixtures/yaml-test-suite/` pinned to the `data-2022-01-17` tag. If
+the submodule is missing, run `git submodule update --init`.
+
+Known failures are tracked in `__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **XFAIL** — tests that run but are expected to fail (parse-level gaps).
+- **SKIP_ASSERTIONS** — tests where specific assertion types (JSON match,
+  canonical output, roundtrip) are skipped.
+
+If you fix a parser bug that causes an XFAIL test to start passing, remove its
+entry from the skip map so CI catches any future regressions.
 
 ## Submitting Changes
 
