@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import { Effect } from "effect";
+import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
 import { YamlAlias, YamlMap, YamlPair, YamlScalar, YamlSeq } from "../src/schemas/YamlAstNodes.js";
 import type { YamlDocument } from "../src/schemas/YamlDocument.js";
@@ -1101,5 +1101,17 @@ describe("large integer handling", () => {
 		const result = val("-99999999999999999999");
 		expect(typeof result).toBe("bigint");
 		expect(result).toBe(-99999999999999999999n);
+	});
+});
+
+// ===========================================================================
+// Error propagation from CST error nodes
+// ===========================================================================
+
+describe("Composer error propagation", () => {
+	it("rejects tab on continuation line inside flow sequence (Y79Y/003)", () => {
+		const yaml = "- [\n\tfoo,\n foo\n ]";
+		const result = Effect.runSync(Effect.either(parse(yaml)));
+		expect(Either.isLeft(result)).toBe(true);
 	});
 });

@@ -88,6 +88,8 @@ export function createScanner(text: string): YamlScanner {
 	let flowDepth = 0;
 	/** Whether we've emitted block-map-start / block-seq-start for the current indent. */
 	const blockStarted: Map<number, "map" | "seq"> = new Map();
+	/** Set when the block scalar scanner produces an empty value (contentIndent === 0). */
+	let afterEmptyBlockScalar = false;
 	/** Buffer of tokens to emit before scanning the next real token. */
 	const pending: YamlToken[] = [];
 	/** Mutable holder for the most recently produced token, set by the public {@link scan} method. */
@@ -228,6 +230,53 @@ export function createScanner(text: string): YamlScanner {
 		// YAML 1.2 §6.1: Tabs are not allowed as indentation characters.
 		// Detect tabs in leading whitespace (before lineIndent is locked).
 		if (!lineIndentLocked && peek() === "\t") {
+			if (flowDepth === 0) {
+				// Lookahead: is the rest of the line whitespace-only? (blank/separator line)
+				let lookPos = pos;
+				while (lookPos < text.length && (text[lookPos] === " " || text[lookPos] === "\t")) {
+					lookPos++;
+				}
+				const nextCh = lookPos < text.length ? text[lookPos] : undefined;
+				// Change 2: tab-only blank line → emit whitespace
+				// Guard: if we just emitted an empty block scalar (e.g. "foo: |\n\t\n"),
+				// the tab line could be intended as block scalar content with tab
+				// indentation, which is invalid. Do not exempt it.
+				if (!afterEmptyBlockScalar && (nextCh === undefined || nextCh === "\n" || nextCh === "\r")) {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+				// Change 3: tab before flow-opening indicator → emit whitespace
+				if (nextCh === "{" || nextCh === "[") {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+				// Default: tab as block indentation → error
+				while (pos < text.length && isWhitespace(peek())) {
+					advance();
+				}
+				return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+			}
+			// flowDepth > 0: lookahead to check if the tab precedes a
+			// flow-closing indicator (] or }), which is harmless whitespace.
+			// Tabs before content inside flow collections are still errors.
+			{
+				let lookPos = pos;
+				while (lookPos < text.length && (text[lookPos] === " " || text[lookPos] === "\t")) {
+					lookPos++;
+				}
+				const nextCh = lookPos < text.length ? text[lookPos] : undefined;
+				if (nextCh === "]" || nextCh === "}") {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
+			}
+			// Default: tab as indentation in flow context → error
 			while (pos < text.length && isWhitespace(peek())) {
 				advance();
 			}
@@ -235,6 +284,28 @@ export function createScanner(text: string): YamlScanner {
 		}
 		while (pos < text.length && isWhitespace(peek())) {
 			advance();
+		}
+		// Change 5a: mixed tab+space indentation check
+		// When whitespace starts with spaces but contains a tab, the tab
+		// may be invalid indentation (YAML 1.2 §6.1). We only flag an error
+		// when the number of leading spaces matches an existing block scope
+		// in blockStarted — meaning the tab is extending indentation at a
+		// known block level. Blank/separator lines (next char is newline/EOF)
+		// are exempt like Change 2.
+		if (!lineIndentLocked && flowDepth === 0 && sCol === 0) {
+			const ws = text.slice(start, pos);
+			const tabIdx = ws.indexOf("\t");
+			if (tabIdx > 0) {
+				const nextCh = pos < text.length ? text[pos] : undefined;
+				if (nextCh !== undefined && nextCh !== "\n" && nextCh !== "\r") {
+					// Check if the number of spaces before the tab aligns with
+					// an existing block scope — if so, the tab is trying to be
+					// indentation at that level.
+					if (blockStarted.has(tabIdx)) {
+						return makeToken("error", ws, start, sLine, sCol);
+					}
+				}
+			}
 		}
 		return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
 	}
@@ -390,6 +461,7 @@ export function createScanner(text: string): YamlScanner {
 						value += "\r";
 						advance();
 						break;
+					case "\t":
 					case "t":
 						value += "\t";
 						advance();
@@ -488,9 +560,23 @@ export function createScanner(text: string): YamlScanner {
 			} else if (ch === "\n") {
 				value += " ";
 				advance();
+				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
+				// when the scalar is nested (sCol > 0), since the tab would be acting
+				// as indentation. At column 0, tabs are just leading whitespace.
+				if (sCol > 0 && peek() === "\t") {
+					advance(); // consume the tab so it's included in the error span
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else if (ch === "\r" && peek(1) === "\n") {
 				value += " ";
 				advance(2);
+				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
+				// when the scalar is nested (sCol > 0), since the tab would be acting
+				// as indentation. At column 0, tabs are just leading whitespace.
+				if (sCol > 0 && peek() === "\t") {
+					advance(); // consume the tab so it's included in the error span
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else {
 				value += ch;
 				advance();
@@ -579,6 +665,7 @@ export function createScanner(text: string): YamlScanner {
 
 		if (contentIndent === 0) {
 			// No content lines found — empty block scalar
+			afterEmptyBlockScalar = true;
 			const value = chomp === "keep" ? "\n" : "";
 			return makeToken("scalar", value, start, sLine, sCol, pos - start);
 		}
@@ -838,6 +925,9 @@ export function createScanner(text: string): YamlScanner {
 			return scanWhitespace();
 		}
 
+		// Clear the empty block scalar flag once we reach non-whitespace content.
+		afterEmptyBlockScalar = false;
+
 		// Comment (must be at start of line or preceded by whitespace — but here
 		// we're already after whitespace has been consumed as a separate token)
 		if (ch === "#") {
@@ -946,6 +1036,35 @@ export function createScanner(text: string): YamlScanner {
 			const sLine = line;
 			const sCol = col;
 			advance();
+			// Change 4: tab in separation space before content after ? is forbidden.
+			// After ?, any content at a tab-based position would use the tab as
+			// effective indentation for the key content.
+			if (flowDepth === 0) {
+				let lk = pos;
+				let hasTab = false;
+				let firstTabPos = -1;
+				while (lk < text.length && (text[lk] === " " || text[lk] === "\t")) {
+					if (text[lk] === "\t" && !hasTab) {
+						hasTab = true;
+						firstTabPos = lk;
+					}
+					lk++;
+				}
+				if (hasTab && lk < text.length && text[lk] !== "\n" && text[lk] !== "\r") {
+					// Tab before any non-whitespace content after ? is an error
+					while (pos < firstTabPos) advance();
+					const tabStart = pos;
+					const tabLine = line;
+					const tabCol = col;
+					advance();
+					ensureBlockMap(indent, start, sLine, sCol);
+					pending.push(makeToken("block-map-key", "?", start, sLine, sCol));
+					pending.push(makeToken("error", "\t", tabStart, tabLine, tabCol));
+					const first = pending.shift();
+					if (first !== undefined) return first;
+					return makeToken("block-map-key", "?", start, sLine, sCol);
+				}
+			}
 			ensureBlockMap(indent, start, sLine, sCol);
 			if (pending.length > 0) {
 				// block-map-start was pushed, push the key indicator after it
@@ -964,6 +1083,46 @@ export function createScanner(text: string): YamlScanner {
 			const sLine = line;
 			const sCol = col;
 			advance();
+			// Change 4: tab in separation space before nested block structure is forbidden.
+			// YAML 1.2 allows tabs in separation space for scalar values, but when
+			// the content after tab-containing separation is a block indicator or
+			// mapping key, the tab effectively acts as indentation.
+			{
+				let lk = pos;
+				let hasTab = false;
+				let firstTabPos = -1;
+				while (lk < text.length && (text[lk] === " " || text[lk] === "\t")) {
+					if (text[lk] === "\t" && !hasTab) {
+						hasTab = true;
+						firstTabPos = lk;
+					}
+					lk++;
+				}
+				if (hasTab && lk < text.length) {
+					const nc = text[lk];
+					// Check if next content is a block indicator
+					const afterNc = lk + 1 < text.length ? text[lk + 1] : "";
+					const isBlockIndicator =
+						(nc === "-" &&
+							(afterNc === " " || afterNc === "\t" || afterNc === "\n" || afterNc === "\r" || afterNc === "")) ||
+						(nc === "?" &&
+							(afterNc === " " || afterNc === "\t" || afterNc === "\n" || afterNc === "\r" || afterNc === ""));
+					if (isBlockIndicator) {
+						// Advance to the tab position and emit error
+						while (pos < firstTabPos) advance();
+						const tabStart = pos;
+						const tabLine = line;
+						const tabCol = col;
+						advance();
+						ensureBlockSeq(indent, start, sLine, sCol);
+						pending.push(makeToken("block-seq-entry", "-", start, sLine, sCol));
+						pending.push(makeToken("error", "\t", tabStart, tabLine, tabCol));
+						const first = pending.shift();
+						if (first !== undefined) return first;
+						return makeToken("block-seq-entry", "-", start, sLine, sCol);
+					}
+				}
+			}
 			ensureBlockSeq(indent, start, sLine, sCol);
 			if (pending.length > 0) {
 				// block-seq-start was pushed, push the entry after it
@@ -985,6 +1144,41 @@ export function createScanner(text: string): YamlScanner {
 			const sLine = line;
 			const sCol = col;
 			advance();
+			// Change 4: tab in separation space before nested block structure is forbidden.
+			if (flowDepth === 0) {
+				let lk = pos;
+				let hasTab = false;
+				let firstTabPos = -1;
+				while (lk < text.length && (text[lk] === " " || text[lk] === "\t")) {
+					if (text[lk] === "\t" && !hasTab) {
+						hasTab = true;
+						firstTabPos = lk;
+					}
+					lk++;
+				}
+				if (hasTab && lk < text.length) {
+					const nc = text[lk];
+					const afterNc = lk + 1 < text.length ? text[lk + 1] : "";
+					const isBlockIndicator =
+						(nc === "-" &&
+							(afterNc === " " || afterNc === "\t" || afterNc === "\n" || afterNc === "\r" || afterNc === "")) ||
+						(nc === "?" &&
+							(afterNc === " " || afterNc === "\t" || afterNc === "\n" || afterNc === "\r" || afterNc === ""));
+					if (isBlockIndicator) {
+						while (pos < firstTabPos) advance();
+						const tabStart = pos;
+						const tabLine = line;
+						const tabCol = col;
+						advance();
+						ensureBlockMap(indent, start, sLine, sCol);
+						pending.push(makeToken("block-map-value", ":", start, sLine, sCol));
+						pending.push(makeToken("error", "\t", tabStart, tabLine, tabCol));
+						const first = pending.shift();
+						if (first !== undefined) return first;
+						return makeToken("block-map-value", ":", start, sLine, sCol);
+					}
+				}
+			}
 			ensureBlockMap(indent, start, sLine, sCol);
 			if (pending.length > 0) {
 				// block-map-start was pushed, push the value indicator after it
@@ -1058,6 +1252,7 @@ export function createScanner(text: string): YamlScanner {
 			flowDepth = 0;
 			blockStarted.clear();
 			pending.length = 0;
+			afterEmptyBlockScalar = false;
 			state.currentToken = null;
 		},
 	};

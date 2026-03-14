@@ -930,6 +930,20 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			// "-" is the sequence entry indicator, skip it
 			continue;
 		}
+		if (child.type === "error") {
+			const lc = lineCol(state.text, child.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
+					offset: child.offset,
+					length: child.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+			continue;
+		}
 		if (child.type === "anchor") {
 			pendingMeta.anchor = getAnchorName(child, state.text);
 			continue;
@@ -1072,6 +1086,20 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			});
 			continue;
 		}
+		if (child.type === "error") {
+			const lc = lineCol(state.text, child.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
+					offset: child.offset,
+					length: child.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+			continue;
+		}
 		if (child.type === "anchor") {
 			pendingMeta.anchor = getAnchorName(child, state.text);
 			continue;
@@ -1134,6 +1162,20 @@ function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") continue; // brackets, commas, spaces
 		if (child.type === "comment") continue;
+		if (child.type === "error") {
+			const lc = lineCol(state.text, child.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
+					offset: child.offset,
+					length: child.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+			continue;
+		}
 		if (child.type === "anchor") {
 			pendingMeta.anchor = getAnchorName(child, state.text);
 			continue;

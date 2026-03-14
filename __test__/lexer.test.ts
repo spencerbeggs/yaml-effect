@@ -775,3 +775,152 @@ describe("Error channel type", () => {
 		expect(errorTokens.length).toBeGreaterThan(0);
 	});
 });
+
+// ===========================================================================
+// Tab handling (issue #7)
+// ===========================================================================
+
+describe("Tab handling (issue #7)", () => {
+	describe("Change 2: tab-only blank/separator lines", () => {
+		it("emits whitespace for tab-only blank line between mappings (DK95/04)", () => {
+			// foo: 1\n<TAB>\nbar: 2
+			const yaml = "foo: 1\n\t\nbar: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+
+		it("emits whitespace for tab-only blank line before document marker (DK95/07)", () => {
+			// %YAML 1.2\n<TAB>\n---
+			const yaml = "%YAML 1.2\n\t\n---\n";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+
+	describe("Change 3: tab before flow-opening indicators", () => {
+		it("emits whitespace for tab before [ at start of line (6CA3)", () => {
+			// <TAB>[\n<TAB>]
+			const yaml = "\t[\n\t]";
+			const tokens = tokenize(yaml);
+			// The tab before [ should be whitespace, not error
+			// The tab before ] should also be ok (lineIndentLocked after [)
+			const errors = tokens.filter((t) => t.kind === "error");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("emits whitespace for tab before { at start of line (Q5MG)", () => {
+			// <TAB>{}
+			const yaml = "\t{}";
+			const tokens = tokenize(yaml);
+			const errors = tokens.filter((t) => t.kind === "error");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("still errors on tab before non-flow content (Y79Y/003 protection)", () => {
+			// Tab before plain scalar — not a flow opener
+			const yaml = "a: 1\n\tb: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+	});
+
+	describe("Change 5a: mixed tab+space indentation", () => {
+		it("errors on space-then-tab indentation in block context (DK95/06)", () => {
+			// foo:\n  a: 1\n  <TAB>b: 2
+			const yaml = "foo:\n  a: 1\n  \tb: 2";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("allows space-then-tab after indentation is locked", () => {
+			// After indentation is locked, tabs in whitespace are content
+			const yaml = "a:  \tb";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+
+	describe("Change 4: tab after block indicators", () => {
+		it("errors on tab after - indicator (Y79Y/004)", () => {
+			const yaml = "-\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on space+tab after - indicator (Y79Y/005)", () => {
+			const yaml = "- \t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after ? indicator (Y79Y/006)", () => {
+			const yaml = "?\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after : indicator (Y79Y/007)", () => {
+			const yaml = "? -\n:\t-";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("errors on tab after ? with key (Y79Y/008)", () => {
+			const yaml = "?\tkey:";
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+	});
+
+	describe("Change 5b: tab in double-quoted continuation", () => {
+		it("errors on tab after bare newline in double-quoted scalar (DK95/01)", () => {
+			// foo: "bar\n<TAB>baz"
+			const yaml = 'foo: "bar\n\tbaz"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("allows tab in double-quoted content (not after newline)", () => {
+			const yaml = '"hello\tworld"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+
+		it("allows escaped tab via backslash-t in double-quoted scalar", () => {
+			const yaml = '"hello\\tworld"';
+			const tokens = tokenize(yaml);
+			const scalar = tokens.find((t) => t.kind === "scalar");
+			expect(scalar?.value).toBe("hello\tworld");
+		});
+	});
+
+	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
+		it("decodes backslash followed by literal tab as tab character", () => {
+			// The backslash-escape uses a literal 0x09 byte, not the letter 't'
+			const yaml = '"hello\\\tbig"';
+			const tokens = tokenize(yaml);
+			const scalar = tokens.find((t) => t.kind === "scalar");
+			expect(scalar?.value).toBe("hello\tbig");
+		});
+
+		it("does not error on backslash-tab in double-quoted scalar (3RLN/01)", () => {
+			// "2 leading\n    \<TAB>tab"
+			const yaml = '"2 leading\n    \\\ttab"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+	});
+});
