@@ -1,6 +1,18 @@
 ---
 title: Schemas
 description: All Schema definitions including AST nodes, visitor events, CST nodes, tokens, options, and shared types.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 85
+related:
+  - architecture.md
+  - parsing.md
+  - visitor.md
+dependencies: []
 ---
 
 All data structures are defined as `Schema.Class` or `Schema.TaggedClass`

@@ -1,6 +1,19 @@
 ---
 title: Equality
 description: equals and equalsValue comparison functions.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 90
+related:
+  - architecture.md
+  - parsing.md
+  - format-modify.md
+dependencies:
+  - parsing.md
 ---
 
 File: `src/utils/equality.ts`

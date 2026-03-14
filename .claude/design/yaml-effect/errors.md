@@ -1,6 +1,19 @@
 ---
 title: Errors
 description: Error taxonomy, tagged error pattern, and error handling.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 85
+related:
+  - architecture.md
+  - parsing.md
+  - stringify.md
+  - format-modify.md
+dependencies: []
 ---
 
 Directory: `src/errors/`

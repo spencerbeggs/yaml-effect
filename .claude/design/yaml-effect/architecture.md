@@ -1,6 +1,21 @@
 ---
 title: Architecture
 description: Overall architecture, pipeline stages, Effect integration, and module layout.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 90
+related:
+  - parsing.md
+  - stringify.md
+  - schemas.md
+  - errors.md
+  - visitor.md
+  - schema-integration.md
+dependencies: []
 ---
 
 ## Overview

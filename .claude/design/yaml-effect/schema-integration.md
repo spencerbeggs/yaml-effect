@@ -1,6 +1,22 @@
 ---
 title: Schema Integration
 description: Effect Schema bridges for typed YAML-to-domain roundtrips.
+status: current
+module: yaml-effect
+category: integration
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 75
+related:
+  - architecture.md
+  - schemas.md
+  - parsing.md
+  - stringify.md
+dependencies:
+  - parsing.md
+  - stringify.md
+  - schemas.md
 ---
 
 File: `src/utils/schema-integration.ts`
