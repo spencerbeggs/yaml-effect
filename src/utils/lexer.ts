@@ -180,6 +180,14 @@ export function createScanner(text: string): YamlScanner {
 		const start = pos;
 		const sLine = line;
 		const sCol = col;
+		// YAML 1.2 §6.1: Tabs are not allowed as indentation characters.
+		// Detect tabs in leading whitespace (before lineIndent is locked).
+		if (!lineIndentLocked && peek() === "\t") {
+			while (pos < text.length && isWhitespace(peek())) {
+				advance();
+			}
+			return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+		}
 		while (pos < text.length && isWhitespace(peek())) {
 			advance();
 		}

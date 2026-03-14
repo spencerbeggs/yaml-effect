@@ -652,6 +652,20 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 		const child = children[i];
 		if (!child) continue;
 
+		if (child.type === "error") {
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
+					offset: child.offset,
+					length: child.length,
+					line: 0,
+					column: child.offset,
+				}),
+			);
+			continue;
+		}
+
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
 			if (child.source === ":") {
@@ -1164,6 +1178,22 @@ function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
 			continue;
 		}
 
+		// Error nodes from the lexer/parser (e.g. tab indentation)
+		if (child.type === "error") {
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
+					offset: child.offset,
+					length: child.length,
+					line: 0,
+					column: child.offset,
+				}),
+			);
+			i++;
+			continue;
+		}
+
 		// Anchor/tag metadata
 		if (child.type === "anchor") {
 			meta.anchor = getAnchorName(child, state.text);
@@ -1370,7 +1400,9 @@ export function parseDocument(
 
 			const result = composeDocument(doc, state);
 
-			const fatalErrors = state.errors.filter((e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded");
+			const fatalErrors = state.errors.filter(
+				(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+			);
 			if (fatalErrors.length > 0) {
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
 			}
@@ -1399,7 +1431,9 @@ export function parseAllDocuments(
 				const doc = composeDocument(cst, state);
 				documents.push(doc);
 
-				const fatal = state.errors.filter((e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded");
+				const fatal = state.errors.filter(
+					(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+				);
 				if (fatal.length > 0) fatalErrors.push(...fatal);
 			}
 
@@ -1447,7 +1481,9 @@ export function composeDocumentFromCst(
 	const state = createState(text, options);
 	const result = composeDocument(cst, state);
 
-	const fatalErrors = state.errors.filter((e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded");
+	const fatalErrors = state.errors.filter(
+		(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+	);
 	if (fatalErrors.length > 0) {
 		return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
 	}

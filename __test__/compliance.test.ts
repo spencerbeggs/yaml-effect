@@ -471,6 +471,10 @@ describe("YAML 1.2 compliance: error cases", () => {
 		const yaml = `anchor: &a value\n${Array.from({ length: 5 }, (_, i) => `ref${i}: *a`).join("\n")}`;
 		expect(fails(yaml, { maxAliasCount: 2 })).toBe(true);
 	});
+
+	it("rejects tab indentation", () => {
+		expect(fails("key:\n\tvalue: 1")).toBe(true);
+	});
 });
 
 // ===========================================================================
