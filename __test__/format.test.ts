@@ -1,7 +1,8 @@
 import { Effect, pipe } from "effect";
 import { describe, expect, it } from "vitest";
+import { YamlFormatError } from "../src/errors/YamlFormatError.js";
 import { YamlEdit } from "../src/schemas/YamlShared.js";
-import { applyEdits } from "../src/utils/format.js";
+import { applyEdits, format, formatAndApply } from "../src/utils/format.js";
 
 describe("applyEdits", () => {
 	it("applies a single replacement edit", () => {
@@ -60,5 +61,105 @@ describe("applyEdits", () => {
 		const edits = [new YamlEdit({ offset: 3, length: 100, content: "!" })];
 		const result = Effect.runSync(applyEdits(text, edits));
 		expect(result).toBe("sho!");
+	});
+});
+
+describe("format", () => {
+	it("re-indents from 4 spaces to 2 spaces", () => {
+		const input = "root:\n    nested: value\n";
+		const result = Effect.runSync(
+			format(input, { indent: 2 }).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("root:");
+		expect(result).toContain("nested: value");
+		// Should use 2-space indent, not 4
+		expect(result).not.toContain("    nested");
+	});
+
+	it("adds final newline when finalNewline is true", () => {
+		const input = "key: value";
+		const result = Effect.runSync(
+			format(input, { finalNewline: true }).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toMatch(/\n$/);
+	});
+
+	it("removes final newline when finalNewline is false", () => {
+		const input = "key: value\n";
+		const result = Effect.runSync(
+			format(input, { finalNewline: false }).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).not.toMatch(/\n$/);
+	});
+
+	it("sorts keys alphabetically when sortKeys is true", () => {
+		const input = "z: 1\na: 2\nm: 3\n";
+		const result = Effect.runSync(
+			format(input, { sortKeys: true }).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		const keys = result
+			.trim()
+			.split("\n")
+			.map((l) => l.split(":")[0]);
+		expect(keys).toEqual(["a", "m", "z"]);
+	});
+
+	it("returns empty edits for already-formatted input", () => {
+		const input = "key: value\n";
+		const edits = Effect.runSync(format(input));
+		expect(edits).toEqual([]);
+	});
+
+	it("preserves comments by default", () => {
+		const input = "# header comment\nkey: value\n";
+		const result = Effect.runSync(format(input).pipe(Effect.flatMap((edits) => applyEdits(input, edits))));
+		expect(result).toContain("# header comment");
+	});
+
+	it("strips comments when preserveComments is false", () => {
+		const input = "# header\nkey: value # inline\n";
+		const result = Effect.runSync(
+			format(input, { preserveComments: false }).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).not.toContain("# header");
+		expect(result).not.toContain("# inline");
+		expect(result).toContain("key: value");
+	});
+
+	it("restricts edits to range when specified", () => {
+		const input = "a: 1\nb:   2\nc: 3\n";
+		const edits = Effect.runSync(format(input, { range: { offset: 5, length: 7 } }));
+		// Only edits within the range [5, 12) should be returned
+		for (const edit of edits) {
+			expect(edit.offset).toBeGreaterThanOrEqual(5);
+			expect(edit.offset + edit.length).toBeLessThanOrEqual(12);
+		}
+	});
+
+	it("fails with YamlFormatError on invalid YAML", () => {
+		// *undefined_anchor references an anchor that was never defined,
+		// which the composer treats as a fatal UndefinedAlias error.
+		const result = Effect.runSync(Effect.either(format("*undefined_anchor")));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			expect(result.left).toBeInstanceOf(YamlFormatError);
+		}
+	});
+});
+
+describe("formatAndApply", () => {
+	it("returns formatted string directly", () => {
+		const input = "root:\n    nested: value\n";
+		const result = Effect.runSync(formatAndApply(input, { indent: 2 }));
+		expect(result).toContain("root:");
+		expect(result).not.toContain("    nested");
+	});
+
+	it("produces same result as format + applyEdits", () => {
+		const input = "z: 1\na: 2\n";
+		const opts = { sortKeys: true } as const;
+		const viaEdits = Effect.runSync(format(input, opts).pipe(Effect.flatMap((edits) => applyEdits(input, edits))));
+		const viaDirect = Effect.runSync(formatAndApply(input, opts));
+		expect(viaDirect).toBe(viaEdits);
 	});
 });

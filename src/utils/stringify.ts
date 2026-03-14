@@ -432,7 +432,14 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
  */
 function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: StringifyContext): string[] {
 	const style: CollectionStyle = node.style ?? ctx.defaultCollectionStyle;
-	const items = [...node.items];
+	let items = [...node.items];
+	if (ctx.sortKeys) {
+		items = items.sort((a, b) => {
+			const ka = a.key instanceof YamlScalar ? String(a.key.value) : "";
+			const kb = b.key instanceof YamlScalar ? String(b.key.value) : "";
+			return ka < kb ? -1 : ka > kb ? 1 : 0;
+		});
+	}
 
 	if (items.length === 0) return ["{}"];
 
@@ -598,7 +605,8 @@ export function stringifyDocument(
 			}
 
 			const result = stringifyNodeLines(doc.contents, ctx).join("\n");
-			return opts.finalNewline ? `${result}\n` : result;
+			const body = opts.finalNewline ? `${result}\n` : result;
+			return doc.comment ? `# ${doc.comment}\n${body}` : body;
 		},
 		catch: (err) => {
 			const reason = err instanceof Error ? err.message : String(err);
