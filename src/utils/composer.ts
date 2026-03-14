@@ -50,13 +50,25 @@ const FLOAT_RE = /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$/;
 const INF_RE = /^[-+]?\.(?:inf|Inf|INF)$/;
 const NAN_RE = /^\.(?:nan|NaN|NAN)$/;
 
+/**
+ * Parses an integer string, returning `bigint` when the value exceeds
+ * `Number.MAX_SAFE_INTEGER` to avoid silent precision loss.
+ */
+function safeParseInt(value: string, radix: number): number | bigint {
+	const n = Number.parseInt(value, radix);
+	if (Number.isSafeInteger(n)) return n;
+	// Fall back to BigInt for values that exceed safe integer range
+	const prefix = radix === 16 ? "0x" : radix === 8 ? "0o" : "";
+	return BigInt(`${prefix}${value}`);
+}
+
 function resolvePlainScalar(value: string): unknown {
 	if (value === "" || NULL_RE.test(value)) return null;
 	if (TRUE_RE.test(value)) return true;
 	if (FALSE_RE.test(value)) return false;
-	if (OCT_RE.test(value)) return Number.parseInt(value.slice(2), 8);
-	if (HEX_RE.test(value)) return Number.parseInt(value.slice(2), 16);
-	if (INT_RE.test(value)) return Number.parseInt(value, 10);
+	if (OCT_RE.test(value)) return safeParseInt(value.slice(2), 8);
+	if (HEX_RE.test(value)) return safeParseInt(value.slice(2), 16);
+	if (INT_RE.test(value)) return safeParseInt(value, 10);
 	if (INF_RE.test(value)) return value.startsWith("-") ? -Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
 	if (NAN_RE.test(value)) return Number.NaN;
 	if (FLOAT_RE.test(value)) {
@@ -222,7 +234,7 @@ function decodeDoubleQuoted(raw: string): string {
 					continue;
 				}
 				default:
-					result += esc ?? "";
+					result += esc === undefined ? "\\" : esc;
 			}
 			i++;
 		} else if (ch === "\n") {

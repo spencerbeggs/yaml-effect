@@ -15,6 +15,19 @@ import { buildAnchorMap, getNodeValue, parse, parseAllDocuments, parseDocument }
 import { stringify, stringifyDocument } from "./stringify.js";
 
 /**
+ * Enriches an error message with position info from the first error detail
+ * when available (YamlComposerError, YamlParseError, YamlLexError carry an
+ * `errors` array of YamlErrorDetail with line/column).
+ */
+function formatSchemaError(err: { message: string; errors?: ReadonlyArray<{ line: number; column: number }> }): string {
+	if (err.errors && err.errors.length > 0) {
+		const first = err.errors[0];
+		return `${err.message} (line ${first.line + 1}, column ${first.column + 1})`;
+	}
+	return err.message;
+}
+
+/**
  * A Schema that decodes a YAML string into an unknown value and encodes
  * an unknown value back into a YAML string.
  *
@@ -42,9 +55,9 @@ import { stringify, stringifyDocument } from "./stringify.js";
 export const YamlFromString: Schema.Schema<unknown, string> = Schema.transformOrFail(Schema.String, Schema.Unknown, {
 	strict: true,
 	decode: (input, _options, ast) =>
-		parse(input).pipe(Effect.mapError((err) => new ParseResult.Type(ast, input, err.message))),
+		parse(input).pipe(Effect.mapError((err) => new ParseResult.Type(ast, input, formatSchemaError(err)))),
 	encode: (value, _options, ast) =>
-		stringify(value).pipe(Effect.mapError((err) => new ParseResult.Type(ast, value, err.message))),
+		stringify(value).pipe(Effect.mapError((err) => new ParseResult.Type(ast, value, formatSchemaError(err)))),
 });
 
 /**
@@ -74,9 +87,13 @@ export function makeYamlFromString(
 	return Schema.transformOrFail(Schema.String, Schema.Unknown, {
 		strict: true,
 		decode: (input, _options, ast) =>
-			parse(input, parseOptions).pipe(Effect.mapError((err) => new ParseResult.Type(ast, input, err.message))),
+			parse(input, parseOptions).pipe(
+				Effect.mapError((err) => new ParseResult.Type(ast, input, formatSchemaError(err))),
+			),
 		encode: (value, _options, ast) =>
-			stringify(value, stringifyOptions).pipe(Effect.mapError((err) => new ParseResult.Type(ast, value, err.message))),
+			stringify(value, stringifyOptions).pipe(
+				Effect.mapError((err) => new ParseResult.Type(ast, value, formatSchemaError(err))),
+			),
 	});
 }
 
@@ -170,7 +187,7 @@ export function makeYamlAllFromString(
 						{ concurrency: 1 },
 					),
 				),
-				Effect.mapError((err) => new ParseResult.Type(ast, input, err.message)),
+				Effect.mapError((err) => new ParseResult.Type(ast, input, formatSchemaError(err))),
 			),
 		encode: (values, _options, ast) => {
 			if (values.length === 0) return ParseResult.succeed("");
@@ -180,7 +197,7 @@ export function makeYamlAllFromString(
 				{ concurrency: 1 },
 			).pipe(
 				Effect.map((parts) => parts.join("")),
-				Effect.mapError((err) => new ParseResult.Type(ast, values, err.message)),
+				Effect.mapError((err) => new ParseResult.Type(ast, values, formatSchemaError(err))),
 			);
 		},
 	}) as unknown as Schema.Schema<ReadonlyArray<unknown>, string>;
@@ -226,10 +243,12 @@ export function makeYamlDocumentSchema(parseOptions?: Partial<YamlParseOptions>)
 	return Schema.transformOrFail(Schema.String, Schema.Unknown, {
 		strict: true,
 		decode: (input, _options, ast) =>
-			parseDocument(input, parseOptions).pipe(Effect.mapError((err) => new ParseResult.Type(ast, input, err.message))),
+			parseDocument(input, parseOptions).pipe(
+				Effect.mapError((err) => new ParseResult.Type(ast, input, formatSchemaError(err))),
+			),
 		encode: (doc, _options, ast) =>
 			stringifyDocument(doc as YamlDocument).pipe(
-				Effect.mapError((err) => new ParseResult.Type(ast, doc, err.message)),
+				Effect.mapError((err) => new ParseResult.Type(ast, doc, formatSchemaError(err))),
 			),
 	}) as unknown as Schema.Schema<YamlDocument, string>;
 }

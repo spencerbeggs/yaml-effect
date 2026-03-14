@@ -92,7 +92,11 @@ function computeEdits(original: string, modified: string): ReadonlyArray<YamlEdi
 					}),
 				);
 			}
-			offset += origLines[i].length + 1; // +1 for the \n (assumes LF-only)
+			// +1 for the \n delimiter. For CRLF input, split("\n") leaves \r in each
+			// element so origLines[i].length already includes it; the +1 accounts for
+			// the \n only. This is correct because computeEdits operates on text
+			// produced by stringifyDocument which always uses LF endings.
+			offset += origLines[i].length + 1;
 		}
 		return edits;
 	}

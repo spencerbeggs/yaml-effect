@@ -30,6 +30,13 @@ const INF_RE = /^[-+]?\.(?:inf|Inf|INF)$/;
 const NAN_RE = /^\.(?:nan|NaN|NAN)$/;
 
 /**
+ * C0 control characters (except TAB) that must be escaped in double-quoted scalars.
+ */
+function isControlChar(code: number): boolean {
+	return (code >= 0x00 && code <= 0x08) || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f);
+}
+
+/**
  * YAML indicator characters that require quoting when appearing in plain scalars.
  */
 const INDICATOR_CHARS = new Set([
@@ -99,6 +106,10 @@ function requiresQuoting(s: string): boolean {
 	// Contains ': ' (mapping value indicator with space) or ' #' (comment indicator)
 	if (s.includes(": ") || s.endsWith(":")) return true;
 	if (s.includes(" #")) return true;
+	// C0 control characters (except tab) require quoting
+	for (let i = 0; i < s.length; i++) {
+		if (isControlChar(s.charCodeAt(i))) return true;
+	}
 	return false;
 }
 
@@ -110,12 +121,22 @@ function requiresQuoting(s: string): boolean {
  * Renders a string scalar using double-quote style.
  */
 function renderDoubleQuoted(s: string): string {
-	const escaped = s
+	let escaped = s
 		.replace(/\\/g, "\\\\")
 		.replace(/"/g, '\\"')
 		.replace(/\n/g, "\\n")
 		.replace(/\r/g, "\\r")
 		.replace(/\t/g, "\\t");
+	let result = "";
+	for (let i = 0; i < escaped.length; i++) {
+		const code = escaped.charCodeAt(i);
+		if (isControlChar(code)) {
+			result += `\\x${code.toString(16).padStart(2, "0")}`;
+		} else {
+			result += escaped[i];
+		}
+	}
+	escaped = result;
 	return `"${escaped}"`;
 }
 
@@ -261,6 +282,9 @@ function stringifyLines(value: unknown, ctx: StringifyContext): string[] {
 
 	// number
 	if (typeof value === "number") return [renderNumber(value)];
+
+	// bigint — produced by safeParseInt for values exceeding MAX_SAFE_INTEGER
+	if (typeof value === "bigint") return [value.toString()];
 
 	// string
 	if (typeof value === "string") {
