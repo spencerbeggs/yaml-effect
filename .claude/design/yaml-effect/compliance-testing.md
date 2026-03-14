@@ -128,10 +128,20 @@ Each `TestCase` has:
 - `outYaml` -- canonical output (if `out.yaml` exists)
 - `isError` -- true if the `error` file is present
 - `events` -- raw event stream (currently unused)
+- `isMultiDocument` -- true if `in.json` contains multiple top-level
+  JSON values (multi-document stream)
 
 The `parseMultiJson()` helper handles `in.json` files that contain
 multiple top-level JSON values (one per YAML document in multi-document
-streams).
+streams). It returns a `ParsedJson` object with `value` and
+`isMultiDocument` fields.
+
+### Multi-Document Support (Issue #6 -- Resolved)
+
+The test runner detects multi-document fixtures via `isMultiDocument` and
+uses `parseAllDocuments()` with `buildAnchorMap()` + `getNodeValue()` to
+extract per-document plain values. The `parseYamlMulti()` helper wraps
+this for the JSON comparison and roundtrip tests.
 
 ## Skip Map Strategy
 
@@ -271,17 +281,48 @@ When a parser or stringifier fix lands:
    entire entry.
 5. Re-run to confirm all tests pass cleanly.
 
-### The `parseAllDocuments` Gap (Issue #6)
+### Debugging Compliance Failures
 
-The test runner currently uses `parse()` (single document) for all test
-cases. Multi-document streams (tests with multiple YAML documents
-separated by `---`) only return the first document's value. This causes
-JSON comparison failures for multi-document tests because `in.json` may
-contain multiple JSON values.
+**Targeting specific tests by ID:**
 
-Issue #6 tracks switching to `parseAllDocuments()` for tests that contain
-multiple documents. The `parseMultiJson()` helper in the test data loader
-already handles multi-value JSON files in preparation for this.
+```bash
+# Run a single test case (escape brackets for regex)
+pnpm vitest run --project compliance -t "\[229Q\]"
+
+# Multiple IDs (pipe-separated, still need bracket escaping)
+pnpm vitest run --project compliance -t "\[DWX9\]|\[T26H\]"
+
+# Multi-case IDs work too
+pnpm vitest run --project compliance -t "\[L24T/00\]"
+```
+
+Note: Using unescaped `-t "229Q"` may match too broadly (any test
+whose name contains that substring). Wrapping in `\[...\]` is safer.
+
+**Checking for XFAIL tests that now pass after a fix:**
+
+```bash
+pnpm vitest run --project compliance --reporter=verbose 2>&1 \
+  | grep "Expected.*to fail but"
+```
+
+If any appear, remove the entry from `XFAIL` in the skip map.
+
+**Examining fixture bytes (for whitespace/encoding issues):**
+
+```bash
+xxd __test__/fixtures/yaml-test-suite/DWX9/in.yaml
+xxd __test__/fixtures/yaml-test-suite/DWX9/in.json
+```
+
+**Adding targeted debug tests:**
+
+When investigating a specific failure, add a focused unit test in the
+relevant test file (`lexer.test.ts`, `composer.test.ts`) using the
+exact input from the fixture. Compare lexer output vs composer output
+to determine which layer has the bug. The composer has its own block
+scalar decoder (`decodeBlockScalar`) separate from the lexer's
+`scanBlockScalar`, so block scalar fixes must be applied in both.
 
 ## Badge Pipeline
 
@@ -332,19 +373,30 @@ data out of the main branch history.
 
 Six GitHub issues categorize the known failures:
 
-| Issue | Title | Category |
-| ----- | ----- | -------- |
-| #6 | Fix multi-document test harness to use `parseAllDocuments` | Test harness |
-| #7 | Fix tab handling in lexer for YAML 1.2 compliance | Lexer (16 XFAIL) |
-| #8 | Fix block scalar content normalization | Parser/composer |
-| #9 | Fix double-quoted and plain scalar folding rules | Lexer/parser |
-| #10 | Add stricter validation for invalid YAML rejection | Parser (87 XFAIL) |
-| #11 | Fix canonical output and roundtrip stringifier compliance | Stringifier |
+| Issue | Title | Status |
+| ----- | ----- | ------ |
+| #6 | Fix multi-document test harness to use `parseAllDocuments` | **Resolved** |
+| #7 | Fix tab handling in lexer for YAML 1.2 compliance | Open (16 XFAIL) |
+| #8 | Fix block scalar content normalization | Partial (trailing whitespace fixed) |
+| #9 | Fix double-quoted and plain scalar folding rules | Open |
+| #10 | Add stricter validation for invalid YAML rejection | Open (87 XFAIL) |
+| #11 | Fix canonical output and roundtrip stringifier compliance | Open |
 
 Issues #7 and #10 account for the 103 XFAIL entries.
 Issues #8, #9, and #11 account for most of the SKIP_ASSERTIONS entries.
-Issue #6 is a test harness improvement that will unlock additional test
-coverage for multi-document streams.
+
+### Dual Block Scalar Decoders
+
+Block scalar fixes must be applied in **both** locations:
+
+1. **Lexer** (`src/utils/lexer.ts` — `scanBlockScalar()`): Produces the
+   token value when lexing.
+2. **Composer** (`src/utils/composer.ts` — `decodeBlockScalar()`): Re-decodes
+   from the CST `source` field. The composer does NOT use the lexer's
+   decoded value; it re-parses the raw source independently.
+
+Both contain nearly identical logic for indent detection, line collection,
+and chomp handling. Any fix to block scalar content must be applied to both.
 
 ## Key Files
 
