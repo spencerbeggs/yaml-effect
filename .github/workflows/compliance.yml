@@ -1,0 +1,97 @@
+name: Compliance
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  compliance:
+    name: YAML 1.2 Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Setup runtime
+        id: runtime
+        uses: savvy-web/workflow-runtime-action@main
+
+      - name: Run compliance tests
+        id: compliance
+        run: |
+          pnpm vitest run --project compliance --reporter=json > /tmp/compliance-results.json 2>/dev/null || true
+
+          node --input-type=module <<'SCRIPT'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const data = JSON.parse(readFileSync("/tmp/compliance-results.json", "utf-8"));
+          const results = data.testResults[0].assertionResults;
+
+          const total = results.length;
+          const passed = results.filter(r => r.status === "passed").length;
+
+          // Parse-level: count test cases (not assertions) where parse succeeds/fails correctly
+          const parseTests = results.filter(r =>
+            r.title === "should parse successfully" || r.title === "should reject invalid YAML"
+          );
+          const parsePassing = parseTests.filter(r => r.status === "passed").length;
+          const parseTotal = parseTests.length;
+          const parsePercentage = Math.round((parsePassing / parseTotal) * 100);
+
+          // Full compliance: all assertions
+          const fullPercentage = Math.round((passed / total) * 100);
+
+          function color(pct) {
+            if (pct > 90) return "brightgreen";
+            if (pct > 70) return "yellow";
+            if (pct > 50) return "orange";
+            return "red";
+          }
+
+          const badge = {
+            parse: {
+              passing: parsePassing,
+              total: parseTotal,
+              percentage: parsePercentage,
+              color: color(parsePercentage),
+            },
+            full: {
+              passing: passed,
+              total,
+              percentage: fullPercentage,
+              color: color(fullPercentage),
+            },
+            lastUpdated: new Date().toISOString(),
+          };
+
+          writeFileSync("/tmp/compliance.json", JSON.stringify(badge, null, 2) + "\n");
+          console.log(`Parse: ${parsePassing}/${parseTotal} (${parsePercentage}%)`);
+          console.log(`Full:  ${passed}/${total} (${fullPercentage}%)`);
+          SCRIPT
+
+      - name: Update badges branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Fetch badges branch if it exists
+          git fetch origin badges:badges 2>/dev/null || true
+
+          # Create orphan branch if it doesn't exist
+          if ! git rev-parse --verify badges >/dev/null 2>&1; then
+            git checkout --orphan badges
+            git rm -rf . 2>/dev/null || true
+          else
+            git checkout badges
+          fi
+
+          cp /tmp/compliance.json compliance.json
+          git add compliance.json
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update compliance badge data"
+          git push origin badges --force

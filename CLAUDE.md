@@ -16,18 +16,30 @@ with typed error channels. APIs support dual calling convention via `Fn.dual`.
 ## Design Documentation
 
 Internal design docs live in `.claude/design/yaml-effect/`. Load only the
-docs relevant to the current task:
+docs relevant to the current task — do NOT load unless directly working on
+that area.
 
-- `architecture.md` — Pipeline stages, module layout, Effect integration
-  patterns, architectural decisions
-- `parsing.md` — Lexer, parser, composer implementation details
-- `stringify.md` — AST/value to YAML text serialization
-- `schemas.md` — All Schema definitions: AST nodes, tokens, options, events
-- `schema-integration.md` — Effect Schema bridges (YamlFromString, etc.)
-- `errors.md` — Error taxonomy and tagged error patterns
-- `format-modify.md` — format, modify, applyEdits, stripComments
-- `equality.md` — equals, equalsValue comparison functions
-- `visitor.md` — AST and CST visitor patterns, streaming events
+- @.claude/design/yaml-effect/architecture.md — Pipeline stages, module
+  layout, Effect integration patterns. Load when working on core structure.
+- @.claude/design/yaml-effect/parsing.md — Lexer, parser, composer details.
+  Load when debugging or modifying the parse pipeline.
+- @.claude/design/yaml-effect/stringify.md — AST/value to YAML text. Load
+  when working on serialization output.
+- @.claude/design/yaml-effect/schemas.md — All Schema definitions: AST
+  nodes, tokens, options, events. Load when modifying type definitions.
+- @.claude/design/yaml-effect/schema-integration.md — Effect Schema bridges
+  (YamlFromString, etc.). Load when working on Schema combinators.
+- @.claude/design/yaml-effect/errors.md — Error taxonomy and tagged error
+  patterns. Load when adding or modifying error types.
+- @.claude/design/yaml-effect/format-modify.md — format, modify, applyEdits,
+  stripComments. Load when working on document transformation.
+- @.claude/design/yaml-effect/equality.md — equals, equalsValue comparison.
+  Load when working on value comparison logic.
+- @.claude/design/yaml-effect/visitor.md — AST and CST visitor patterns,
+  streaming events. Load when working on traversal APIs.
+- @.claude/design/yaml-effect/compliance-testing.md — yaml-test-suite
+  integration, skip maps, badge pipeline. Load when working on compliance
+  tests or fixing spec conformance issues.
 
 ## Build Pipeline
 

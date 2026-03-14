@@ -1,6 +1,20 @@
 ---
 title: Visitor
 description: AST and CST visitor pattern, event types, and streaming.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 80
+related:
+  - architecture.md
+  - schemas.md
+  - parsing.md
+dependencies:
+  - parsing.md
+  - schemas.md
 ---
 
 Two SAX-style visitor APIs operate at different levels of the YAML

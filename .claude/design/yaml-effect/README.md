@@ -19,6 +19,7 @@ split by concern to enable progressive context loading.
 | [equality.md](./equality.md) | equals, equalsValue comparison functions |
 | [schema-integration.md](./schema-integration.md) | Effect Schema integration (YamlFromString, makeYamlSchema, etc.) |
 | [errors.md](./errors.md) | Error taxonomy and handling |
+| [compliance-testing.md](./compliance-testing.md) | yaml-test-suite integration, skip maps, badge pipeline |
 
 ## How to Use These Docs
 
@@ -28,6 +29,7 @@ Load only the documents relevant to the task at hand. For example:
 - Adding a new Schema integration? Load `schema-integration.md` and `schemas.md`.
 - Debugging visitor events? Load `visitor.md` and `schemas.md`.
 - Understanding the full pipeline? Start with `architecture.md`.
+- Working on spec compliance or skip maps? Load `compliance-testing.md`.
 
 ## Relationship to User-Facing Docs
 

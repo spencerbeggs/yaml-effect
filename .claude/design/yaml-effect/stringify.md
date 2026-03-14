@@ -1,6 +1,19 @@
 ---
 title: Stringify
 description: How AST nodes and JS values become YAML text.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 80
+related:
+  - architecture.md
+  - schemas.md
+  - format-modify.md
+dependencies:
+  - schemas.md
 ---
 
 File: `src/utils/stringify.ts`

@@ -39,6 +39,7 @@
 		"lint:md:fix": "markdownlint-cli2  --config './lib/configs/.markdownlint-cli2.jsonc' --fix",
 		"prepare": "husky",
 		"test": "vitest run",
+		"test:compliance": "vitest run --project compliance",
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest --watch",
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",
@@ -47,7 +48,7 @@
 	"devDependencies": {
 		"@savvy-web/changesets": "^0.5.1",
 		"@savvy-web/commitlint": "^0.4.1",
-		"@savvy-web/lint-staged": "^0.5.2",
+		"@savvy-web/lint-staged": "^0.6.0",
 		"@savvy-web/rslib-builder": "^0.18.1",
 		"@savvy-web/vitest": "^0.2.1",
 		"effect": "^3.19.19"

@@ -1,6 +1,22 @@
 ---
 title: Architecture
 description: Overall architecture, pipeline stages, Effect integration, and module layout.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 90
+related:
+  - parsing.md
+  - stringify.md
+  - schemas.md
+  - errors.md
+  - visitor.md
+  - schema-integration.md
+  - compliance-testing.md
+dependencies: []
 ---
 
 ## Overview
@@ -234,6 +250,13 @@ through Schema produces valid YAML output. Includes multi-document support
   applied in reverse offset order
 - **Mutable Scanner, Pure Everything Else:** Lexer state machine is the only
   mutable module
+
+## Compliance Testing
+
+YAML 1.2 spec compliance is validated via the official yaml-test-suite
+(~440 test cases) running as a separate Vitest project. See
+[compliance-testing.md](./compliance-testing.md) for the full design:
+test structure, skip map strategy, badge pipeline, and open gaps.
 
 ## Constraints and Trade-offs
 

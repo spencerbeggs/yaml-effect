@@ -1,6 +1,19 @@
 ---
 title: Parsing
 description: Lexer, parser, and composer -- how YAML text becomes AST.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 85
+related:
+  - architecture.md
+  - schemas.md
+  - errors.md
+dependencies:
+  - schemas.md
 ---
 
 The parsing pipeline has three stages: lexer (tokenization), parser (CST

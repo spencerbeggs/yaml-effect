@@ -1,6 +1,22 @@
 ---
 title: Format and Modify
 description: format, formatAndApply, modify, modifyAndApply, applyEdits, stripComments functions.
+status: current
+module: yaml-effect
+category: architecture
+created: 2026-03-14
+updated: 2026-03-14
+last-synced: 2026-03-14
+completeness: 80
+related:
+  - architecture.md
+  - stringify.md
+  - schemas.md
+  - equality.md
+dependencies:
+  - parsing.md
+  - stringify.md
+  - schemas.md
 ---
 
 File: `src/utils/format.ts`
