@@ -5,16 +5,16 @@
  */
 
 export type { YamlError } from "./errors/index.js";
-export { YamlComposerError } from "./errors/YamlComposerError.js";
+export { YamlComposerError, YamlComposerErrorBase } from "./errors/YamlComposerError.js";
 export { YamlErrorDetail } from "./errors/YamlErrorDetail.js";
-export { YamlFormatError } from "./errors/YamlFormatError.js";
+export { YamlFormatError, YamlFormatErrorBase } from "./errors/YamlFormatError.js";
 // Errors
-export { YamlLexError } from "./errors/YamlLexError.js";
-export { YamlModificationError } from "./errors/YamlModificationError.js";
-export { YamlNodeNotFoundError } from "./errors/YamlNodeNotFoundError.js";
-export { YamlParseError } from "./errors/YamlParseError.js";
-export { YamlSchemaError } from "./errors/YamlSchemaError.js";
-export { YamlStringifyError } from "./errors/YamlStringifyError.js";
+export { YamlLexError, YamlLexErrorBase } from "./errors/YamlLexError.js";
+export { YamlModificationError, YamlModificationErrorBase } from "./errors/YamlModificationError.js";
+export { YamlNodeNotFoundError, YamlNodeNotFoundErrorBase } from "./errors/YamlNodeNotFoundError.js";
+export { YamlParseError, YamlParseErrorBase } from "./errors/YamlParseError.js";
+export { YamlSchemaError, YamlSchemaErrorBase } from "./errors/YamlSchemaError.js";
+export { YamlStringifyError, YamlStringifyErrorBase } from "./errors/YamlStringifyError.js";
 export { CstNode, CstNodeType } from "./schemas/CstNode.js";
 export { YamlAlias } from "./schemas/YamlAlias.js";
 // CST Visitor
@@ -104,6 +104,17 @@ export {
 // Core parse/stringify
 export { parse, parseAllDocuments, parseDocument } from "./utils/composer.js";
 export { visitCST, visitCSTCollect } from "./utils/cst-visitor.js";
+// Equality
+export { equals, equalsValue } from "./utils/equality.js";
+// Format & Modify
+export {
+	applyEdits,
+	format,
+	formatAndApply,
+	modify,
+	modifyAndApply,
+	stripComments,
+} from "./utils/format.js";
 // Low-level APIs
 export type { YamlScanner } from "./utils/lexer.js";
 export { createScanner, lex } from "./utils/lexer.js";
