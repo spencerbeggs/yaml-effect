@@ -561,6 +561,11 @@ describe("Task 10: Block scalars", () => {
 			const result = kindValues("|\n  line1\n\n  line2");
 			expect(result).toEqual([["scalar", "line1\n\nline2\n"]]);
 		});
+
+		it("preserves trailing whitespace-only lines in literal block (L24T)", () => {
+			const result = kindValues("|\n  x\n   \n");
+			expect(result).toEqual([["scalar", "x\n \n"]]);
+		});
 	});
 
 	describe("empty block scalar", () => {

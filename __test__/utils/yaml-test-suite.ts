@@ -27,14 +27,24 @@ export interface TestCase {
 	outYaml?: string | undefined;
 	/** True if the `error` file is present (YAML should be rejected). */
 	isError: boolean;
+	/** True if `in.json` contains multiple top-level JSON values (multi-document stream). */
+	isMultiDocument: boolean;
+}
+
+/** Result of parsing a JSON fixture file. */
+interface ParsedJson {
+	/** The parsed value: single value for single-doc, array for multi-doc. */
+	value: unknown;
+	/** True if the file contained multiple top-level JSON values. */
+	isMultiDocument: boolean;
 }
 
 /**
  * Parse a JSON file that may contain multiple top-level JSON values
  * (one per YAML document in multi-document streams).
- * Returns a single value if there's only one, or an array of values.
+ * Returns a single value if there's only one, or an array of values for multi-doc.
  */
-function parseMultiJson(text: string): unknown {
+function parseMultiJson(text: string): ParsedJson {
 	const values: unknown[] = [];
 	let i = 0;
 	const src = text.trim();
@@ -100,7 +110,11 @@ function parseMultiJson(text: string): unknown {
 		}
 	}
 
-	return values.length === 1 ? values[0] : values;
+	const isMultiDocument = values.length > 1;
+	return {
+		value: isMultiDocument ? values : values[0],
+		isMultiDocument,
+	};
 }
 
 /**
@@ -116,9 +130,12 @@ function loadFromDir(dir: string, id: string): TestCase | null {
 	const isError = existsSync(join(dir, "error"));
 
 	let json: unknown;
+	let isMultiDocument = false;
 	const jsonPath = join(dir, "in.json");
 	if (existsSync(jsonPath)) {
-		json = parseMultiJson(readFileSync(jsonPath, "utf-8"));
+		const parsed = parseMultiJson(readFileSync(jsonPath, "utf-8"));
+		json = parsed.value;
+		isMultiDocument = parsed.isMultiDocument;
 	}
 
 	let outYaml: string | undefined;
@@ -127,7 +144,7 @@ function loadFromDir(dir: string, id: string): TestCase | null {
 		outYaml = readFileSync(outPath, "utf-8");
 	}
 
-	return { id, name, yaml, events, json, outYaml, isError };
+	return { id, name, yaml, events, json, outYaml, isError, isMultiDocument };
 }
 
 /**

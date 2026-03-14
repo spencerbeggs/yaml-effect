@@ -265,6 +265,16 @@ describe("Task 15: Anchors, aliases, comments, errors, multi-document, tags", ()
 			const result = val("- &item hello\n- *item");
 			expect(result).toEqual(["hello", "hello"]);
 		});
+
+		it("allows colon in anchor and alias names (Y2GN)", () => {
+			const result = val("key: &an:chor value");
+			expect(result).toEqual({ key: "value" });
+		});
+
+		it("allows special characters in anchor and alias names (W5VH)", () => {
+			const result = val('a: &:@*!$"<foo>: scalar a\nb: *:@*!$"<foo>:');
+			expect(result).toEqual({ a: "scalar a", b: "scalar a" });
+		});
 	});
 
 	describe("duplicate anchor warning", () => {
@@ -488,6 +498,16 @@ describe("Tagged scalar resolution", () => {
 	it("resolves unknown tag as raw string", () => {
 		expect(val("!custom value")).toBe("value");
 	});
+
+	it("resolves !!str with no value to empty string in flow map (WZ62)", () => {
+		const result = val("{\n  foo : !!str,\n  !!str : bar,\n}");
+		expect(result).toEqual({ foo: "", "": "bar" });
+	});
+
+	it("resolves !!str with no value to empty string in block seq (LE5A)", () => {
+		const result = val('- !!str "a"\n- \'b\'\n- &anchor "c"\n- *anchor\n- !!str');
+		expect(result).toEqual(["a", "b", "c", "c", ""]);
+	});
 });
 
 // ===========================================================================
@@ -601,6 +621,16 @@ describe("Block scalar edge cases", () => {
 	it("parses block scalar with explicit indent", () => {
 		const result = val("|2\n  hello\n  world");
 		expect(typeof result).toBe("string");
+	});
+
+	it("preserves trailing whitespace-only lines in literal block (L24T)", () => {
+		const result = val("foo: |\n  x\n   \n");
+		expect(result).toEqual({ foo: "x\n \n" });
+	});
+
+	it("preserves trailing whitespace in literal content (DWX9)", () => {
+		const result = val("|\n \n  \n  literal\n   \n  \n  text\n\n # Comment\n");
+		expect(result).toBe("\n\nliteral\n \n\ntext\n");
 	});
 });
 

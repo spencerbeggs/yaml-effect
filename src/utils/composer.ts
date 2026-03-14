@@ -317,7 +317,16 @@ function decodeBlockScalar(raw: string): string {
 		}
 
 		if (i >= raw.length || raw[i] === "\n" || raw[i] === "\r") {
-			trailingNewlines.push("");
+			if (spaces > contentIndent) {
+				// Whitespace-only line with spaces beyond content indent — this is content
+				// (not an empty line), so flush any pending trailing newlines and add it
+				for (const nl of trailingNewlines) lines.push(nl);
+				trailingNewlines.length = 0;
+				lines.push(" ".repeat(spaces - contentIndent));
+			} else {
+				// Empty line (at or below content indent) — defer as trailing
+				trailingNewlines.push("");
+			}
 			if (i < raw.length) {
 				if (raw[i] === "\r" && i + 1 < raw.length && raw[i + 1] === "\n") i += 2;
 				else i++;
@@ -559,6 +568,7 @@ function getAliasName(cst: CstNode, text: string): string {
 
 function scanName(text: string, start: number): string {
 	let end = start;
+	// YAML 1.2 ns-anchor-char: any non-whitespace char except c-flow-indicator
 	while (end < text.length) {
 		const ch = text[end];
 		if (
@@ -571,8 +581,6 @@ function scanName(text: string, start: number): string {
 			ch === "[" ||
 			ch === "]" ||
 			ch === "," ||
-			ch === ":" ||
-			ch === "#" ||
 			ch === undefined
 		) {
 			break;
@@ -682,6 +690,21 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
 			if (child.source === ":") {
+				// Flush pending tag/anchor as empty scalar before value-sep
+				if (hasMeta(pendingMeta)) {
+					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: 0,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					items.push({ kind: "node", node: scalar });
+				}
 				items.push({ kind: "value-sep" });
 			}
 			// Skip other whitespace (spaces, "-", "?", "---", "...")
@@ -749,6 +772,20 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 			pendingMeta = {};
 			items.push({ kind: "node", node: seq });
 		}
+	}
+	// Flush trailing pending tag/anchor as empty scalar
+	if (hasMeta(pendingMeta)) {
+		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const scalar = new YamlScalar({
+			value,
+			style: "plain" as ScalarStyle,
+			offset: 0,
+			length: 0,
+			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+		});
+		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
+		items.push({ kind: "node", node: scalar });
 	}
 	return items;
 }
@@ -937,6 +974,20 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			items.push(seq);
 		}
 	}
+	// Flush trailing pending tag/anchor as empty scalar (e.g., - !!str)
+	if (hasMeta(pendingMeta)) {
+		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const scalar = new YamlScalar({
+			value,
+			style: "plain" as ScalarStyle,
+			offset: 0,
+			length: 0,
+			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+		});
+		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
+		items.push(scalar);
+	}
 
 	const seq = new YamlSeq({
 		items,
@@ -995,6 +1046,21 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 	for (const child of children) {
 		if (child.type === "whitespace") {
 			if (child.source === ":") {
+				// Flush pending tag/anchor as empty scalar before value-sep
+				if (hasMeta(pendingMeta)) {
+					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: 0,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					items.push({ kind: "node", node: scalar });
+				}
 				items.push({ kind: "value-sep" });
 			}
 			continue;
@@ -1037,6 +1103,20 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			pendingMeta = {};
 			items.push({ kind: "node", node: seq });
 		}
+	}
+	// Flush trailing pending tag/anchor as empty scalar (e.g., !!str at end of flow)
+	if (hasMeta(pendingMeta)) {
+		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const scalar = new YamlScalar({
+			value,
+			style: "plain" as ScalarStyle,
+			offset: 0,
+			length: 0,
+			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+		});
+		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
+		items.push({ kind: "node", node: scalar });
 	}
 	return items;
 }
@@ -1085,6 +1165,20 @@ function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 			pendingMeta = {};
 			items.push(seq);
 		}
+	}
+	// Flush trailing pending tag/anchor as empty scalar (e.g., [!!str])
+	if (hasMeta(pendingMeta)) {
+		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const scalar = new YamlScalar({
+			value,
+			style: "plain" as ScalarStyle,
+			offset: 0,
+			length: 0,
+			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+		});
+		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
+		items.push(scalar);
 	}
 
 	const seq = new YamlSeq({

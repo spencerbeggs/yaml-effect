@@ -597,10 +597,20 @@ export function createScanner(text: string): YamlScanner {
 				col++;
 			}
 
-			// Check if this is a blank line
+			// Check if this is a blank/empty line (newline or EOF after only spaces)
 			if (pos >= text.length || text[pos] === "\n" || text[pos] === "\r") {
-				// Blank line — keep it
-				trailingNewlines.push("");
+				if (spaces > contentIndent) {
+					// Whitespace-only line with extra indentation — this is content,
+					// not an empty line (YAML 1.2 section 8.1.3)
+					for (const nl of trailingNewlines) {
+						lines.push(nl);
+					}
+					trailingNewlines.length = 0;
+					lines.push(" ".repeat(spaces - contentIndent));
+				} else {
+					// Empty line (at or below content indent) — defer as trailing
+					trailingNewlines.push("");
+				}
 				if (pos < text.length) {
 					if (text[pos] === "\r" && pos + 1 < text.length && text[pos + 1] === "\n") {
 						pos += 2;
@@ -714,14 +724,8 @@ export function createScanner(text: string): YamlScanner {
 		const sCol = col;
 		advance(); // skip '&'
 		const nameStart = pos;
-		while (
-			pos < text.length &&
-			!isWhitespace(peek()) &&
-			!isNewline(peek()) &&
-			!isFlowIndicator(peek()) &&
-			peek() !== ":" &&
-			peek() !== "#"
-		) {
+		// YAML 1.2 ns-anchor-char: any non-whitespace char except c-flow-indicator
+		while (pos < text.length && !isWhitespace(peek()) && !isNewline(peek()) && !isFlowIndicator(peek())) {
 			advance();
 		}
 		const name = text.slice(nameStart, pos);
@@ -738,14 +742,8 @@ export function createScanner(text: string): YamlScanner {
 		const sCol = col;
 		advance(); // skip '*'
 		const nameStart = pos;
-		while (
-			pos < text.length &&
-			!isWhitespace(peek()) &&
-			!isNewline(peek()) &&
-			!isFlowIndicator(peek()) &&
-			peek() !== ":" &&
-			peek() !== "#"
-		) {
+		// YAML 1.2 ns-anchor-char: any non-whitespace char except c-flow-indicator
+		while (pos < text.length && !isWhitespace(peek()) && !isNewline(peek()) && !isFlowIndicator(peek())) {
 			advance();
 		}
 		const name = text.slice(nameStart, pos);
