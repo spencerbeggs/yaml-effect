@@ -882,6 +882,30 @@ describe("Tab handling (issue #7)", () => {
 		});
 	});
 
+	describe("Change 5b: tab in double-quoted continuation", () => {
+		it("errors on tab after bare newline in double-quoted scalar (DK95/01)", () => {
+			// foo: "bar\n<TAB>baz"
+			const yaml = 'foo: "bar\n\tbaz"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(true);
+		});
+
+		it("allows tab in double-quoted content (not after newline)", () => {
+			const yaml = '"hello\tworld"';
+			const tokens = tokenize(yaml);
+			const hasError = tokens.some((t) => t.kind === "error");
+			expect(hasError).toBe(false);
+		});
+
+		it("allows escaped tab via backslash-t in double-quoted scalar", () => {
+			const yaml = '"hello\\tworld"';
+			const tokens = tokenize(yaml);
+			const scalar = tokens.find((t) => t.kind === "scalar");
+			expect(scalar?.value).toBe("hello\tworld");
+		});
+	});
+
 	describe("Change 1: backslash-tab escape in double-quoted scalars", () => {
 		it("decodes backslash followed by literal tab as tab character", () => {
 			// The backslash-escape uses a literal 0x09 byte, not the letter 't'

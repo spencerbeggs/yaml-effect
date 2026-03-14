@@ -60,7 +60,6 @@ export const XFAIL: Record<string, string> = {
 	CXX2: "Parser accepts invalid YAML: Mapping with anchor on document start line",
 	D49Q: "Parser accepts invalid YAML: Multiline single quoted implicit keys",
 	DK4H: "Parser accepts invalid YAML: Implicit key followed by newline",
-	"DK95/01": "Parser accepts invalid YAML: Tabs that look like indentation",
 	DMG6: "Parser accepts invalid YAML: Wrong indendation in Map",
 	EB22: "Parser accepts invalid YAML: Missing document-end marker before directive",
 	EW3V: "Parser accepts invalid YAML: Wrong indendation in mapping",

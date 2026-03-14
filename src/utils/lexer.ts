@@ -560,9 +560,23 @@ export function createScanner(text: string): YamlScanner {
 			} else if (ch === "\n") {
 				value += " ";
 				advance();
+				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
+				// when the scalar is nested (sCol > 0), since the tab would be acting
+				// as indentation. At column 0, tabs are just leading whitespace.
+				if (sCol > 0 && peek() === "\t") {
+					advance(); // consume the tab so it's included in the error span
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else if (ch === "\r" && peek(1) === "\n") {
 				value += " ";
 				advance(2);
+				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
+				// when the scalar is nested (sCol > 0), since the tab would be acting
+				// as indentation. At column 0, tabs are just leading whitespace.
+				if (sCol > 0 && peek() === "\t") {
+					advance(); // consume the tab so it's included in the error span
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else {
 				value += ch;
 				advance();
