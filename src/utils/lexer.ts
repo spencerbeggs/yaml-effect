@@ -41,7 +41,14 @@ export interface YamlScanner {
 	getTokenColumn(): number;
 	/** Return the current scanner position (next character to be scanned). */
 	getPosition(): number;
-	/** Reset the scanner to the given character offset and rescan from there. */
+	/**
+	 * Reset the scanner to the given character offset and rescan from there.
+	 *
+	 * @remarks
+	 * All block-structure state (indentation, flow depth, pending tokens) is
+	 * reset. For reliable results, pass an offset previously returned by
+	 * {@link getTokenOffset} rather than an arbitrary mid-token position.
+	 */
 	setPosition(pos: number): void;
 }
 
