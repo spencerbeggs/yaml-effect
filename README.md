@@ -1,73 +1,66 @@
-# pnpm-module-template
+# yaml-effect
 
-A personal template repository by
-[C. Spencer Beggs](https://spencerbeg.gs) for developing and publishing Node.js
-modules to [npm](https://www.npmjs.com/) and
-[GitHub Packages](https://github.com/features/packages).
+[![npm version](https://img.shields.io/npm/v/@spencerbeggs/yaml-effect)](https://www.npmjs.com/package/@spencerbeggs/yaml-effect)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-You're welcome to clone or fork this template for your own use.
+A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript.
+Zero runtime dependencies beyond Effect -- no wrappers, no ports, just a
+clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 
-## What's Included
+## Features
 
-- **Build pipeline** — Dual-output builds (development + production) via
-  [Rslib](https://rslib.rs/) with automatic `package.json` transformation for
-  publishing
-- **Code quality** — [Biome](https://biomejs.dev/) for linting and formatting,
-  with git hooks for pre-commit checks and commit message validation
-- **Testing** — [Vitest](https://vitest.dev/) with v8 coverage
-- **Versioning** — [Changesets](https://github.com/changesets/changesets) for
-  version management and changelog generation
-- **CI/CD** — GitHub Actions for automated testing, building, and publishing
-  with provenance attestation
-- **TypeScript** — Strict mode, composite builds, ESM-first with `.js` import
-  extensions
+- Parse and stringify YAML 1.2 with typed errors via Effect
+- Bidirectional Effect Schema integration for validated YAML-to-domain roundtrips
+- Non-destructive formatting, path-based modification, and semantic equality
+- Stream-based lexer, CST parser, and visitor APIs for low-level processing
+- Pipeline-friendly dual-style APIs (direct and pipe)
+
+### Why does this module exist?
+
+If you just need to parse YAML into a JavaScript object, use
+[yaml](https://www.npmjs.com/package/yaml). It is depended upon by 13,000+
+packages, is battle-tested, and covers the full YAML 1.2 specification.
+
+This library is for Effect-based programs that need deeper introspection and
+manipulation of YAML documents: typed parse errors you can `catchTag`, Schema
+pipelines that validate YAML strings into domain types, AST and CST access,
+non-destructive formatting and path-based modification, semantic equality
+comparisons, and SAX-style visitor streams that are composable in Effect
+pipelines.
+
+> **Note:** yaml-effect is new and may introduce breaking changes before a
+> 1.0.0 release.
+
+## Installation
+
+```bash
+npm install @spencerbeggs/yaml-effect effect
+```
+
+> **Peer dependency:** `effect` (>= 3.x) must be installed alongside
+> yaml-effect.
 
 ## Quick Start
 
-1. Click **"Use this template"** on GitHub (or clone the repo directly)
-2. Update `package.json` with your package name, repository URL, and homepage
-3. Update the `repo` field in `.changeset/config.json`
-4. Replace the placeholder code in `src/` with your own
-5. Install dependencies:
+```typescript
+import { Effect } from "effect";
+import { parse, stringify } from "@spencerbeggs/yaml-effect";
 
-   ```bash
-   pnpm install
-   ```
+const program = Effect.gen(function* () {
+  const value = yield* parse("name: Alice\nage: 30");
+  console.log(value); // { name: "Alice", age: 30 }
 
-6. Start developing:
+  const yaml = yield* stringify({ greeting: "hello", count: 42 });
+  console.log(yaml); // "greeting: hello\ncount: 42\n"
+});
 
-   ```bash
-   pnpm run test:watch    # Run tests in watch mode
-   pnpm run lint:fix      # Auto-fix lint issues
-   pnpm run build         # Build dev + prod outputs
-   ```
-
-## Project Structure
-
-```text
-src/               Source code and tests
-lib/configs/       Shared tool configurations (commitlint, lint-staged, markdownlint)
-dist/dev/          Development build output
-dist/npm/          Production build output (published to registries)
-.github/workflows/ CI/CD workflows
-.changeset/        Changeset configuration
+Effect.runSync(program);
 ```
 
-## Publishing
+## Documentation
 
-Packages are published to both npm and GitHub Packages with provenance
-attestation. The build pipeline automatically transforms `package.json` for
-publishing — the source file stays `"private": true` and the builder handles the
-rest.
-
-See the [Changesets documentation](https://github.com/changesets/changesets) for
-how versioning and releases work.
-
-## Claude Code
-
-This template includes configuration for
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code). See
-[CLAUDE.md](CLAUDE.md) for details on the design-first development workflow.
+For API reference, configuration options, and advanced usage, see
+[docs/](./docs/).
 
 ## License
 

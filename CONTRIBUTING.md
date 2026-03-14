@@ -1,78 +1,62 @@
-# Contributing to Claude Design Coordinator
+# Contributing to yaml-effect
 
-Thank you for your interest in contributing to Claude Design Coordinator! This
-document provides guidelines and instructions for development.
+Thank you for your interest in contributing to yaml-effect! This document
+provides guidelines and instructions for development.
 
 ## Prerequisites
 
-- Node.js 20+
-- pnpm 10+
+- Node.js 24.x
+- pnpm 10.32.1
 
 ## Development Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/spencerbeggs/claude-design-coordinator.git
-cd claude-design-coordinator
+git clone https://github.com/spencerbeggs/yaml-effect.git
+cd yaml-effect
 
 # Install dependencies
 pnpm install
 
-# Build all packages
+# Build all outputs
 pnpm run build
 
 # Run tests
 pnpm run test
 ```
 
-## Running Locally
-
-```bash
-# Start the server (from built output)
-node pkgs/claude-coordinator-server/dist/dev/bin/cli.js
-
-# In another terminal, test the MCP bridge
-node pkgs/claude-coordinator-mcp/dist/dev/bin/cli.js
-```
-
-## Project Structure
-
-```text
-claude-design-coordinator/
-├── pkgs/
-│   ├── claude-coordinator-core/    # Zod schemas and TypeScript types
-│   ├── claude-coordinator-server/  # tRPC WebSocket server
-│   └── claude-coordinator-mcp/     # MCP stdio bridge
-├── lib/
-│   └── configs/                    # Shared configuration files
-└── ...
-```
-
 ## Available Scripts
 
 | Script | Description |
 | ------ | ----------- |
-| `pnpm run build` | Build all packages (dev + prod) |
+| `pnpm run build` | Build dev + prod outputs via Turbo |
+| `pnpm run build:dev` | Build development output only |
+| `pnpm run build:prod` | Build production/npm output only |
 | `pnpm run test` | Run all tests |
+| `pnpm run test:watch` | Run tests in watch mode |
+| `pnpm run test:coverage` | Run tests with v8 coverage report |
 | `pnpm run lint` | Check code with Biome |
 | `pnpm run lint:fix` | Auto-fix lint issues |
-| `pnpm run typecheck` | Type-check all workspaces |
+| `pnpm run lint:md` | Check markdown with markdownlint |
+| `pnpm run typecheck` | Type-check via Turbo (runs tsgo) |
 
 ## Code Quality
 
 This project uses:
 
-- **Biome** for linting and formatting
-- **Commitlint** for enforcing conventional commits
-- **Husky** for Git hooks
+- **Biome** for linting and formatting (extends `@savvy-web/lint-staged`)
+- **Commitlint** for enforcing conventional commits with DCO signoff
+- **Husky** for Git hooks (pre-commit, commit-msg, pre-push)
+- **Vitest** for testing with v8 coverage
 
 ### Commit Format
 
-All commits must follow the [Conventional Commits](https://conventionalcommits.org)
-specification and include a DCO signoff:
+All commits must follow the
+[Conventional Commits](https://conventionalcommits.org) specification and
+include a DCO signoff:
 
 ```text
-feat: add new coordinator tool
+feat: add new parsing option
 
 Signed-off-by: Your Name <your.email@example.com>
 ```
@@ -81,47 +65,16 @@ Signed-off-by: Your Name <your.email@example.com>
 
 The following checks run automatically:
 
-- **pre-commit**: Runs lint-staged
-- **commit-msg**: Validates commit message format
+- **pre-commit**: Runs lint-staged (Biome on staged files)
+- **commit-msg**: Validates commit message format via commitlint
 - **pre-push**: Runs tests for affected packages
-
-## Testing
-
-Tests use [Vitest](https://vitest.dev) with v8 coverage.
-
-```bash
-# Run all tests
-pnpm run test
-
-# Run tests in watch mode
-pnpm run test:watch
-
-# Run tests with coverage
-pnpm run test:coverage
-
-# Run tests for a specific package
-pnpm run test -- --filter=@spencerbeggs/claude-coordinator-core
-```
 
 ## TypeScript
 
-- Composite builds with project references
 - Strict mode enabled
-- ES2022/ES2023 targets
-- Import extensions required (`.js` for ESM)
-
-### Import Conventions
-
-```typescript
-// Use .js extensions for relative imports (ESM requirement)
-import { AgentSchema } from "./schemas/agent.js";
-
-// Use node: protocol for Node.js built-ins
-import { EventEmitter } from "node:events";
-
-// Separate type imports
-import type { Agent } from "./schemas/agent.js";
-```
+- ESM with `.js` extensions for relative imports
+- `node:` protocol for Node.js built-ins
+- Separate type imports: `import type { Foo } from "./bar.js"`
 
 ## Submitting Changes
 
