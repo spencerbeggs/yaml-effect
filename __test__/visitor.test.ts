@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Option, Schema, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import {
 	AliasEvent,
@@ -17,6 +17,7 @@ import {
 	isMapStartEvent,
 	isScalarEvent,
 } from "../src/schemas/YamlVisitorEvent.js";
+import { visit, visitCollect } from "../src/utils/visitor.js";
 
 describe("YamlVisitorEvent schemas", () => {
 	it("creates a ScalarEvent", () => {
@@ -152,5 +153,78 @@ describe("YamlVisitorEvent schemas", () => {
 			style: "plain",
 		});
 		expect(event.path).toEqual(["items", 0, "name"]);
+	});
+});
+
+describe("visit()", () => {
+	it("emits events for a simple mapping", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("a: 1\nb: 2")).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("DocumentStartEvent");
+		expect(tags).toContain("MapStartEvent");
+		expect(tags).toContain("PairEvent");
+		expect(tags).toContain("MapEndEvent");
+		expect(tags).toContain("DocumentEndEvent");
+	});
+
+	it("emits events for a sequence", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("- a\n- b\n- c")).pipe(Effect.map((c) => [...c])));
+		const tags = events.map((e) => e._tag);
+		expect(tags).toContain("SeqStartEvent");
+		expect(tags).toContain("ScalarEvent");
+		expect(tags).toContain("SeqEndEvent");
+	});
+
+	it("tracks path through nested structures", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("obj:\n  key: value")).pipe(Effect.map((c) => [...c])));
+		const scalar = events.find((e) => e._tag === "ScalarEvent" && (e as ScalarEvent).value === "value");
+		expect(scalar).toBeDefined();
+		expect((scalar as ScalarEvent).path).toEqual(["obj", "key"]);
+	});
+
+	it("handles multi-document streams", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("---\na: 1\n---\nb: 2")).pipe(Effect.map((c) => [...c])));
+		const docStarts = events.filter((e) => e._tag === "DocumentStartEvent");
+		expect(docStarts.length).toBe(2);
+	});
+
+	it("emits AliasEvent for aliases", () => {
+		const events = Effect.runSync(Stream.runCollect(visit("a: &ref value\nb: *ref")).pipe(Effect.map((c) => [...c])));
+		const alias = events.find((e) => e._tag === "AliasEvent");
+		expect(alias).toBeDefined();
+		expect((alias as AliasEvent).name).toBe("ref");
+	});
+
+	it("supports early termination via Stream.take", () => {
+		const events = Effect.runSync(
+			Stream.runCollect(visit("a: 1\nb: 2\nc: 3").pipe(Stream.take(3))).pipe(Effect.map((c) => [...c])),
+		);
+		expect(events.length).toBe(3);
+	});
+});
+
+describe("visitCollect()", () => {
+	it("collects matching events with Option predicate", () => {
+		const scalars = Effect.runSync(
+			visitCollect("a: 1\nb: hello", (e) =>
+				e._tag === "ScalarEvent" ? Option.some((e as ScalarEvent).value) : Option.none(),
+			),
+		);
+		expect(scalars).toContain(1);
+		expect(scalars).toContain("hello");
+	});
+
+	it("collects transformed values", () => {
+		const keys = Effect.runSync(
+			visitCollect("name: John\nage: 30", (e) =>
+				e._tag === "PairEvent" ? Option.some((e as PairEvent).key) : Option.none(),
+			),
+		);
+		expect(keys).toEqual(["name", "age"]);
+	});
+
+	it("returns empty array when no events match", () => {
+		const result = Effect.runSync(visitCollect("a: 1", (_e) => Option.none()));
+		expect(result).toEqual([]);
 	});
 });
