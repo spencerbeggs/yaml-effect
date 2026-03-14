@@ -8,14 +8,10 @@
  */
 
 import { Effect, Function as Fn, Option } from "effect";
+import type { YamlNode } from "../schemas/YamlAstNodes.js";
 import { YamlAlias, YamlMap, YamlPair, YamlScalar, YamlSeq } from "../schemas/YamlAstNodes.js";
 import { YamlDocument } from "../schemas/YamlDocument.js";
 import type { YamlPath } from "../schemas/YamlShared.js";
-
-/**
- * The union of all YAML AST node types.
- */
-type YamlNode = YamlScalar | YamlMap | YamlSeq | YamlAlias;
 
 // ---------------------------------------------------------------------------
 // Type guards
