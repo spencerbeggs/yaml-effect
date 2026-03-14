@@ -30,35 +30,61 @@ tags, block/flow styles).
 ReadonlyArray<string | number>` and `depth: number`.
 
 | Event | Additional Fields | Emitted When |
-| ------- | ------------------- | -------------- |
+| --- | --- | --- |
 | `DocumentStart` | `directives: YamlDirective[]` | Document node entered |
 | `DocumentEnd` | — | Document node exited |
 | `MapStart` | `style: CollectionStyle`, `tag?`, `anchor?` | YamlMap entered |
 | `MapEnd` | — | YamlMap exited |
 | `SeqStart` | `style: CollectionStyle`, `tag?`, `anchor?` | YamlSeq entered |
 | `SeqEnd` | — | YamlSeq exited |
-| `Pair` | `key: unknown`, `value: unknown` | YamlPair visited (key+value together) |
+| `Pair` | `key: unknown`, `value: unknown` | YamlPair visited (key+value) |
 | `Scalar` | `value: unknown`, `style: ScalarStyle`, `tag?`, `anchor?` | YamlScalar visited |
 | `Alias` | `name: string` | YamlAlias visited |
 | `Comment` | `text: string` | Comment encountered |
 | `Directive` | `name: string`, `parameters: string` | YAML directive |
 
 `YamlVisitorEvent` is a `Schema.Union` of all 11. Type guard predicates
-exported: `isDocumentStartEvent`, `isScalarEvent`, `isMapStartEvent`, etc.
+exported: `isDocumentStartEvent`, `isDocumentEndEvent`, `isMapStartEvent`,
+`isMapEndEvent`, `isSeqStartEvent`, `isSeqEndEvent`, `isPairEvent`,
+`isScalarEvent`, `isAliasEvent`, `isCommentEvent`, `isDirectiveEvent`.
 
 ### 2. CST Visitor Events (`YamlCstVisitorEvent`)
 
 **File:** `src/schemas/YamlCstVisitorEvent.ts`
 
-Same structural events as AST but with raw source text instead of resolved
-values. Key differences:
+13 event variants, each a `Schema.TaggedClass`. All share `path:
+ReadonlyArray<string | number>` and `depth: number`.
 
-- `Scalar` carries `source: string` (raw text) instead of `value: unknown`
-- No `Pair` event — CST does not pair keys and values. Replaced by separate
-  `Key` and `Value` events.
-- Error channel is `never` (errors embedded as error nodes)
+| Event | Additional Fields | Emitted When |
+| --- | --- | --- |
+| `DocumentStart` | — | Document CST node entered |
+| `DocumentEnd` | — | Document CST node exited |
+| `MapStart` | `source: string` | block-map or flow-map entered |
+| `MapEnd` | — | block-map or flow-map exited |
+| `SeqStart` | `source: string` | block-seq or flow-seq entered |
+| `SeqEnd` | — | block-seq or flow-seq exited |
+| `Key` | `source: string` | Map key scalar encountered |
+| `Value` | `source: string` | Map value scalar encountered |
+| `Scalar` | `source: string` | Standalone scalar (not key or value) |
+| `Alias` | `source: string` | Alias reference encountered |
+| `Comment` | `source: string` | Comment encountered |
+| `Directive` | `source: string` | Directive encountered |
+| `Error` | `source: string` | Error CST node encountered |
 
-Type guard predicates exported: `isCstScalarEvent`, `isCstMapStartEvent`, etc.
+Key differences from AST events:
+
+- All content fields are `source: string` (raw text) instead of resolved values
+- No `Pair` event — CST does not pair keys and values; replaced by separate
+  `Key` and `Value` events
+- `Error` event for error CST nodes (AST visitor propagates errors via the
+  error channel instead)
+- Error channel is `never` (errors embedded as event nodes)
+
+Type guard predicates exported: `isCstDocumentStartEvent`,
+`isCstDocumentEndEvent`, `isCstMapStartEvent`, `isCstMapEndEvent`,
+`isCstSeqStartEvent`, `isCstSeqEndEvent`, `isCstKeyEvent`, `isCstValueEvent`,
+`isCstScalarEvent`, `isCstAliasEvent`, `isCstCommentEvent`,
+`isCstDirectiveEvent`, `isCstErrorEvent`.
 
 ### 3. AST Visitor Functions
 
@@ -70,12 +96,17 @@ visit(
   options?: Partial<YamlParseOptions>,
 ): Stream<YamlVisitorEvent, YamlComposerError>
 
-visitCollect<A extends YamlVisitorEvent>(
+visitCollect<A>(
   text: string,
-  predicate: (event: YamlVisitorEvent) => event is A,
+  predicate: (event: YamlVisitorEvent) => Option<A>,
   options?: Partial<YamlParseOptions>,
 ): Effect<ReadonlyArray<A>, YamlComposerError>
 ```
+
+`visitCollect` uses an `Option`-returning predicate following the jsonc-effect
+and architecture doc pattern. This supports both filtering (return
+`Option.some(event)` for matching events) and transformation (return
+`Option.some(extractedValue)` to map events to a different type).
 
 **Implementation:** Parses via `parseAllDocuments`, walks the AST recursively
 with a generator, yields events. Wrapped in `Stream.fromIterable` (lazy).
@@ -91,19 +122,28 @@ Supports early termination via `Stream.take` / `Stream.takeWhile`.
 ```typescript
 visitCST(text: string): Stream<YamlCstVisitorEvent, never>
 
-visitCSTCollect<A extends YamlCstVisitorEvent>(
+visitCSTCollect<A>(
   text: string,
-  predicate: (event: YamlCstVisitorEvent) => event is A,
+  predicate: (event: YamlCstVisitorEvent) => Option<A>,
 ): Effect<ReadonlyArray<A>, never>
 ```
 
+`visitCSTCollect` also uses an `Option`-returning predicate, consistent with
+`visitCollect`.
+
 **Implementation:** Uses `parseCSTAll` to get CST nodes, walks them
-recursively. Error channel is `never` — CST-level errors are embedded as error
-nodes. No type resolution; scalars carry raw `source` text.
+recursively. Error channel is `never` — CST-level errors are emitted as
+`Error` events. No type resolution; scalars carry raw `source` text.
 
 ### 5. Incremental Scanner
 
 **File:** `src/utils/scanner.ts`
+
+> **Note:** The architecture doc places `createScanner` in `lexer.ts`. This
+> spec supersedes that placement. Extracting the scanner into its own module
+> provides a clean separation between the pull-based imperative API and the
+> push-based Stream API. The architecture doc should be updated after Phase 2
+> ships.
 
 ```typescript
 interface YamlScanner {
@@ -147,7 +187,15 @@ function makeYamlAllFromString(
 ```
 
 Decode: parses multi-document YAML into an array of plain values via
-`parseAllDocuments`. Encode: stringifies each value separated by `---`.
+`parseAllDocuments`. Encode: stringifies each value as a separate YAML
+document joined by `---` separators.
+
+Encode conventions:
+
+- No leading `---` before the first document (bare document)
+- `---` separator between each subsequent document
+- Trailing newline after the last document
+- Empty array encodes to empty string `""`
 
 **`makeYamlDocumentSchema`** — Document-preserving Schema:
 
@@ -167,9 +215,9 @@ warnings). Encode uses `stringifyDocument` for round-trip fidelity.
 ### New Files
 
 | File | Responsibility |
-| ------ | --------------- |
+| --- | --- |
 | `src/schemas/YamlVisitorEvent.ts` | 11 AST event TaggedClass schemas + union + type guards |
-| `src/schemas/YamlCstVisitorEvent.ts` | CST event TaggedClass schemas + union + type guards |
+| `src/schemas/YamlCstVisitorEvent.ts` | 13 CST event TaggedClass schemas + union + type guards |
 | `src/utils/scanner.ts` | `YamlScanner` interface + `createScanner` factory |
 | `src/utils/visitor.ts` | `visit` + `visitCollect` (AST-level) |
 | `src/utils/cst-visitor.ts` | `visitCST` + `visitCSTCollect` (CST-level) |
@@ -180,7 +228,7 @@ warnings). Encode uses `stringifyDocument` for round-trip fidelity.
 ### Modified Files
 
 | File | Change |
-| ------ | -------- |
+| --- | --- |
 | `src/utils/lexer.ts` | Extract core scanner logic into shared foundation |
 | `src/utils/schema-integration.ts` | Add `YamlAllFromString`, `makeYamlAllFromString`, `makeYamlDocumentSchema` |
 | `__test__/schema-integration.test.ts` | Tests for new schema functions |
@@ -192,11 +240,41 @@ warnings). Encode uses `stringifyDocument` for round-trip fidelity.
 
 ```typescript
 // AST Visitor
-export { visit, visitCollect } from "./utils/visitor.js";
+export {
+  visit,
+  visitCollect,
+  isDocumentStartEvent,
+  isDocumentEndEvent,
+  isMapStartEvent,
+  isMapEndEvent,
+  isSeqStartEvent,
+  isSeqEndEvent,
+  isPairEvent,
+  isScalarEvent,
+  isAliasEvent,
+  isCommentEvent,
+  isDirectiveEvent,
+} from "./utils/visitor.js";
 export type { YamlVisitorEvent } from "./schemas/YamlVisitorEvent.js";
 
 // CST Visitor
-export { visitCST, visitCSTCollect } from "./utils/cst-visitor.js";
+export {
+  visitCST,
+  visitCSTCollect,
+  isCstDocumentStartEvent,
+  isCstDocumentEndEvent,
+  isCstMapStartEvent,
+  isCstMapEndEvent,
+  isCstSeqStartEvent,
+  isCstSeqEndEvent,
+  isCstKeyEvent,
+  isCstValueEvent,
+  isCstScalarEvent,
+  isCstAliasEvent,
+  isCstCommentEvent,
+  isCstDirectiveEvent,
+  isCstErrorEvent,
+} from "./utils/cst-visitor.js";
 export type { YamlCstVisitorEvent } from "./schemas/YamlCstVisitorEvent.js";
 
 // Scanner
@@ -215,26 +293,31 @@ export {
 
 ## Testing Strategy
 
-- **Scanner:** Token-by-token scanning, seek/resume, parity with `lex()`
-  output, edge cases (empty input, BOM, directives).
+- **Scanner:** Token-by-token scanning producing the same token sequence
+  (kinds, values, offsets) as `lex()` for identical input. Seek/resume via
+  `setPosition`. Edge cases: empty input, BOM, directives.
 - **AST Visitor:** Event sequence for mappings, sequences, nested structures,
   multi-document, anchors/aliases, tags, comments, directives. `visitCollect`
-  with type-narrowing predicates. Early termination via `Stream.take`.
+  with `Option`-returning predicates for both filtering and transformation.
+  Early termination via `Stream.take`.
 - **CST Visitor:** Same structural coverage verifying raw `source` fields, no
-  type resolution. `Key`/`Value` events instead of `Pair`. `visitCSTCollect`.
-- **Schema additions:** Multi-document round-trip encode/decode,
-  document-preserving parse + stringify, compose with target schemas, error
-  propagation.
+  type resolution. `Key`/`Value` events instead of `Pair`. `Error` events for
+  error CST nodes. `visitCSTCollect`.
+- **Schema additions:** Multi-document round-trip encode/decode (including
+  empty array edge case), document-preserving parse + stringify, compose with
+  target schemas, error propagation.
 
 ---
 
 ## Decisions
 
 | Decision | Rationale |
-| ---------- | --------- |
+| --- | --- |
 | Separate AST and CST event types | Strict typing — no optional fields, each event type is self-contained. Predicates are not interchangeable between levels. |
 | CST visitor has `Key`/`Value` instead of `Pair` | CST does not structurally pair keys and values; separate events match the CST structure faithfully. |
+| `visitCollect` uses `Option<A>` predicate | Supports both filtering and transformation, consistent with jsonc-effect pattern and architecture doc. |
+| `createScanner` in `scanner.ts` (not `lexer.ts`) | Clean separation between pull-based imperative API and push-based Stream API. Supersedes architecture doc placement. |
 | `createScanner` is synchronous, no Effect wrapping | Pull-based imperative API mirrors jsonc-effect pattern. Consumers who want Effect can wrap it. |
 | Refactor `lexer.ts` to share scanner foundation | Eliminates duplication between `lex()` and `createScanner`. Both build on the same core logic. |
-| `YamlAllFromString` encode uses `---` separators | Standard YAML multi-document separator per spec. |
+| `YamlAllFromString` encode: no leading `---` | Bare first document is standard YAML convention. `---` only between subsequent documents. |
 | `makeYamlDocumentSchema` preserves full structure | Enables consumers who need directive/comment/warning metadata alongside parsed values. |
