@@ -36,29 +36,67 @@ export interface TestCase {
  */
 function parseMultiJson(text: string): unknown {
 	const values: unknown[] = [];
-	let remaining = text.trim();
+	let i = 0;
+	const src = text.trim();
 
-	while (remaining.length > 0) {
-		try {
-			const value = JSON.parse(remaining);
-			values.push(value);
-			break;
-		} catch {
-			// Try to find where the first JSON value ends
-			// by incrementally parsing longer substrings
-			let found = false;
-			for (let i = 1; i <= remaining.length; i++) {
-				try {
-					const value = JSON.parse(remaining.slice(0, i));
-					values.push(value);
-					remaining = remaining.slice(i).trim();
-					found = true;
-					break;
-				} catch {
-					// continue
+	while (i < src.length) {
+		// Skip whitespace between values
+		while (i < src.length && /\s/.test(src[i])) i++;
+		if (i >= src.length) break;
+
+		const ch = src[i];
+		if (ch === "{" || ch === "[") {
+			// Track brace/bracket depth to find the end of the value
+			let depth = 0;
+			let inString = false;
+			let isEscaped = false;
+			const start = i;
+			for (; i < src.length; i++) {
+				if (isEscaped) {
+					isEscaped = false;
+					continue;
+				}
+				const c = src[i];
+				if (c === "\\" && inString) {
+					isEscaped = true;
+					continue;
+				}
+				if (c === '"') {
+					inString = !inString;
+					continue;
+				}
+				if (inString) continue;
+				if (c === "{" || c === "[") depth++;
+				else if (c === "}" || c === "]") {
+					depth--;
+					if (depth === 0) {
+						i++;
+						values.push(JSON.parse(src.slice(start, i)));
+						break;
+					}
 				}
 			}
-			if (!found) break;
+		} else {
+			// Bare scalar (string, number, boolean, null) — parse to end of token
+			const start = i;
+			if (ch === '"') {
+				// Quoted string
+				i++;
+				while (i < src.length) {
+					if (src[i] === "\\" && i + 1 < src.length) {
+						i += 2;
+					} else if (src[i] === '"') {
+						i++;
+						break;
+					} else {
+						i++;
+					}
+				}
+			} else {
+				// Unquoted: number, true, false, null
+				while (i < src.length && !/\s/.test(src[i])) i++;
+			}
+			values.push(JSON.parse(src.slice(start, i)));
 		}
 	}
 
