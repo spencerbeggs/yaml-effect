@@ -602,6 +602,16 @@ describe("Block scalar edge cases", () => {
 		const result = val("|2\n  hello\n  world");
 		expect(typeof result).toBe("string");
 	});
+
+	it("preserves trailing whitespace-only lines in literal block (L24T)", () => {
+		const result = val("foo: |\n  x\n   \n");
+		expect(result).toEqual({ foo: "x\n \n" });
+	});
+
+	it("preserves trailing whitespace in literal content (DWX9)", () => {
+		const result = val("|\n \n  \n  literal\n   \n  \n  text\n\n # Comment\n");
+		expect(result).toBe("\n\nliteral\n \n\ntext\n");
+	});
 });
 
 // ===========================================================================

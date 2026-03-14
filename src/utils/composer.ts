@@ -317,7 +317,16 @@ function decodeBlockScalar(raw: string): string {
 		}
 
 		if (i >= raw.length || raw[i] === "\n" || raw[i] === "\r") {
-			trailingNewlines.push("");
+			if (spaces > contentIndent) {
+				// Whitespace-only line with spaces beyond content indent — this is content
+				// (not an empty line), so flush any pending trailing newlines and add it
+				for (const nl of trailingNewlines) lines.push(nl);
+				trailingNewlines.length = 0;
+				lines.push(" ".repeat(spaces - contentIndent));
+			} else {
+				// Empty line (at or below content indent) — defer as trailing
+				trailingNewlines.push("");
+			}
 			if (i < raw.length) {
 				if (raw[i] === "\r" && i + 1 < raw.length && raw[i + 1] === "\n") i += 2;
 				else i++;
