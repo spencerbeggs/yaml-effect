@@ -1,4 +1,4 @@
-# @spencerbeggs/yaml-effect
+# yaml-effect
 
 ## 0.1.0
 
