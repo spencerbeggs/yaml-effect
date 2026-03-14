@@ -10,11 +10,12 @@
 
 import { Effect, Function as Fn } from "effect";
 import { YamlFormatError } from "../errors/YamlFormatError.js";
+import { YamlModificationError } from "../errors/YamlModificationError.js";
 import type { YamlNode } from "../schemas/YamlAstNodes.js";
 import { YamlMap, YamlPair, YamlScalar, YamlSeq } from "../schemas/YamlAstNodes.js";
 import { YamlDocument } from "../schemas/YamlDocument.js";
 import { YamlFormattingOptions } from "../schemas/YamlFormattingOptions.js";
-import type { CollectionStyle, ScalarStyle } from "../schemas/YamlShared.js";
+import type { CollectionStyle, ScalarStyle, YamlPath } from "../schemas/YamlShared.js";
 import { YamlEdit } from "../schemas/YamlShared.js";
 import { parseDocument } from "./composer.js";
 import { stringifyDocument } from "./stringify.js";
@@ -291,3 +292,270 @@ export function format(
 export function formatAndApply(text: string, options?: RawFormatOptions): Effect.Effect<string, YamlFormatError> {
 	return formatImpl(text, options ?? {});
 }
+
+// ---------------------------------------------------------------------------
+// Internal: create a YamlScalar from a JS value
+// ---------------------------------------------------------------------------
+
+function jsValueToNode(value: unknown): YamlNode {
+	return new YamlScalar({
+		value,
+		style: "plain" as const,
+		offset: 0,
+		length: 0,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Internal: modify a YAML document via AST manipulation
+// ---------------------------------------------------------------------------
+
+function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): YamlDocument {
+	if (path.length === 0) {
+		return new YamlDocument({
+			contents: value === undefined ? null : jsValueToNode(value),
+			errors: doc.errors,
+			warnings: doc.warnings,
+			directives: doc.directives,
+			comment: doc.comment,
+		});
+	}
+
+	if (!doc.contents) {
+		throw new Error("Cannot navigate path in empty document");
+	}
+
+	const newContents = modifyNode(doc.contents, path, 0, value);
+
+	return new YamlDocument({
+		contents: newContents,
+		errors: doc.errors,
+		warnings: doc.warnings,
+		directives: doc.directives,
+		comment: doc.comment,
+	});
+}
+
+function modifyNode(node: YamlNode, path: YamlPath, depth: number, value: unknown): YamlNode {
+	const segment = path[depth];
+	const isLast = depth === path.length - 1;
+
+	if (node instanceof YamlMap) {
+		const pairIndex = node.items.findIndex((pair) => pair.key instanceof YamlScalar && pair.key.value === segment);
+
+		if (isLast) {
+			if (value === undefined) {
+				// Remove the key
+				if (pairIndex < 0) return node; // Nothing to remove
+				const newItems = [...node.items];
+				newItems.splice(pairIndex, 1);
+				return new YamlMap({
+					items: newItems,
+					style: node.style,
+					tag: node.tag,
+					anchor: node.anchor,
+					comment: node.comment,
+					offset: node.offset,
+					length: node.length,
+				});
+			}
+
+			const newValueNode = jsValueToNode(value);
+			if (pairIndex >= 0) {
+				// Replace existing value
+				const newItems = [...node.items];
+				const oldPair = newItems[pairIndex];
+				newItems[pairIndex] = new YamlPair({
+					key: oldPair.key,
+					value: newValueNode,
+					comment: oldPair.comment,
+				});
+				return new YamlMap({
+					items: newItems,
+					style: node.style,
+					tag: node.tag,
+					anchor: node.anchor,
+					comment: node.comment,
+					offset: node.offset,
+					length: node.length,
+				});
+			}
+
+			// Insert new key
+			const keyNode = new YamlScalar({
+				value: String(segment),
+				style: "plain" as const,
+				offset: 0,
+				length: 0,
+			});
+			const newPair = new YamlPair({
+				key: keyNode,
+				value: newValueNode,
+			});
+			return new YamlMap({
+				items: [...node.items, newPair],
+				style: node.style,
+				tag: node.tag,
+				anchor: node.anchor,
+				comment: node.comment,
+				offset: node.offset,
+				length: node.length,
+			});
+		}
+
+		// Navigate deeper
+		if (pairIndex < 0) {
+			throw new Error(`Key "${String(segment)}" not found in mapping`);
+		}
+		const pair = node.items[pairIndex];
+		if (!pair.value) {
+			throw new Error(`Value at key "${String(segment)}" is null`);
+		}
+		const newValue = modifyNode(pair.value, path, depth + 1, value);
+		const newItems = [...node.items];
+		newItems[pairIndex] = new YamlPair({
+			key: pair.key,
+			value: newValue,
+			comment: pair.comment,
+		});
+		return new YamlMap({
+			items: newItems,
+			style: node.style,
+			tag: node.tag,
+			anchor: node.anchor,
+			comment: node.comment,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+
+	if (node instanceof YamlSeq) {
+		const idx = typeof segment === "number" ? segment : Number(segment);
+		if (Number.isNaN(idx) || idx < 0) {
+			throw new Error(`Invalid sequence index: ${String(segment)}`);
+		}
+
+		if (isLast) {
+			const newItems = [...node.items];
+			if (value === undefined) {
+				if (idx < newItems.length) {
+					newItems.splice(idx, 1);
+				}
+			} else if (idx < newItems.length) {
+				newItems[idx] = jsValueToNode(value);
+			} else {
+				newItems.push(jsValueToNode(value));
+			}
+			return new YamlSeq({
+				items: newItems,
+				style: node.style,
+				tag: node.tag,
+				anchor: node.anchor,
+				comment: node.comment,
+				offset: node.offset,
+				length: node.length,
+			});
+		}
+
+		// Navigate deeper
+		if (idx >= node.items.length) {
+			throw new Error(`Index ${idx} out of bounds`);
+		}
+		const child = node.items[idx];
+		const newChild = modifyNode(child, path, depth + 1, value);
+		const newItems = [...node.items];
+		newItems[idx] = newChild;
+		return new YamlSeq({
+			items: newItems,
+			style: node.style,
+			tag: node.tag,
+			anchor: node.anchor,
+			comment: node.comment,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+
+	throw new Error(`Cannot navigate through ${node._tag} at segment "${String(segment)}"`);
+}
+
+// ---------------------------------------------------------------------------
+// Internal: modify implementation
+// ---------------------------------------------------------------------------
+
+function modifyImpl(text: string, path: YamlPath, value: unknown): Effect.Effect<string, YamlModificationError> {
+	return parseDocument(text).pipe(
+		Effect.mapError(
+			(e) =>
+				new YamlModificationError({
+					path,
+					reason: e.message,
+				}),
+		),
+		Effect.flatMap((doc) => {
+			try {
+				const modified = modifyDocument(doc, path, value);
+				return stringifyDocument(modified).pipe(
+					Effect.mapError(
+						(e) =>
+							new YamlModificationError({
+								path,
+								reason: e.message,
+							}),
+					),
+				);
+			} catch (err) {
+				return Effect.fail(
+					new YamlModificationError({
+						path,
+						reason: err instanceof Error ? err.message : String(err),
+					}),
+				);
+			}
+		}),
+	);
+}
+
+// ---------------------------------------------------------------------------
+// modify
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute edits to insert, replace, or remove a value at a YAML path.
+ *
+ * @remarks
+ * Parses the input, navigates to the target path in the Document AST,
+ * applies the change, stringifies back, and diffs to produce edits.
+ * Pass `undefined` as `value` to remove the property or element.
+ *
+ * @public
+ */
+export const modify: {
+	(path: YamlPath, value: unknown): (text: string) => Effect.Effect<ReadonlyArray<YamlEdit>, YamlModificationError>;
+	(text: string, path: YamlPath, value: unknown): Effect.Effect<ReadonlyArray<YamlEdit>, YamlModificationError>;
+} = Fn.dual(
+	3,
+	(text: string, path: YamlPath, value: unknown): Effect.Effect<ReadonlyArray<YamlEdit>, YamlModificationError> =>
+		modifyImpl(text, path, value).pipe(Effect.map((modified) => computeEdits(text, modified))),
+);
+
+// ---------------------------------------------------------------------------
+// modifyAndApply
+// ---------------------------------------------------------------------------
+
+/**
+ * Modify a YAML document in one step.
+ *
+ * @remarks
+ * Same as {@link modify} but returns the modified string directly.
+ *
+ * @public
+ */
+export const modifyAndApply: {
+	(path: YamlPath, value: unknown): (text: string) => Effect.Effect<string, YamlModificationError>;
+	(text: string, path: YamlPath, value: unknown): Effect.Effect<string, YamlModificationError>;
+} = Fn.dual(
+	3,
+	(text: string, path: YamlPath, value: unknown): Effect.Effect<string, YamlModificationError> =>
+		modifyImpl(text, path, value),
+);

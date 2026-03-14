@@ -1,8 +1,9 @@
 import { Effect, pipe } from "effect";
 import { describe, expect, it } from "vitest";
 import { YamlFormatError } from "../src/errors/YamlFormatError.js";
+import { YamlModificationError } from "../src/errors/YamlModificationError.js";
 import { YamlEdit } from "../src/schemas/YamlShared.js";
-import { applyEdits, format, formatAndApply } from "../src/utils/format.js";
+import { applyEdits, format, formatAndApply, modify, modifyAndApply } from "../src/utils/format.js";
 
 describe("applyEdits", () => {
 	it("applies a single replacement edit", () => {
@@ -161,5 +162,93 @@ describe("formatAndApply", () => {
 		const viaEdits = Effect.runSync(format(input, opts).pipe(Effect.flatMap((edits) => applyEdits(input, edits))));
 		const viaDirect = Effect.runSync(formatAndApply(input, opts));
 		expect(viaDirect).toBe(viaEdits);
+	});
+});
+
+describe("modify", () => {
+	it("replaces an existing scalar value", () => {
+		const input = "name: Alice\nage: 30\n";
+		const result = Effect.runSync(
+			modify(input, ["name"], "Bob").pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("name: Bob");
+	});
+
+	it("inserts a new key at top level", () => {
+		const input = "name: Alice\n";
+		const result = Effect.runSync(
+			modify(input, ["email"], "alice@example.com").pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("email:");
+		expect(result).toContain("name: Alice");
+	});
+
+	it("removes a key when value is undefined", () => {
+		const input = "name: Alice\nage: 30\n";
+		const result = Effect.runSync(
+			modify(input, ["age"], undefined).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).not.toContain("age");
+		expect(result).toContain("name: Alice");
+	});
+
+	it("modifies a nested value", () => {
+		const input = "server:\n  host: localhost\n  port: 3000\n";
+		const result = Effect.runSync(
+			modify(input, ["server", "port"], 8080).pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("8080");
+		expect(result).toContain("host: localhost");
+	});
+
+	it("modifies an array element by index", () => {
+		const input = "items:\n  - apple\n  - banana\n  - cherry\n";
+		const result = Effect.runSync(
+			modify(input, ["items", 1], "blueberry").pipe(Effect.flatMap((edits) => applyEdits(input, edits))),
+		);
+		expect(result).toContain("blueberry");
+		expect(result).not.toContain("banana");
+	});
+
+	it("supports pipeline (data-last) usage", () => {
+		const input = "key: old\n";
+		const result = Effect.runSync(
+			pipe(
+				input,
+				modify(["key"], "new"),
+				Effect.flatMap((edits) => applyEdits(input, edits)),
+			),
+		);
+		expect(result).toContain("key: new");
+	});
+
+	it("fails with YamlModificationError on invalid path", () => {
+		const input = "name: Alice\n";
+		const result = Effect.runSync(Effect.either(modify(input, ["nonexistent", "deep"], "value")));
+		expect(result._tag).toBe("Left");
+		if (result._tag === "Left") {
+			expect(result.left).toBeInstanceOf(YamlModificationError);
+		}
+	});
+});
+
+describe("modifyAndApply", () => {
+	it("returns modified string directly", () => {
+		const input = "name: Alice\n";
+		const result = Effect.runSync(modifyAndApply(input, ["name"], "Bob"));
+		expect(result).toContain("name: Bob");
+	});
+
+	it("produces same result as modify + applyEdits", () => {
+		const input = "a: 1\nb: 2\n";
+		const viaEdits = Effect.runSync(modify(input, ["a"], 99).pipe(Effect.flatMap((edits) => applyEdits(input, edits))));
+		const viaDirect = Effect.runSync(modifyAndApply(input, ["a"], 99));
+		expect(viaDirect).toBe(viaEdits);
+	});
+
+	it("supports pipeline (data-last) usage", () => {
+		const input = "key: old\n";
+		const result = Effect.runSync(pipe(input, modifyAndApply(["key"], "new")));
+		expect(result).toContain("key: new");
 	});
 });
