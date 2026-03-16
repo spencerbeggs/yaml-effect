@@ -96,6 +96,45 @@ describe("Multi-line plain scalar folding in flow context", () => {
 	});
 });
 
+describe("Multi-line plain scalar keys in flow context", () => {
+	// NJ66: Multiline plain flow mapping key
+	it("[NJ66] multi-line key in flow mapping", () => {
+		const yaml = "---\n- { single line: value}\n- { multi\n  line: value}\n";
+		const result = parseYaml(yaml);
+		expect(Either.isRight(result)).toBe(true);
+		expect(Either.getOrThrow(result)).toEqual([{ "single line": "value" }, { "multi line": "value" }]);
+	});
+
+	// CT4Q: Spec Example 7.20. Single Pair Explicit Entry
+	it("[CT4Q] multi-line explicit key in flow sequence", () => {
+		const yaml = "[\n? foo\n bar : baz\n]\n";
+		const result = parseYaml(yaml);
+		expect(Either.isRight(result)).toBe(true);
+		expect(Either.getOrThrow(result)).toEqual([{ "foo bar": "baz" }]);
+	});
+
+	// 8KB6: Multiline plain flow mapping key without value
+	it("[8KB6] multi-line key without value in flow mapping", () => {
+		const yaml = "---\n- { single line, a: b}\n- { multi\n  line, a: b}\n";
+		const result = parseYaml(yaml);
+		expect(Either.isRight(result)).toBe(true);
+		expect(Either.getOrThrow(result)).toEqual([
+			{ "single line": null, a: "b" },
+			{ "multi line": null, a: "b" },
+		]);
+	});
+});
+
+describe("Anchor on empty value in block mapping", () => {
+	// 6KGN: Anchor for empty node — `a: &anchor\nb: *anchor` should produce null values
+	it("[6KGN] anchor on empty value resolves to null", () => {
+		const yaml = "---\na: &anchor\nb: *anchor\n";
+		const result = parseYaml(yaml);
+		expect(Either.isRight(result)).toBe(true);
+		expect(Either.getOrThrow(result)).toEqual({ a: null, b: null });
+	});
+});
+
 describe("Block scalar keep chomp preserves trailing newlines", () => {
 	// JEF9/00: Literal block scalar with keep chomp `|+` and trailing empty lines
 	it("[JEF9/00] keep chomp preserves trailing empty lines", () => {
