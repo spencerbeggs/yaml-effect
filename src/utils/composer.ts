@@ -182,21 +182,73 @@ function foldFlowLines(text: string): string {
 			result += line.replace(/[ \t]+$/, "");
 			continue;
 		}
-		// Continuation line: trim both leading and trailing whitespace
-		const content = line.trim();
-		if (content === "") {
-			// Empty line → newline
-			result += "\n";
+		// Continuation line: trim leading whitespace (indentation)
+		// Trim trailing whitespace only on non-last lines (before a line break)
+		const isLast = i === lines.length - 1;
+		const trimmed = isLast ? line.trimStart() : line.trim();
+		if (trimmed === "") {
+			if (isLast) {
+				// Last line empty after trimming indentation — just the closing
+				// delimiter's line; fold the preceding newline to a space if no
+				// empty lines came before it, otherwise drop silently.
+				if (result.length === 0 || result[result.length - 1] !== "\n") {
+					result += " ";
+				}
+			} else {
+				// Empty line → newline
+				result += "\n";
+			}
 		} else {
 			// Non-empty continuation line: fold (previous non-empty → space → this)
 			// But if the last char of result is already \n (from empty lines), don't add space
 			if (result.length > 0 && result[result.length - 1] !== "\n") {
 				result += " ";
 			}
-			result += content;
+			result += trimmed;
 		}
 	}
 	return result;
+}
+
+/**
+ * Collect a multi-line plain scalar key from consecutive CST children.
+ * Like `collectMultilinePlainScalar`, but for keys: collects plain scalars
+ * up until the `:` value separator, merging them with flow line folding.
+ * Returns the folded key text and the index after the last consumed child.
+ */
+function collectMultilineKey(children: readonly CstNode[], startIdx: number): { value: string; nextIdx: number } {
+	const first = children[startIdx];
+	if (!first || first.type !== "flow-scalar") {
+		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1 };
+	}
+
+	const parts: string[] = [first.source.trim()];
+	let idx = startIdx + 1;
+
+	while (idx < children.length) {
+		const child = children[idx];
+		if (!child) break;
+
+		if (child.type === "newline" || (child.type === "whitespace" && child.source.trim() === "")) {
+			idx++;
+			continue;
+		}
+		// Stop at the value separator or comma (segment boundary)
+		if (child.type === "whitespace" && (child.source === ":" || child.source === ",")) break;
+		if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+			parts.push(child.source.trim());
+			idx++;
+			continue;
+		}
+		// Any other node type — stop merging
+		break;
+	}
+
+	if (parts.length === 1) {
+		return { value: parts[0] ?? "", nextIdx: idx };
+	}
+
+	return { value: foldFlowLines(parts.join("\n")), nextIdx: idx };
 }
 
 /**
@@ -282,6 +334,25 @@ function collectMultilinePlainScalar(
  * Check if a value separator (`:`) follows in a CST children list,
  * skipping whitespace and newlines.
  */
+/**
+ * Find the index of the next non-trivia child (skips newline, whitespace, comment).
+ * If `stopAtDash` is true, returns null when a `-` indicator is encountered before
+ * any significant child (used to avoid merging across sequence entry boundaries).
+ */
+function findNextSignificantChild(children: readonly CstNode[], startIdx: number, stopAtDash = false): number | null {
+	for (let j = startIdx; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (stopAtDash && c.source.trim() === "-") return null;
+			continue;
+		}
+		return j;
+	}
+	return null;
+}
+
 function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number): boolean {
 	for (let j = startIdx; j < children.length; j++) {
 		const c = children[j];
@@ -291,6 +362,36 @@ function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number):
 			if (c.source === ":") return true;
 			continue;
 		}
+		return false;
+	}
+	return false;
+}
+
+/**
+ * Like `hasValueSepAfterInList`, but also skips over plain flow-scalars
+ * that appear after a newline. Used to detect multi-line keys:
+ * `multi\n  line: value` where `:` comes after continuation plain scalars.
+ * Only allows skipping plain scalars that were preceded by a newline,
+ * preventing false matches across comma-delimited entries on the same line.
+ */
+function hasValueSepThroughPlainScalars(children: readonly CstNode[], startIdx: number): boolean {
+	let sawNewline = false;
+	for (let j = startIdx; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline") {
+			sawNewline = true;
+			continue;
+		}
+		if (c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (c.source === ":") return true;
+			// Commas delimit segments — stop looking across them
+			if (c.source === ",") return false;
+			continue;
+		}
+		// Only skip plain scalars on continuation lines (after a newline)
+		if (sawNewline && c.type === "flow-scalar" && getScalarStyle(c) === "plain") continue;
 		return false;
 	}
 	return false;
@@ -480,7 +581,34 @@ function decodeBlockScalar(raw: string): string {
 		}
 	}
 
-	if (!foundContent) return chomp === "keep" ? "\n" : "";
+	if (!foundContent) {
+		if (chomp === "keep") {
+			// Count all trailing empty/whitespace-only lines after the header
+			let count = 0;
+			let j = i;
+			while (j < raw.length) {
+				// Skip whitespace on this line
+				while (j < raw.length && (raw[j] === " " || raw[j] === "\t")) j++;
+				if (j >= raw.length) {
+					// Whitespace-only content at EOF counts as one empty line
+					if (count === 0) count = 1;
+					break;
+				}
+				if (raw[j] === "\n") {
+					count++;
+					j++;
+				} else if (raw[j] === "\r") {
+					count++;
+					j++;
+					if (j < raw.length && raw[j] === "\n") j++;
+				} else {
+					break;
+				}
+			}
+			return "\n".repeat(count);
+		}
+		return "";
+	}
 
 	const lines: string[] = [];
 	const trailingNewlines: string[] = [];
@@ -563,20 +691,24 @@ function decodeBlockScalar(raw: string): string {
 				prevMoreIndented = isMoreIndented;
 			}
 		}
-		if (chomp === "keep") {
-			result += "\n";
-			for (const _nl of trailingNewlines) result += "\n";
-		} else if (chomp !== "strip") {
-			result += "\n";
+		if (hadContent || trailingNewlines.length > 0) {
+			if (chomp === "keep") {
+				result += "\n";
+				for (const _nl of trailingNewlines) result += "\n";
+			} else if (chomp !== "strip") {
+				result += "\n";
+			}
 		}
 		value = result;
 	} else {
 		value = lines.join("\n");
-		if (chomp === "keep") {
-			value += "\n";
-			for (const _nl of trailingNewlines) value += "\n";
-		} else if (chomp !== "strip") {
-			value += "\n";
+		if (lines.length > 0 || trailingNewlines.length > 0) {
+			if (chomp === "keep") {
+				value += "\n";
+				for (const _nl of trailingNewlines) value += "\n";
+			} else if (chomp !== "strip") {
+				value += "\n";
+			}
 		}
 	}
 
@@ -868,6 +1000,12 @@ function findNextContentInList(children: readonly CstNode[], startIdx: number): 
 function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerState): SemanticItem[] {
 	const items: SemanticItem[] = [];
 	let pendingMeta: NodeMeta = {};
+	let afterValueSep = false;
+
+	function pushNode(node: YamlNode) {
+		items.push({ kind: "node", node });
+		afterValueSep = false;
+	}
 
 	for (let i = 0; i < children.length; i++) {
 		const child = children[i];
@@ -904,9 +1042,10 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 					});
 					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
 					pendingMeta = {};
-					items.push({ kind: "node", node: scalar });
+					pushNode(scalar);
 				}
 				items.push({ kind: "value-sep", offset: child.offset });
+				afterValueSep = true;
 			}
 			// Skip other whitespace (spaces, "-", "?", "---", "...")
 			continue;
@@ -925,6 +1064,24 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			// If this scalar is a key (followed by ":") and there's pending
+			// meta from a previous VALUE position, flush it as a null value.
+			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
+			// But NOT when meta is in key position: `!!str a: b` — tag is for key.
+			if (afterValueSep && hasMeta(pendingMeta) && hasValueSepAfterInList(children, i + 1)) {
+				const value = resolveScalar("", "plain", pendingMeta.tag);
+				const scalar = new YamlScalar({
+					value,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: 0,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+				pendingMeta = {};
+				pushNode(scalar);
+			}
 			// Check if this scalar is followed by a block-map (scalar is the first
 			// key of a nested mapping: the parser puts the first key as a sibling
 			// before its block-map child).
@@ -935,7 +1092,7 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				const key = makeScalar(child, state);
 				const map = composeBlockMap(nextContent.node, state, key, hasMeta(pendingMeta) ? pendingMeta : undefined);
 				pendingMeta = {};
-				items.push({ kind: "node", node: map });
+				pushNode(map);
 				i = nextContent.idx; // skip to past the block-map
 				continue;
 			}
@@ -957,43 +1114,53 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				});
 				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
 				pendingMeta = {};
-				items.push({ kind: "node", node: scalar });
+				pushNode(scalar);
 				i = nextIdx - 1; // -1 because for-loop increments
 				continue;
 			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			items.push({ kind: "node", node: scalar });
+			pushNode(scalar);
 			continue;
 		}
 		if (child.type === "alias") {
+			// Check if alias is followed by block-map (alias as first key of implicit mapping)
+			const nextAlias = findNextContentInList(children, i + 1);
+			if (nextAlias?.node.type === "block-map") {
+				const alias = makeAlias(child, state);
+				const map = composeBlockMap(nextAlias.node, state, alias, hasMeta(pendingMeta) ? pendingMeta : undefined);
+				pendingMeta = {};
+				pushNode(map);
+				i = nextAlias.idx;
+				continue;
+			}
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
-			items.push({ kind: "node", node: alias });
+			pushNode(alias);
 			continue;
 		}
 		if (child.type === "block-map") {
 			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			items.push({ kind: "node", node: map });
+			pushNode(map);
 			continue;
 		}
 		if (child.type === "block-seq") {
 			const seq = composeBlockSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			items.push({ kind: "node", node: seq });
+			pushNode(seq);
 			continue;
 		}
 		if (child.type === "flow-map") {
 			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			items.push({ kind: "node", node: map });
+			pushNode(map);
 			continue;
 		}
 		if (child.type === "flow-seq") {
 			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			items.push({ kind: "node", node: seq });
+			pushNode(seq);
 		}
 	}
 	// Flush trailing pending tag/anchor as empty scalar
@@ -1069,6 +1236,10 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): voi
 		if (item.kind === "node" || item.kind === "key") {
 			const keyNode = item.node;
 			i++;
+			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
+			while (i < items.length && items[i]?.kind === "comment") {
+				i++;
+			}
 			// Look for value-sep
 			if (i < items.length && items[i]?.kind === "value-sep") {
 				i++; // skip value-sep
@@ -1193,11 +1364,28 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
 	let pendingMeta: NodeMeta = {};
+	let sawEntry = false;
 
-	for (const child of children) {
+	for (let ci = 0; ci < children.length; ci++) {
+		const child = children[ci];
+		if (!child) continue;
 		if (child.type === "newline" || child.type === "comment") continue;
 		if (child.type === "whitespace") {
-			// "-" is the sequence entry indicator, skip it
+			// "-" is the sequence entry indicator
+			if (child.source.trim() === "-") {
+				// If we saw a previous entry with no content, push null
+				if (sawEntry) {
+					items.push(
+						new YamlScalar({
+							value: null,
+							style: "plain" as ScalarStyle,
+							offset: child.offset,
+							length: 0,
+						}),
+					);
+				}
+				sawEntry = true;
+			}
 			continue;
 		}
 		if (child.type === "error") {
@@ -1223,40 +1411,108 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			// Look ahead: if followed by a block-map sibling, this scalar is
+			// the first key of an implicit mapping (e.g., "- name: value")
+			const nextSig = findNextSignificantChild(children, ci + 1, true);
+			const nextSigChild = nextSig !== null ? children[nextSig] : undefined;
+			if (nextSig !== null && nextSigChild && nextSigChild.type === "block-map") {
+				const keyScalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
+				const map = composeBlockMap(nextSigChild, state, keyScalar, undefined);
+				pendingMeta = {};
+				sawEntry = false;
+				items.push(map);
+				ci = nextSig;
+				continue;
+			}
+			// Merge consecutive plain scalars in same entry (multi-line plain scalar)
+			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+				const parts: string[] = [child.source.trim()];
+				let mergeEnd = ci + 1;
+				while (mergeEnd < children.length) {
+					const mc = children[mergeEnd];
+					if (!mc) break;
+					if (mc.type === "newline" || (mc.type === "whitespace" && mc.source.trim() === "")) {
+						mergeEnd++;
+						continue;
+					}
+					if (mc.type === "whitespace" && mc.source.trim() === "-") break;
+					if (mc.type === "flow-scalar" && getScalarStyle(mc) === "plain") {
+						parts.push(mc.source.trim());
+						mergeEnd++;
+						continue;
+					}
+					break;
+				}
+				if (parts.length > 1) {
+					const merged = foldFlowLines(parts.join("\n"));
+					const resolved = resolveScalar(merged, "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value: resolved,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: child.length,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					sawEntry = false;
+					items.push(scalar);
+					ci = mergeEnd - 1;
+					continue;
+				}
+			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(scalar);
 			continue;
 		}
 		if (child.type === "alias") {
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(alias);
 			continue;
 		}
 		if (child.type === "block-map") {
 			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(map);
 			continue;
 		}
 		if (child.type === "block-seq") {
 			const seq = composeBlockSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(seq);
 			continue;
 		}
 		if (child.type === "flow-map") {
 			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(map);
 			continue;
 		}
 		if (child.type === "flow-seq") {
 			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(seq);
 		}
+	}
+	// Flush trailing entry with no content as null
+	if (sawEntry && !hasMeta(pendingMeta)) {
+		items.push(
+			new YamlScalar({
+				value: null,
+				style: "plain" as ScalarStyle,
+				offset: cst.offset + cst.length,
+				length: 0,
+			}),
+		);
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., - !!str)
 	if (hasMeta(pendingMeta)) {
@@ -1295,13 +1551,10 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	const children = cst.children ?? [];
 	const pairs: YamlPair[] = [];
 
-	// Filter out brackets and commas, keep content
+	// Filter out brackets and blank whitespace, but KEEP commas and newlines
+	// so that flattenFlowChildren can respect segment boundaries for multi-line keys.
 	const content = children.filter(
-		(c) =>
-			!(
-				c.type === "whitespace" &&
-				(c.source === "{" || c.source === "}" || c.source === "," || c.source.trim() === "")
-			) && c.type !== "newline",
+		(c) => !(c.type === "whitespace" && (c.source === "{" || c.source === "}" || c.source.trim() === "")),
 	);
 
 	const items = flattenFlowChildren(content, state);
@@ -1327,8 +1580,13 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 	const items: SemanticItem[] = [];
 	let pendingMeta: NodeMeta = {};
 
-	for (const child of children) {
+	for (let i = 0; i < children.length; i++) {
+		const child = children[i];
+		if (!child) continue;
+		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
+			// Skip commas (kept in content for multi-line key boundary detection)
+			if (child.source === ",") continue;
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
@@ -1379,6 +1637,43 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+				if (hasValueSepThroughPlainScalars(children, i + 1)) {
+					// Plain scalar eventually followed by ":" (possibly through
+					// continuation plain scalars) — merge as multi-line key
+					const { value, nextIdx } = collectMultilineKey(children, i);
+					const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value: resolved,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: child.length,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					items.push({ kind: "node", node: scalar });
+					i = nextIdx - 1;
+					continue;
+				}
+				// Not followed by ":" — try multi-line value merging
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const scalar = new YamlScalar({
+					value: resolved,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: child.length,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+				pendingMeta = {};
+				items.push({ kind: "node", node: scalar });
+				i = nextIdx - 1;
+				continue;
+			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			items.push({ kind: "node", node: scalar });
@@ -1426,71 +1721,59 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSeq {
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
-	let pendingMeta: NodeMeta = {};
+
+	// Split children into comma-delimited segments, filtering out brackets.
+	// Each segment is processed independently: if it contains a ":" value
+	// separator, it's an implicit single-pair mapping (YAML 1.2 §7.4);
+	// otherwise each node in the segment is a plain sequence entry.
+	const segments: CstNode[][] = [];
+	let current: CstNode[] = [];
 
 	for (const child of children) {
-		if (child.type === "newline") continue;
-		if (child.type === "whitespace") continue; // brackets, commas, spaces
-		if (child.type === "comment") continue;
-		if (child.type === "error") {
-			const lc = lineCol(state.text, child.offset);
-			state.errors.push(
-				new YamlErrorDetail({
-					code: "UnexpectedToken",
-					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
-					offset: child.offset,
-					length: child.length,
-					line: lc.line,
-					column: lc.column,
-				}),
-			);
+		// Skip brackets
+		if (child.type === "whitespace" && (child.source === "[" || child.source === "]")) continue;
+		// Split on commas
+		if (child.type === "whitespace" && child.source === ",") {
+			if (current.length > 0) segments.push(current);
+			current = [];
 			continue;
 		}
-		if (child.type === "anchor") {
-			pendingMeta.anchor = getAnchorName(child, state.text);
-			continue;
-		}
-		if (child.type === "tag") {
-			pendingMeta.tag = child.source;
-			continue;
-		}
-		if (child.type === "flow-scalar" || child.type === "block-scalar") {
-			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(scalar);
-			continue;
-		}
-		if (child.type === "alias") {
-			const alias = makeAlias(child, state);
-			pendingMeta = {};
-			items.push(alias);
-			continue;
-		}
-		if (child.type === "flow-map") {
-			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(map);
-			continue;
-		}
-		if (child.type === "flow-seq") {
-			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(seq);
-		}
+		current.push(child);
 	}
-	// Flush trailing pending tag/anchor as empty scalar (e.g., [!!str])
-	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
-		const scalar = new YamlScalar({
-			value,
-			style: "plain" as ScalarStyle,
-			offset: 0,
-			length: 0,
-			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
-		});
-		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
-		items.push(scalar);
+	if (current.length > 0) segments.push(current);
+
+	for (const segment of segments) {
+		// Check if this segment contains a value separator (implicit mapping)
+		const hasValueSep = segment.some((c) => c.type === "whitespace" && c.source === ":");
+
+		if (hasValueSep) {
+			// Process as a single-pair implicit mapping
+			// Keep newlines so flattenFlowChildren can merge multi-line plain scalars
+			const content = segment.filter((c) => !(c.type === "whitespace" && c.source.trim() === ""));
+			const semItems = flattenFlowChildren(content, state);
+			const pairs: YamlPair[] = [];
+			buildPairs(semItems, pairs, state.text);
+			const firstPair = pairs[0];
+			if (firstPair) {
+				const map = new YamlMap({
+					items: pairs,
+					style: "flow" as CollectionStyle,
+					offset: firstPair.key.offset,
+					length: 0,
+				});
+				items.push(map);
+			}
+		} else {
+			// Process as plain sequence items
+			// Keep newlines so flattenFlowChildren can merge multi-line plain scalars
+			const content = segment.filter((c) => !(c.type === "whitespace" && c.source.trim() === ""));
+			const semItems = flattenFlowChildren(content, state);
+			for (const si of semItems) {
+				if (si.kind === "node" && si.node) {
+					items.push(si.node);
+				}
+			}
+		}
 	}
 
 	const seq = new YamlSeq({
@@ -1825,7 +2108,15 @@ export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNo
 	if (node instanceof YamlMap) {
 		const result: Record<string, unknown> = {};
 		for (const pair of node.items) {
-			const key = pair.key instanceof YamlScalar ? String(pair.key.value ?? "") : "";
+			let key: string;
+			if (pair.key instanceof YamlScalar) {
+				key = String(pair.key.value ?? "");
+			} else if (pair.key instanceof YamlAlias) {
+				const resolved = anchors?.get(pair.key.name);
+				key = resolved !== undefined ? String(getNodeValue(resolved, anchors) ?? "") : "";
+			} else {
+				key = "";
+			}
 			result[key] = getNodeValue(pair.value, anchors);
 		}
 		return result;
