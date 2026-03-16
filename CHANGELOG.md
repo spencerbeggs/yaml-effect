@@ -1,5 +1,21 @@
 # yaml-effect
 
+## 0.1.4
+
+### Bug Fixes
+
+* [`3275fd1`](https://github.com/spencerbeggs/yaml-effect/commit/3275fd195d170c452d6506db72494e5f8c79b4b7) Improve parse-level correctness for multiple YAML 1.2 spec compliance
+  test cases, recovering 12 JSON assertion failures:
+
+- Implicit mapping after bare sequence entry
+- Multi-line plain scalar keys in flow mappings
+- Alias-as-mapping-key with anchor resolution
+- Anchor on empty value in block mappings
+- Flow scalar line folding for trailing empty lines
+- Empty block scalar with explicit indent and keep chomp
+- Explicit key with comments before value separator
+- Multi-line plain scalar continuation in block sequences
+
 ## 0.1.3
 
 ### Bug Fixes
