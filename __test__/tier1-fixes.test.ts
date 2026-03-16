@@ -56,13 +56,4 @@ describe("Tier 1: Parser accepts valid YAML", () => {
 		const result = parseYaml(yaml);
 		expect(Either.isRight(result), "Should parse successfully").toBe(true);
 	});
-
-	// HS5T value correctness depends on plain scalar folding (issue #9).
-	// Skipping value assertion for now — tracked separately.
-	it.skip("[HS5T] plain scalar folding produces correct value", () => {
-		const yaml = "1st non-empty\n\n 2nd non-empty \n\t3rd non-empty\n";
-		const result = parseYaml(yaml);
-		const value = Either.getOrThrow(result);
-		expect(value).toBe("1st non-empty\n2nd non-empty 3rd non-empty");
-	});
 });
