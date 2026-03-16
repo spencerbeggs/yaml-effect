@@ -1237,7 +1237,6 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): voi
 			const keyNode = item.node;
 			i++;
 			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
-			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
 			while (i < items.length && items[i]?.kind === "comment") {
 				i++;
 			}
