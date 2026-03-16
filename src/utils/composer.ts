@@ -334,6 +334,25 @@ function collectMultilinePlainScalar(
  * Check if a value separator (`:`) follows in a CST children list,
  * skipping whitespace and newlines.
  */
+/**
+ * Find the index of the next non-trivia child (skips newline, whitespace, comment).
+ * If `stopAtDash` is true, returns null when a `-` indicator is encountered before
+ * any significant child (used to avoid merging across sequence entry boundaries).
+ */
+function findNextSignificantChild(children: readonly CstNode[], startIdx: number, stopAtDash = false): number | null {
+	for (let j = startIdx; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (stopAtDash && c.source.trim() === "-") return null;
+			continue;
+		}
+		return j;
+	}
+	return null;
+}
+
 function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number): boolean {
 	for (let j = startIdx; j < children.length; j++) {
 		const c = children[j];
@@ -672,20 +691,24 @@ function decodeBlockScalar(raw: string): string {
 				prevMoreIndented = isMoreIndented;
 			}
 		}
-		if (chomp === "keep") {
-			result += "\n";
-			for (const _nl of trailingNewlines) result += "\n";
-		} else if (chomp !== "strip") {
-			result += "\n";
+		if (hadContent || trailingNewlines.length > 0) {
+			if (chomp === "keep") {
+				result += "\n";
+				for (const _nl of trailingNewlines) result += "\n";
+			} else if (chomp !== "strip") {
+				result += "\n";
+			}
 		}
 		value = result;
 	} else {
 		value = lines.join("\n");
-		if (chomp === "keep") {
-			value += "\n";
-			for (const _nl of trailingNewlines) value += "\n";
-		} else if (chomp !== "strip") {
-			value += "\n";
+		if (lines.length > 0 || trailingNewlines.length > 0) {
+			if (chomp === "keep") {
+				value += "\n";
+				for (const _nl of trailingNewlines) value += "\n";
+			} else if (chomp !== "strip") {
+				value += "\n";
+			}
 		}
 	}
 
@@ -1101,6 +1124,16 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 			continue;
 		}
 		if (child.type === "alias") {
+			// Check if alias is followed by block-map (alias as first key of implicit mapping)
+			const nextAlias = findNextContentInList(children, i + 1);
+			if (nextAlias?.node.type === "block-map") {
+				const alias = makeAlias(child, state);
+				const map = composeBlockMap(nextAlias.node, state, alias, hasMeta(pendingMeta) ? pendingMeta : undefined);
+				pendingMeta = {};
+				pushNode(map);
+				i = nextAlias.idx;
+				continue;
+			}
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
 			pushNode(alias);
@@ -1329,7 +1362,9 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	let pendingMeta: NodeMeta = {};
 	let sawEntry = false;
 
-	for (const child of children) {
+	for (let ci = 0; ci < children.length; ci++) {
+		const child = children[ci];
+		if (!child) continue;
 		if (child.type === "newline" || child.type === "comment") continue;
 		if (child.type === "whitespace") {
 			// "-" is the sequence entry indicator
@@ -1372,6 +1407,19 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			// Look ahead: if followed by a block-map sibling, this scalar is
+			// the first key of an implicit mapping (e.g., "- name: value")
+			const nextSig = findNextSignificantChild(children, ci + 1, true);
+			const nextSigChild = nextSig !== null ? children[nextSig] : undefined;
+			if (nextSig !== null && nextSigChild && nextSigChild.type === "block-map") {
+				const keyScalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
+				const map = composeBlockMap(nextSigChild, state, keyScalar, undefined);
+				pendingMeta = {};
+				sawEntry = false;
+				items.push(map);
+				ci = nextSig;
+				continue;
+			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			sawEntry = false;
@@ -2018,7 +2066,8 @@ export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNo
 	if (node instanceof YamlMap) {
 		const result: Record<string, unknown> = {};
 		for (const pair of node.items) {
-			const key = pair.key instanceof YamlScalar ? String(pair.key.value ?? "") : "";
+			const keyValue = getNodeValue(pair.key, anchors);
+			const key = keyValue != null ? String(keyValue) : "";
 			result[key] = getNodeValue(pair.value, anchors);
 		}
 		return result;
