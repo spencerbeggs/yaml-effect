@@ -182,9 +182,11 @@ function foldFlowLines(text: string): string {
 			result += line.replace(/[ \t]+$/, "");
 			continue;
 		}
-		// Continuation line: trim both leading and trailing whitespace
-		const content = line.trim();
-		if (content === "") {
+		// Continuation line: trim leading whitespace (indentation)
+		// Trim trailing whitespace only on non-last lines (before a line break)
+		const isLast = i === lines.length - 1;
+		const trimmed = isLast ? line.trimStart() : line.trim();
+		if (trimmed === "") {
 			// Empty line → newline
 			result += "\n";
 		} else {
@@ -193,7 +195,7 @@ function foldFlowLines(text: string): string {
 			if (result.length > 0 && result[result.length - 1] !== "\n") {
 				result += " ";
 			}
-			result += content;
+			result += trimmed;
 		}
 	}
 	return result;
@@ -480,7 +482,34 @@ function decodeBlockScalar(raw: string): string {
 		}
 	}
 
-	if (!foundContent) return chomp === "keep" ? "\n" : "";
+	if (!foundContent) {
+		if (chomp === "keep") {
+			// Count all trailing empty/whitespace-only lines after the header
+			let count = 0;
+			let j = i;
+			while (j < raw.length) {
+				// Skip whitespace on this line
+				while (j < raw.length && (raw[j] === " " || raw[j] === "\t")) j++;
+				if (j >= raw.length) {
+					// Whitespace-only content at EOF counts as one empty line
+					if (count === 0) count = 1;
+					break;
+				}
+				if (raw[j] === "\n") {
+					count++;
+					j++;
+				} else if (raw[j] === "\r") {
+					count++;
+					j++;
+					if (j < raw.length && raw[j] === "\n") j++;
+				} else {
+					break;
+				}
+			}
+			return "\n".repeat(count);
+		}
+		return "";
+	}
 
 	const lines: string[] = [];
 	const trailingNewlines: string[] = [];
@@ -1193,11 +1222,26 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
 	let pendingMeta: NodeMeta = {};
+	let sawEntry = false;
 
 	for (const child of children) {
 		if (child.type === "newline" || child.type === "comment") continue;
 		if (child.type === "whitespace") {
-			// "-" is the sequence entry indicator, skip it
+			// "-" is the sequence entry indicator
+			if (child.source.trim() === "-") {
+				// If we saw a previous entry with no content, push null
+				if (sawEntry) {
+					items.push(
+						new YamlScalar({
+							value: null,
+							style: "plain" as ScalarStyle,
+							offset: child.offset,
+							length: 0,
+						}),
+					);
+				}
+				sawEntry = true;
+			}
 			continue;
 		}
 		if (child.type === "error") {
@@ -1225,38 +1269,55 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(scalar);
 			continue;
 		}
 		if (child.type === "alias") {
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(alias);
 			continue;
 		}
 		if (child.type === "block-map") {
 			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(map);
 			continue;
 		}
 		if (child.type === "block-seq") {
 			const seq = composeBlockSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(seq);
 			continue;
 		}
 		if (child.type === "flow-map") {
 			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(map);
 			continue;
 		}
 		if (child.type === "flow-seq") {
 			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawEntry = false;
 			items.push(seq);
 		}
+	}
+	// Flush trailing entry with no content as null
+	if (sawEntry && !hasMeta(pendingMeta)) {
+		items.push(
+			new YamlScalar({
+				value: null,
+				style: "plain" as ScalarStyle,
+				offset: cst.offset + cst.length,
+				length: 0,
+			}),
+		);
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., - !!str)
 	if (hasMeta(pendingMeta)) {
@@ -1295,13 +1356,14 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	const children = cst.children ?? [];
 	const pairs: YamlPair[] = [];
 
-	// Filter out brackets and commas, keep content
+	// Filter out brackets, commas, and blank whitespace, but KEEP newlines
+	// so that flattenFlowChildren can merge multi-line plain scalars.
 	const content = children.filter(
 		(c) =>
 			!(
 				c.type === "whitespace" &&
 				(c.source === "{" || c.source === "}" || c.source === "," || c.source.trim() === "")
-			) && c.type !== "newline",
+			),
 	);
 
 	const items = flattenFlowChildren(content, state);
@@ -1327,7 +1389,10 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 	const items: SemanticItem[] = [];
 	let pendingMeta: NodeMeta = {};
 
-	for (const child of children) {
+	for (let i = 0; i < children.length; i++) {
+		const child = children[i];
+		if (!child) continue;
+		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
@@ -1379,6 +1444,28 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			// For plain scalars not followed by ":", try multi-line merging
+			if (
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				!hasValueSepAfterInList(children, i + 1)
+			) {
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const scalar = new YamlScalar({
+					value: resolved,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: child.length,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+				pendingMeta = {};
+				items.push({ kind: "node", node: scalar });
+				i = nextIdx - 1; // -1 because for-loop increments
+				continue;
+			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			items.push({ kind: "node", node: scalar });
@@ -1426,71 +1513,59 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSeq {
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
-	let pendingMeta: NodeMeta = {};
+
+	// Split children into comma-delimited segments, filtering out brackets.
+	// Each segment is processed independently: if it contains a ":" value
+	// separator, it's an implicit single-pair mapping (YAML 1.2 §7.4);
+	// otherwise each node in the segment is a plain sequence entry.
+	const segments: CstNode[][] = [];
+	let current: CstNode[] = [];
 
 	for (const child of children) {
-		if (child.type === "newline") continue;
-		if (child.type === "whitespace") continue; // brackets, commas, spaces
-		if (child.type === "comment") continue;
-		if (child.type === "error") {
-			const lc = lineCol(state.text, child.offset);
-			state.errors.push(
-				new YamlErrorDetail({
-					code: "UnexpectedToken",
-					message: `Unexpected content: ${child.source.trim() || "(empty)"}`,
-					offset: child.offset,
-					length: child.length,
-					line: lc.line,
-					column: lc.column,
-				}),
-			);
+		// Skip brackets
+		if (child.type === "whitespace" && (child.source === "[" || child.source === "]")) continue;
+		// Split on commas
+		if (child.type === "whitespace" && child.source === ",") {
+			if (current.length > 0) segments.push(current);
+			current = [];
 			continue;
 		}
-		if (child.type === "anchor") {
-			pendingMeta.anchor = getAnchorName(child, state.text);
-			continue;
-		}
-		if (child.type === "tag") {
-			pendingMeta.tag = child.source;
-			continue;
-		}
-		if (child.type === "flow-scalar" || child.type === "block-scalar") {
-			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(scalar);
-			continue;
-		}
-		if (child.type === "alias") {
-			const alias = makeAlias(child, state);
-			pendingMeta = {};
-			items.push(alias);
-			continue;
-		}
-		if (child.type === "flow-map") {
-			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(map);
-			continue;
-		}
-		if (child.type === "flow-seq") {
-			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
-			items.push(seq);
-		}
+		current.push(child);
 	}
-	// Flush trailing pending tag/anchor as empty scalar (e.g., [!!str])
-	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
-		const scalar = new YamlScalar({
-			value,
-			style: "plain" as ScalarStyle,
-			offset: 0,
-			length: 0,
-			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
-		});
-		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
-		items.push(scalar);
+	if (current.length > 0) segments.push(current);
+
+	for (const segment of segments) {
+		// Check if this segment contains a value separator (implicit mapping)
+		const hasValueSep = segment.some((c) => c.type === "whitespace" && c.source === ":");
+
+		if (hasValueSep) {
+			// Process as a single-pair implicit mapping
+			// Keep newlines so flattenFlowChildren can merge multi-line plain scalars
+			const content = segment.filter((c) => !(c.type === "whitespace" && c.source.trim() === ""));
+			const semItems = flattenFlowChildren(content, state);
+			const pairs: YamlPair[] = [];
+			buildPairs(semItems, pairs, state.text);
+			const firstPair = pairs[0];
+			if (firstPair) {
+				const map = new YamlMap({
+					items: pairs,
+					style: "flow" as CollectionStyle,
+					offset: firstPair.key.offset,
+					length: 0,
+				});
+				items.push(map);
+			}
+		} else {
+			// Process as plain sequence items
+			// Keep newlines so flattenFlowChildren can merge multi-line plain scalars
+			const content = segment.filter((c) => !(c.type === "whitespace" && c.source.trim() === ""));
+			const semItems = flattenFlowChildren(content, state);
+			for (const si of semItems) {
+				if (si.kind === "node" && si.node) {
+					items.push(si.node);
+				}
+			}
+		}
 	}
 
 	const seq = new YamlSeq({

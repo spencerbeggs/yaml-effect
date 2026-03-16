@@ -90,6 +90,8 @@ export function createScanner(text: string): YamlScanner {
 	const blockStarted: Map<number, "map" | "seq"> = new Map();
 	/** Set when the block scalar scanner produces an empty value (contentIndent === 0). */
 	let afterEmptyBlockScalar = false;
+	/** Set when the previous token was a quoted scalar (single or double quoted). */
+	let afterQuotedScalar = false;
 	/** Buffer of tokens to emit before scanning the next real token. */
 	const pending: YamlToken[] = [];
 	/** Mutable holder for the most recently produced token, set by the public {@link scan} method. */
@@ -677,9 +679,40 @@ export function createScanner(text: string): YamlScanner {
 		if (!foundContent || (contentIndent === 0 && blockStarted.size > 0)) {
 			// No content lines found, or zero-indent content inside a block structure
 			// (zero-indent content is only valid at document level, not inside mappings/sequences)
+			if (chomp === "keep") {
+				// Count and consume all trailing empty/whitespace-only lines for keep chomp
+				let count = 0;
+				while (pos < text.length) {
+					// Skip whitespace on this line
+					while (pos < text.length && (text[pos] === " " || text[pos] === "\t")) {
+						pos++;
+						col++;
+					}
+					if (pos >= text.length) {
+						// Whitespace-only content at EOF counts as one empty line
+						if (count === 0) count = 1;
+						break;
+					}
+					if (text[pos] === "\n") {
+						count++;
+						pos++;
+						line++;
+						col = 0;
+					} else if (text[pos] === "\r") {
+						count++;
+						pos++;
+						if (pos < text.length && text[pos] === "\n") pos++;
+						line++;
+						col = 0;
+					} else {
+						break;
+					}
+				}
+				const value = "\n".repeat(count);
+				return makeToken("scalar", value, start, sLine, sCol, pos - start);
+			}
 			afterEmptyBlockScalar = true;
-			const value = chomp === "keep" ? "\n" : "";
-			return makeToken("scalar", value, start, sLine, sCol, pos - start);
+			return makeToken("scalar", "", start, sLine, sCol, pos - start);
 		}
 
 		// Collect content lines
@@ -929,6 +962,13 @@ export function createScanner(text: string): YamlScanner {
 			return null;
 		}
 
+		// Save and reset the quoted-scalar flag. The `:` handler reads
+		// `prevWasQuoted` to allow adjacent value indicators in flow context
+		// (YAML 1.2 §7.18). Reset here so it only applies to the token
+		// immediately following a quoted scalar.
+		const prevWasQuoted = afterQuotedScalar;
+		afterQuotedScalar = false;
+
 		const ch = peek();
 
 		// BOM
@@ -1159,9 +1199,16 @@ export function createScanner(text: string): YamlScanner {
 		}
 
 		// Value indicator
+		// YAML 1.2 §7.18: In flow context, ":" is a valid value indicator
+		// immediately after a quoted scalar (JSON-like key) without requiring
+		// a following whitespace character.
 		if (
 			ch === ":" &&
-			(isWhitespace(peek(1)) || isNewline(peek(1)) || peek(1) === "" || (flowDepth > 0 && isFlowIndicator(peek(1))))
+			(isWhitespace(peek(1)) ||
+				isNewline(peek(1)) ||
+				peek(1) === "" ||
+				(flowDepth > 0 && isFlowIndicator(peek(1))) ||
+				(flowDepth > 0 && prevWasQuoted))
 		) {
 			lockLineIndent();
 			const indent = lineIndent;
@@ -1216,13 +1263,16 @@ export function createScanner(text: string): YamlScanner {
 
 		// Quoted scalars
 		if (ch === "'") {
+			afterQuotedScalar = true;
 			return scanSingleQuotedScalar();
 		}
 		if (ch === '"') {
+			afterQuotedScalar = true;
 			return scanDoubleQuotedScalar();
 		}
 
 		// Plain scalar (fallback)
+		afterQuotedScalar = false;
 		return scanPlainScalar();
 	}
 
