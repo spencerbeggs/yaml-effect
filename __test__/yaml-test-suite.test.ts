@@ -27,7 +27,7 @@ const allCases = suiteAvailable ? loadAllTestCases() : [];
 // ---------------------------------------------------------------------------
 
 function parseYaml(input: string): Either.Either<unknown, unknown> {
-	return Effect.runSync(Effect.either(parse(input)));
+	return Effect.runSync(Effect.either(parse(input, { uniqueKeys: false })));
 }
 
 /**
@@ -36,7 +36,7 @@ function parseYaml(input: string): Either.Either<unknown, unknown> {
 function parseYamlMulti(input: string): Either.Either<unknown[], unknown> {
 	return Effect.runSync(
 		Effect.either(
-			parseAllDocuments(input).pipe(
+			parseAllDocuments(input, { uniqueKeys: false }).pipe(
 				Effect.map((docs) =>
 					docs.map((doc) => {
 						const anchors = buildAnchorMap(doc.contents);

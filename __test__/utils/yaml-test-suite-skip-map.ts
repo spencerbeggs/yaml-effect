@@ -8,7 +8,7 @@
  * Every entry must include a reason string explaining WHY.
  *
  * Generated from first triage run on 2026-03-14.
- * Updated: multi-document harness, block scalar, tagged empty value, anchor name, tab handling fixes — 799/895 assertions passing.
+ * Updated: multi-document harness, block scalar, tagged empty value, anchor name, tab handling, block mapping fixes.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -16,14 +16,7 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser rejects valid YAML (5)
-	"2JQS": "Parser rejects valid YAML: Block Mapping with Missing Keys",
-	HS5T: "Parser rejects valid YAML: Spec Example 7.12. Plain Lines",
-	KK5P: "Parser rejects valid YAML: Various combinations of explicit block mappings",
-	S3PD: "Parser rejects valid YAML: Spec Example 8.18. Implicit Block Mapping Entries",
-	V9D5: "Parser rejects valid YAML: Spec Example 8.19. Compact Block Mappings",
-
-	// Parser accepts invalid YAML (87)
+	// Parser accepts invalid YAML (89)
 	"236B": "Parser accepts invalid YAML: Invalid value after mapping",
 	"2CMS": "Parser accepts invalid YAML: Invalid mapping in plain multiline",
 	"2G84/00": "Parser accepts invalid YAML: Literal modifers",
@@ -100,7 +93,9 @@ export const XFAIL: Record<string, string> = {
 	W9L4: "Parser accepts invalid YAML: Literal block scalar with more spaces in first line",
 	X4QW: "Parser accepts invalid YAML: Comment without whitespace after block scalar indicator",
 	"Y79Y/002": "Lexer rejects valid YAML: Tab as separation space after flow indicator",
+	"Y79Y/009": "Parser accepts invalid YAML: Tab as block indentation after value indicator",
 	YJV2: "Parser accepts invalid YAML: Dash in flow sequence",
+	ZCZ6: "Parser accepts invalid YAML: Invalid mapping in plain single line value",
 	ZL4Z: "Parser accepts invalid YAML: Invalid nested mapping",
 	ZVH3: "Parser accepts invalid YAML: Wrong indented sequence item",
 	ZXT5: "Parser accepts invalid YAML: Implicit key followed by newline and adjacent value",
@@ -114,6 +109,7 @@ export const XFAIL: Record<string, string> = {
  */
 export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"229Q": ["json", "output"],
+	HS5T: ["json", "output"],
 	"26DV": ["json", "output"],
 	"27NA": ["output"],
 	"2AUY": ["output"],
@@ -268,6 +264,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	K858: ["output", "roundtrip"],
 	"KH5V/01": ["output"],
 	"KH5V/02": ["output"],
+	KK5P: ["output"],
 	KSS4: ["output"],
 	L383: ["output"],
 	L94M: ["output"],

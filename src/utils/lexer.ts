@@ -254,6 +254,15 @@ export function createScanner(text: string): YamlScanner {
 					}
 					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
 				}
+				// If no block structures are active, the tab cannot be serving as
+				// block indentation — treat as separation whitespace (e.g. plain
+				// scalar continuation, YAML 1.2 §6.2).
+				if (blockStarted.size === 0) {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
 				// Default: tab as block indentation → error
 				while (pos < text.length && isWhitespace(peek())) {
 					advance();

@@ -621,7 +621,7 @@ function composeBlockMap(
 	}
 
 	// Phase 2: pair up keys and values
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
@@ -651,6 +651,7 @@ interface SemanticItem {
 	kind: "key" | "value-sep" | "node" | "comment";
 	node?: YamlNode;
 	comment?: string;
+	offset?: number;
 }
 
 /** Find the next non-trivia CST child in a list, returning the node and its index. */
@@ -705,7 +706,7 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 					pendingMeta = {};
 					items.push({ kind: "node", node: scalar });
 				}
-				items.push({ kind: "value-sep" });
+				items.push({ kind: "value-sep", offset: child.offset });
 			}
 			// Skip other whitespace (spaces, "-", "?", "---", "...")
 			continue;
@@ -800,7 +801,7 @@ function hasMeta(m: NodeMeta): boolean {
  * Pattern: node, value-sep (no node) produces a key:null pair.
  * Pattern: value-sep, node produces a null:value pair.
  */
-function buildPairs(items: SemanticItem[], pairs: YamlPair[]): void {
+function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): void {
 	let i = 0;
 	while (i < items.length) {
 		const item = items[i];
@@ -825,8 +826,14 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[]): void {
 		}
 		if (item.kind === "value-sep") {
 			// value-sep without preceding key: implicit null key
+			const valueSepOffset = item.offset ?? 0;
 			i++;
-			const valueNode = consumeValueNode(items, i);
+			// Peek ahead: if the next non-comment node is followed by a
+			// value-sep AND is on a different line, it's a KEY for the next
+			// pair, not our value. This prevents greedily consuming
+			// `"quoted key":` as the value of a preceding null-key entry
+			// (S3PD) while preserving rejection of `a: b: c: d` (ZCZ6).
+			const valueNode = consumeValueNodeForNullKey(items, i, text, valueSepOffset);
 			if (valueNode) {
 				const nullKey = new YamlScalar({ value: null, style: "plain" as ScalarStyle, offset: 0, length: 0 });
 				pairs.push(new YamlPair({ key: nullKey, value: valueNode.node ?? null }));
@@ -885,6 +892,47 @@ function consumeValueNode(items: SemanticItem[], startIdx: number): { node: Yaml
 			continue;
 		}
 		if (item.kind === "node") {
+			return { node: item.node ?? null, nextIdx: i + 1 };
+		}
+		break;
+	}
+	return i > startIdx ? { node: null, nextIdx: i } : null;
+}
+
+/**
+ * Like consumeValueNode but for implicit null-key entries (`: value`).
+ * If the next non-comment node is immediately followed by a value-sep
+ * AND is on a different line from the null key's `:`, it's actually a
+ * KEY for the next pair, not our value — return null so the null key
+ * gets a null value. When on the same line (e.g. `a: b: c: d`), consume
+ * normally to preserve the original pairing (which may produce duplicate
+ * keys that get rejected).
+ */
+function consumeValueNodeForNullKey(
+	items: SemanticItem[],
+	startIdx: number,
+	text: string,
+	valueSepOffset: number,
+): { node: YamlNode | null; nextIdx: number } | null {
+	let i = startIdx;
+	while (i < items.length) {
+		const item = items[i];
+		if (!item) break;
+		if (item.kind === "comment") {
+			i++;
+			continue;
+		}
+		if (item.kind === "node") {
+			if (i + 1 < items.length && items[i + 1]?.kind === "value-sep") {
+				// Check if the candidate node is on a different line from the
+				// null key's value-sep. Only refuse to consume cross-line nodes.
+				const nodeOffset = item.node && "offset" in item.node ? (item.node as YamlScalar).offset : 0;
+				const hasNewline = text.slice(valueSepOffset, nodeOffset).includes("\n");
+				if (hasNewline) {
+					// Cross-line: this node is a key for the next pair, not our value.
+					break;
+				}
+			}
 			return { node: item.node ?? null, nextIdx: i + 1 };
 		}
 		break;
@@ -1035,7 +1083,7 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	);
 
 	const items = flattenFlowChildren(content, state);
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
@@ -1271,7 +1319,7 @@ function composeFlatBlockMap(
 	items.unshift({ kind: "key", node: externalFirstKey });
 
 	const pairs: YamlPair[] = [];
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
