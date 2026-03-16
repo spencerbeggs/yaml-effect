@@ -67,20 +67,38 @@ const compliance = VitestProject.custom("compliance", {
 });
 ```
 
-The default `yaml-effect` project explicitly excludes the compliance test
-file so it does not run during normal `pnpm run test` unit test discovery.
-Both projects run together under `pnpm run test`, but you can target
-compliance alone:
+The default `yaml-effect` project explicitly excludes both compliance
+test files so they do not run during normal unit test discovery. The
+`test` script explicitly targets `yaml-effect` and `compliance` projects:
 
 ```bash
-pnpm run test:compliance
-# or equivalently:
-pnpm vitest run --project compliance
+pnpm run test                  # unit tests + filtered compliance
+pnpm run test:compliance       # filtered compliance only
+pnpm run test:compliance-raw   # unfiltered compliance (expected failures)
+```
+
+### Raw Compliance Project (`compliance-raw`)
+
+A second Vitest project runs every test case without SKIP, XFAIL, or
+SKIP_ASSERTIONS filtering. This shows the true state of compliance and
+makes it easy to spot unexpected improvements after code changes.
+
+- **File:** `__test__/yaml-test-suite-raw.test.ts`
+- **Project name:** `compliance-raw`
+- **Script:** `pnpm run test:compliance-raw`
+- **Guard:** Requires `RAW_COMPLIANCE=1` env var (set by the script).
+  Without this, the describe block self-skips, preventing pre-commit
+  hooks and default test runs from failing on known gaps.
+
+Filter by test ID:
+
+```bash
+pnpm run test:compliance-raw -- -t "\[229Q\]"
 ```
 
 ### Graceful Degradation
 
-The test file guards against a missing submodule:
+Both test files guard against a missing submodule:
 
 ```typescript
 const suiteAvailable = existsSync(SUITE_DIR);
@@ -371,19 +389,22 @@ data out of the main branch history.
 
 ## Open Compliance Gaps
 
-Six GitHub issues categorize the known failures:
+GitHub issues categorize the known failures. Issue #10 was decomposed
+into per-category issues (#15, #16).
 
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | #6 | Fix multi-document test harness to use `parseAllDocuments` | **Resolved** |
-| #7 | Fix tab handling in lexer for YAML 1.2 compliance | Open (16 XFAIL) |
+| #7 | Fix tab handling in lexer for YAML 1.2 compliance | Partial (5 XFAIL resolved) |
 | #8 | Fix block scalar content normalization | Partial (trailing whitespace fixed) |
-| #9 | Fix double-quoted and plain scalar folding rules | Open |
-| #10 | Add stricter validation for invalid YAML rejection | Open (87 XFAIL) |
+| #9 | Fix double-quoted and plain scalar folding rules | **Mostly resolved** (18 assertions fixed) |
+| #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
 | #11 | Fix canonical output and roundtrip stringifier compliance | Open |
+| #15 | Parser rejects valid YAML | Open (remaining XFAIL "rejects valid") |
+| #16 | Parser accepts invalid YAML | Open (89 XFAIL "accepts invalid") |
 
-Issues #7 and #10 account for the 103 XFAIL entries.
-Issues #8, #9, and #11 account for most of the SKIP_ASSERTIONS entries.
+Current compliance: 818/903 assertions passing, 85 expected failures.
+Use `pnpm run test:compliance-raw` to see unfiltered results (844/1226).
 
 ### Dual Block Scalar Decoders
 
@@ -402,10 +423,11 @@ and chomp handling. Any fix to block scalar content must be applied to both.
 
 | File | Purpose |
 | ---- | ------- |
-| `__test__/yaml-test-suite.test.ts` | Test runner with 4 assertion types |
+| `__test__/yaml-test-suite.test.ts` | Filtered test runner with 4 assertion types |
+| `__test__/yaml-test-suite-raw.test.ts` | Unfiltered test runner (no skip maps) |
 | `__test__/utils/yaml-test-suite.ts` | Test data loader (flat + numbered subdirs) |
 | `__test__/utils/yaml-test-suite-skip-map.ts` | SKIP, XFAIL, SKIP_ASSERTIONS maps |
 | `__test__/fixtures/yaml-test-suite/` | Git submodule (data-2022-01-17) |
-| `vitest.config.ts` | Compliance as separate Vitest project |
+| `vitest.config.ts` | Compliance + compliance-raw Vitest projects |
 | `.github/workflows/compliance.yml` | Badge generation action |
 | `.gitmodules` | Submodule configuration |

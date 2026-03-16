@@ -458,6 +458,7 @@ function decodeBlockScalar(raw: string): string {
 	}
 
 	let contentIndent = explicitIndent;
+	let foundContent = explicitIndent > 0;
 	if (contentIndent === 0) {
 		let scanAhead = i;
 		while (scanAhead < raw.length) {
@@ -474,11 +475,12 @@ function decodeBlockScalar(raw: string): string {
 				continue;
 			}
 			contentIndent = spaces;
+			foundContent = true;
 			break;
 		}
 	}
 
-	if (contentIndent === 0) return chomp === "keep" ? "\n" : "";
+	if (!foundContent) return chomp === "keep" ? "\n" : "";
 
 	const lines: string[] = [];
 	const trailingNewlines: string[] = [];
@@ -527,14 +529,38 @@ function decodeBlockScalar(raw: string): string {
 	let value: string;
 	if (isFolded) {
 		let result = "";
-		for (const ln of lines) {
+		let prevMoreIndented = false;
+		let hadContent = false;
+		for (let li = 0; li < lines.length; li++) {
+			const ln = lines[li] ?? "";
+			const isMoreIndented = ln.length > 0 && (ln[0] === " " || ln[0] === "\t");
 			if (ln === "") {
+				// Empty line — preserved as newline
 				result += "\n";
-			} else if (result.length === 0) {
-				result = ln;
+				// Don't reset prevMoreIndented — we need to track last content line type
+			} else if (!hadContent) {
+				// First content line
+				result += ln;
+				prevMoreIndented = isMoreIndented;
+				hadContent = true;
 			} else {
 				const lastChar = result[result.length - 1];
-				result += lastChar === "\n" ? ln : ` ${ln}`;
+				if (lastChar === "\n") {
+					// After empty line(s): if transition involves more-indented,
+					// add extra newline for the preserved line break
+					if (isMoreIndented || prevMoreIndented) {
+						result += `\n${ln}`;
+					} else {
+						result += ln;
+					}
+				} else if (isMoreIndented || prevMoreIndented) {
+					// Transition to/from more-indented: preserve newline
+					result += `\n${ln}`;
+				} else {
+					// Normal folding: adjacent base-indent lines fold to space
+					result += ` ${ln}`;
+				}
+				prevMoreIndented = isMoreIndented;
 			}
 		}
 		if (chomp === "keep") {
