@@ -1,8 +1,13 @@
 /**
- * Official yaml-test-suite compliance tests.
+ * Raw (unfiltered) yaml-test-suite compliance tests.
  *
- * Runs the full yaml-test-suite (https://github.com/yaml/yaml-test-suite)
- * against yaml-effect to validate YAML 1.2 spec compliance.
+ * Runs every test case without SKIP, XFAIL, or SKIP_ASSERTIONS filtering.
+ * Use this to see the true state of compliance after code changes — failures
+ * here are expected and informational, not CI blockers.
+ *
+ * Run with:
+ *   pnpm vitest run --project compliance-raw
+ *   pnpm vitest run --project compliance-raw -t "\[229Q\]"
  *
  * @packageDocumentation
  */
@@ -13,7 +18,6 @@ import { describe, expect, it } from "vitest";
 import { parse, parseAllDocuments, stringify } from "../src/index.js";
 import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
-import { SKIP, SKIP_ASSERTIONS, XFAIL } from "./utils/yaml-test-suite-skip-map.js";
 
 // ---------------------------------------------------------------------------
 // Load all test cases (gracefully skip when submodule is absent)
@@ -30,9 +34,6 @@ function parseYaml(input: string): Either.Either<unknown, unknown> {
 	return Effect.runSync(Effect.either(parse(input, { uniqueKeys: false })));
 }
 
-/**
- * Parse a multi-document YAML stream, returning an array of plain JS values.
- */
 function parseYamlMulti(input: string): Either.Either<unknown[], unknown> {
 	return Effect.runSync(
 		Effect.either(
@@ -48,13 +49,6 @@ function parseYamlMulti(input: string): Either.Either<unknown[], unknown> {
 	);
 }
 
-function shouldSkipAssertion(id: string, assertion: string): boolean {
-	return SKIP_ASSERTIONS[id]?.includes(assertion) ?? false;
-}
-
-/**
- * Deep comparison that handles NaN equality.
- */
 function deepEqual(a: unknown, b: unknown): boolean {
 	if (Object.is(a, b)) return true;
 	if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b)) {
@@ -76,41 +70,32 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Test runner
+// Test runner — NO skip maps, every test runs as-is
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
+// Only run when RAW_COMPLIANCE=1 is set — this suite has expected failures
+// and must not run during default test runs or pre-flight hooks.
+// Use: pnpm run test:compliance-raw
+const rawEnabled = process.env.RAW_COMPLIANCE === "1";
+
+describe.skipIf(!suiteAvailable || !rawEnabled)("yaml-test-suite compliance (raw)", () => {
 	for (const tc of allCases) {
-		// Skip entirely if in SKIP map
-		if (SKIP[tc.id]) {
-			it.skip(`[${tc.id}] ${tc.name} (SKIP: ${SKIP[tc.id]})`, () => {});
-			continue;
-		}
-
-		const isXfail = !!XFAIL[tc.id];
-
 		describe(`[${tc.id}] ${tc.name}`, () => {
 			if (tc.isError) {
-				// ----- Error tests: YAML should be rejected -----
-				const testFn = isXfail ? it.fails : it;
-				testFn("should reject invalid YAML", () => {
+				it("should reject invalid YAML", () => {
 					const result = parseYaml(tc.yaml);
 					expect(Either.isLeft(result), `Expected parse error for ${tc.id}`).toBe(true);
 				});
 			} else {
-				// ----- Valid tests -----
-
-				// 4a. Parse success
-				const parseFn = isXfail ? it.fails : it;
-				parseFn("should parse successfully", () => {
+				// Parse success
+				it("should parse successfully", () => {
 					const result = parseYaml(tc.yaml);
 					expect(Either.isRight(result), `Expected parse success for ${tc.id}`).toBe(true);
 				});
 
-				// 4b. JSON match
-				if (tc.json !== undefined && !shouldSkipAssertion(tc.id, "json")) {
-					const jsonFn = isXfail ? it.fails : it;
-					jsonFn("should match expected JSON output", () => {
+				// JSON match
+				if (tc.json !== undefined) {
+					it("should match expected JSON output", () => {
 						if (tc.isMultiDocument) {
 							const result = parseYamlMulti(tc.yaml);
 							if (Either.isLeft(result)) {
@@ -129,10 +114,9 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 					});
 				}
 
-				// 4c. Canonical output match (out.yaml)
-				if (tc.outYaml !== undefined && !shouldSkipAssertion(tc.id, "output")) {
-					const outFn = isXfail ? it.fails : it;
-					outFn("should match canonical output", () => {
+				// Canonical output match (out.yaml)
+				if (tc.outYaml !== undefined) {
+					it("should match canonical output", () => {
 						const result = parseYaml(tc.yaml);
 						if (Either.isLeft(result)) {
 							expect.unreachable(`Parse failed for ${tc.id}`);
@@ -143,33 +127,16 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 					});
 				}
 
-				// 4d. Stringify roundtrip
-				if (!shouldSkipAssertion(tc.id, "roundtrip")) {
-					const rtFn = isXfail ? it.fails : it;
-					rtFn("should survive stringify roundtrip", () => {
-						if (tc.isMultiDocument) {
-							const result = parseYamlMulti(tc.yaml);
-							if (Either.isLeft(result)) {
-								expect.unreachable(`Parse failed for ${tc.id}`);
-								return;
-							}
-							const values = Either.getOrThrow(result);
-							for (const value of values) {
-								const stringified = Effect.runSync(stringify(value));
-								const reparsed = parseYaml(stringified);
-								if (Either.isLeft(reparsed)) {
-									expect.unreachable(`Re-parse failed for ${tc.id}`);
-									return;
-								}
-								expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
-							}
-						} else {
-							const result = parseYaml(tc.yaml);
-							if (Either.isLeft(result)) {
-								expect.unreachable(`Parse failed for ${tc.id}`);
-								return;
-							}
-							const value = Either.getOrThrow(result);
+				// Stringify roundtrip
+				it("should survive stringify roundtrip", () => {
+					if (tc.isMultiDocument) {
+						const result = parseYamlMulti(tc.yaml);
+						if (Either.isLeft(result)) {
+							expect.unreachable(`Parse failed for ${tc.id}`);
+							return;
+						}
+						const values = Either.getOrThrow(result);
+						for (const value of values) {
 							const stringified = Effect.runSync(stringify(value));
 							const reparsed = parseYaml(stringified);
 							if (Either.isLeft(reparsed)) {
@@ -178,8 +145,22 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 							}
 							expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
 						}
-					});
-				}
+					} else {
+						const result = parseYaml(tc.yaml);
+						if (Either.isLeft(result)) {
+							expect.unreachable(`Parse failed for ${tc.id}`);
+							return;
+						}
+						const value = Either.getOrThrow(result);
+						const stringified = Effect.runSync(stringify(value));
+						const reparsed = parseYaml(stringified);
+						if (Either.isLeft(reparsed)) {
+							expect.unreachable(`Re-parse failed for ${tc.id}`);
+							return;
+						}
+						expect(deepEqual(Either.getOrThrow(reparsed), value)).toBe(true);
+					}
+				});
 			}
 		});
 	}

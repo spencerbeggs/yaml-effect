@@ -254,6 +254,15 @@ export function createScanner(text: string): YamlScanner {
 					}
 					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
 				}
+				// If no block structures are active, the tab cannot be serving as
+				// block indentation — treat as separation whitespace (e.g. plain
+				// scalar continuation, YAML 1.2 §6.2).
+				if (blockStarted.size === 0) {
+					while (pos < text.length && isWhitespace(peek())) {
+						advance();
+					}
+					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
+				}
 				// Default: tab as block indentation → error
 				while (pos < text.length && isWhitespace(peek())) {
 					advance();
@@ -638,6 +647,7 @@ export function createScanner(text: string): YamlScanner {
 
 		// Determine content indentation
 		let contentIndent = explicitIndent;
+		let foundContent = explicitIndent > 0;
 		if (contentIndent === 0) {
 			// Auto-detect from first non-empty line
 			let scanAhead = pos;
@@ -659,12 +669,14 @@ export function createScanner(text: string): YamlScanner {
 					continue;
 				}
 				contentIndent = spaces;
+				foundContent = true;
 				break;
 			}
 		}
 
-		if (contentIndent === 0) {
-			// No content lines found — empty block scalar
+		if (!foundContent || (contentIndent === 0 && blockStarted.size > 0)) {
+			// No content lines found, or zero-indent content inside a block structure
+			// (zero-indent content is only valid at document level, not inside mappings/sequences)
 			afterEmptyBlockScalar = true;
 			const value = chomp === "keep" ? "\n" : "";
 			return makeToken("scalar", value, start, sLine, sCol, pos - start);
@@ -748,28 +760,41 @@ export function createScanner(text: string): YamlScanner {
 		// Build the scalar value
 		let value: string;
 		if (isFolded) {
-			// Folded (YAML 1.2 spec section 8.1.1.2): a single line break between
-			// non-empty lines becomes a space; empty lines (blank lines in source)
-			// become actual newlines (paragraph breaks).
+			// Folded (YAML 1.2 §8.1.3): adjacent non-empty lines at base indent
+			// fold to space. "More indented" lines (extra leading whitespace/tabs)
+			// preserve their newlines. Empty lines are always preserved as newlines.
 			let result = "";
+			let prevMoreIndented = false;
+			let hadContent = false;
 			for (let i = 0; i < lines.length; i++) {
 				const ln = lines[i] ?? "";
+				const isMoreIndented = ln.length > 0 && (ln[0] === " " || ln[0] === "\t");
 				if (ln === "") {
-					// Blank line produces a paragraph break
+					// Empty line — preserved as newline
 					result += "\n";
-				} else if (result.length === 0) {
-					// First non-empty line
-					result = ln;
+				} else if (!hadContent) {
+					// First content line
+					result += ln;
+					prevMoreIndented = isMoreIndented;
+					hadContent = true;
 				} else {
 					const lastChar = result[result.length - 1];
 					if (lastChar === "\n") {
-						// Previous was a blank line; don't add space
-						result += ln;
+						// After empty line(s): if transition involves more-indented,
+						// add extra newline for the preserved line break
+						if (isMoreIndented || prevMoreIndented) {
+							result += `\n${ln}`;
+						} else {
+							result += ln;
+						}
+					} else if (isMoreIndented || prevMoreIndented) {
+						// Transition to/from more-indented: preserve newline
+						result += `\n${ln}`;
 					} else {
-						// Fold: single line break becomes a space
-						result += " ";
-						result += ln;
+						// Normal folding: adjacent base-indent lines fold to space
+						result += ` ${ln}`;
 					}
+					prevMoreIndented = isMoreIndented;
 				}
 			}
 			// Apply chomping

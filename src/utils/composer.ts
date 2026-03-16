@@ -135,17 +135,173 @@ function getScalarStyle(node: CstNode): ScalarStyle {
 function getScalarValue(node: CstNode): string {
 	if (node.type === "block-scalar") return decodeBlockScalar(node.source);
 	const style = getScalarStyle(node);
-	if (style === "single-quoted") {
-		const inner = node.source.slice(1, -1);
-		return inner.replace(/''/g, "'");
-	}
+	if (style === "single-quoted") return decodeSingleQuoted(node.source);
 	if (style === "double-quoted") return decodeDoubleQuoted(node.source);
-	return node.source.trim();
+	return decodePlainScalar(node.source);
+}
+
+/**
+ * YAML 1.2 §6.5 flow line folding for plain scalars.
+ * - Bare newline between non-empty lines becomes a space (fold)
+ * - Empty line(s) preserved as newline characters
+ * - Leading whitespace on continuation lines trimmed
+ * - Trailing whitespace before newlines trimmed
+ */
+function decodePlainScalar(raw: string): string {
+	const trimmed = raw.trim();
+	if (!trimmed.includes("\n")) return trimmed;
+	return foldFlowLines(trimmed);
+}
+
+/**
+ * Decode single-quoted scalar with flow folding.
+ * Only escape: '' → '
+ * Bare newlines follow flow folding rules.
+ */
+function decodeSingleQuoted(raw: string): string {
+	const inner = raw.slice(1, -1);
+	const unescaped = inner.replace(/''/g, "'");
+	if (!unescaped.includes("\n")) return unescaped;
+	return foldFlowLines(unescaped);
+}
+
+/**
+ * Apply YAML 1.2 §6.5 flow line folding to a string.
+ * - Split into lines, trim trailing whitespace from each
+ * - Newline between non-empty lines becomes a space
+ * - Empty line preserved as newline in output
+ * - Leading whitespace (indentation) on continuation lines trimmed
+ */
+function foldFlowLines(text: string): string {
+	const lines = text.split("\n");
+	let result = "";
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i] ?? "";
+		if (i === 0) {
+			// First line: trim trailing whitespace only
+			result += line.replace(/[ \t]+$/, "");
+			continue;
+		}
+		// Continuation line: trim both leading and trailing whitespace
+		const content = line.trim();
+		if (content === "") {
+			// Empty line → newline
+			result += "\n";
+		} else {
+			// Non-empty continuation line: fold (previous non-empty → space → this)
+			// But if the last char of result is already \n (from empty lines), don't add space
+			if (result.length > 0 && result[result.length - 1] !== "\n") {
+				result += " ";
+			}
+			result += content;
+		}
+	}
+	return result;
+}
+
+/**
+ * Collect a multi-line plain scalar from consecutive CST children.
+ * Starting from a plain flow-scalar at `startIdx`, look ahead through
+ * newlines and whitespace for more plain flow-scalars that continue the
+ * same value. Returns the folded scalar text and the index after the last
+ * consumed child.
+ *
+ * A continuation scalar must:
+ * - Be a plain flow-scalar (not quoted)
+ * - NOT be followed by a value-sep (`:`) — that makes it a mapping key
+ * - Be separated from the previous scalar only by newlines/whitespace
+ */
+function collectMultilinePlainScalar(
+	children: readonly CstNode[],
+	startIdx: number,
+): { value: string; nextIdx: number } {
+	const first = children[startIdx];
+	if (!first || first.type !== "flow-scalar") {
+		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1 };
+	}
+
+	// Only merge plain scalars (not quoted)
+	const style = getScalarStyle(first);
+	if (style !== "plain") {
+		return { value: getScalarValue(first), nextIdx: startIdx + 1 };
+	}
+
+	const parts: string[] = [first.source.trim()];
+	let emptyLines = 0;
+	let idx = startIdx + 1;
+
+	while (idx < children.length) {
+		const child = children[idx];
+		if (!child) break;
+
+		if (child.type === "newline") {
+			emptyLines++;
+			idx++;
+			continue;
+		}
+		if (child.type === "whitespace") {
+			// Block structure indicators terminate plain scalar continuation
+			if (child.source === ":" || child.source === "?" || child.source === "-") break;
+			idx++;
+			continue;
+		}
+		if (child.type === "comment") {
+			// Comments terminate plain scalar continuation
+			break;
+		}
+		if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+			// Check if this scalar is followed by `:` — if so, it's a key, stop
+			if (hasValueSepAfterInList(children, idx + 1)) break;
+
+			// Merge: empty lines between content become \n, otherwise fold to space
+			if (emptyLines > 1) {
+				// emptyLines counts all newlines including the one ending the previous line
+				// Subtract 1 for the line-ending newline; remaining are empty lines
+				for (let e = 0; e < emptyLines - 1; e++) {
+					parts.push("");
+				}
+			}
+			parts.push(child.source.trim());
+			emptyLines = 0;
+			idx++;
+			continue;
+		}
+		// Any other node type — stop merging
+		break;
+	}
+
+	if (parts.length === 1) {
+		return { value: parts[0] ?? "", nextIdx: idx };
+	}
+
+	// Apply flow folding to the collected parts
+	return { value: foldFlowLines(parts.join("\n")), nextIdx: idx };
+}
+
+/**
+ * Check if a value separator (`:`) follows in a CST children list,
+ * skipping whitespace and newlines.
+ */
+function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number): boolean {
+	for (let j = startIdx; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (c.source === ":") return true;
+			continue;
+		}
+		return false;
+	}
+	return false;
 }
 
 function decodeDoubleQuoted(raw: string): string {
 	const inner = raw.slice(1, -1);
 	let result = "";
+	// Track position in result beyond which only raw whitespace was added.
+	// Escape-produced content always advances this, so it's never trimmed.
+	let significantEnd = 0;
 	let i = 0;
 	while (i < inner.length) {
 		const ch = inner[i];
@@ -236,15 +392,33 @@ function decodeDoubleQuoted(raw: string): string {
 				default:
 					result += esc === undefined ? "\\" : esc;
 			}
+			// Escape-produced content is always significant (never trimmed)
+			significantEnd = result.length;
 			i++;
-		} else if (ch === "\n") {
-			result += " ";
-			i++;
-		} else if (ch === "\r" && inner[i + 1] === "\n") {
-			result += " ";
-			i += 2;
+		} else if (ch === "\n" || (ch === "\r" && inner[i + 1] === "\n")) {
+			// Bare newline: apply flow folding (YAML 1.2 §6.5)
+			// Trim only raw trailing whitespace (not escape-produced content)
+			result = result.slice(0, significantEnd);
+			i += ch === "\r" ? 2 : 1;
+			// Skip leading whitespace on next line (indentation)
+			while (i < inner.length && (inner[i] === " " || inner[i] === "\t")) i++;
+			// Check for empty lines (consecutive newlines → preserved as \n)
+			if (i < inner.length && (inner[i] === "\n" || inner[i] === "\r")) {
+				// Consume all consecutive empty lines
+				while (i < inner.length && (inner[i] === "\n" || inner[i] === "\r")) {
+					result += "\n";
+					i += inner[i] === "\r" && inner[i + 1] === "\n" ? 2 : 1;
+					// Skip leading whitespace on next line
+					while (i < inner.length && (inner[i] === " " || inner[i] === "\t")) i++;
+				}
+			} else {
+				// Non-empty continuation: fold to space
+				result += " ";
+			}
+			significantEnd = result.length;
 		} else {
 			result += ch;
+			if (ch !== " " && ch !== "\t") significantEnd = result.length;
 			i++;
 		}
 	}
@@ -284,6 +458,7 @@ function decodeBlockScalar(raw: string): string {
 	}
 
 	let contentIndent = explicitIndent;
+	let foundContent = explicitIndent > 0;
 	if (contentIndent === 0) {
 		let scanAhead = i;
 		while (scanAhead < raw.length) {
@@ -300,11 +475,12 @@ function decodeBlockScalar(raw: string): string {
 				continue;
 			}
 			contentIndent = spaces;
+			foundContent = true;
 			break;
 		}
 	}
 
-	if (contentIndent === 0) return chomp === "keep" ? "\n" : "";
+	if (!foundContent) return chomp === "keep" ? "\n" : "";
 
 	const lines: string[] = [];
 	const trailingNewlines: string[] = [];
@@ -353,14 +529,38 @@ function decodeBlockScalar(raw: string): string {
 	let value: string;
 	if (isFolded) {
 		let result = "";
-		for (const ln of lines) {
+		let prevMoreIndented = false;
+		let hadContent = false;
+		for (let li = 0; li < lines.length; li++) {
+			const ln = lines[li] ?? "";
+			const isMoreIndented = ln.length > 0 && (ln[0] === " " || ln[0] === "\t");
 			if (ln === "") {
+				// Empty line — preserved as newline
 				result += "\n";
-			} else if (result.length === 0) {
-				result = ln;
+				// Don't reset prevMoreIndented — we need to track last content line type
+			} else if (!hadContent) {
+				// First content line
+				result += ln;
+				prevMoreIndented = isMoreIndented;
+				hadContent = true;
 			} else {
 				const lastChar = result[result.length - 1];
-				result += lastChar === "\n" ? ln : ` ${ln}`;
+				if (lastChar === "\n") {
+					// After empty line(s): if transition involves more-indented,
+					// add extra newline for the preserved line break
+					if (isMoreIndented || prevMoreIndented) {
+						result += `\n${ln}`;
+					} else {
+						result += ln;
+					}
+				} else if (isMoreIndented || prevMoreIndented) {
+					// Transition to/from more-indented: preserve newline
+					result += `\n${ln}`;
+				} else {
+					// Normal folding: adjacent base-indent lines fold to space
+					result += ` ${ln}`;
+				}
+				prevMoreIndented = isMoreIndented;
 			}
 		}
 		if (chomp === "keep") {
@@ -621,7 +821,7 @@ function composeBlockMap(
 	}
 
 	// Phase 2: pair up keys and values
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
@@ -651,6 +851,7 @@ interface SemanticItem {
 	kind: "key" | "value-sep" | "node" | "comment";
 	node?: YamlNode;
 	comment?: string;
+	offset?: number;
 }
 
 /** Find the next non-trivia CST child in a list, returning the node and its index. */
@@ -705,7 +906,7 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 					pendingMeta = {};
 					items.push({ kind: "node", node: scalar });
 				}
-				items.push({ kind: "value-sep" });
+				items.push({ kind: "value-sep", offset: child.offset });
 			}
 			// Skip other whitespace (spaces, "-", "?", "---", "...")
 			continue;
@@ -736,6 +937,28 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				pendingMeta = {};
 				items.push({ kind: "node", node: map });
 				i = nextContent.idx; // skip to past the block-map
+				continue;
+			}
+			// For plain scalars not followed by ":", try multi-line merging
+			if (
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				!hasValueSepAfterInList(children, i + 1)
+			) {
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const scalar = new YamlScalar({
+					value: resolved,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: child.length,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+				pendingMeta = {};
+				items.push({ kind: "node", node: scalar });
+				i = nextIdx - 1; // -1 because for-loop increments
 				continue;
 			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
@@ -800,7 +1023,7 @@ function hasMeta(m: NodeMeta): boolean {
  * Pattern: node, value-sep (no node) produces a key:null pair.
  * Pattern: value-sep, node produces a null:value pair.
  */
-function buildPairs(items: SemanticItem[], pairs: YamlPair[]): void {
+function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): void {
 	let i = 0;
 	while (i < items.length) {
 		const item = items[i];
@@ -825,8 +1048,14 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[]): void {
 		}
 		if (item.kind === "value-sep") {
 			// value-sep without preceding key: implicit null key
+			const valueSepOffset = item.offset ?? 0;
 			i++;
-			const valueNode = consumeValueNode(items, i);
+			// Peek ahead: if the next non-comment node is followed by a
+			// value-sep AND is on a different line, it's a KEY for the next
+			// pair, not our value. This prevents greedily consuming
+			// `"quoted key":` as the value of a preceding null-key entry
+			// (S3PD) while preserving rejection of `a: b: c: d` (ZCZ6).
+			const valueNode = consumeValueNodeForNullKey(items, i, text, valueSepOffset);
 			if (valueNode) {
 				const nullKey = new YamlScalar({ value: null, style: "plain" as ScalarStyle, offset: 0, length: 0 });
 				pairs.push(new YamlPair({ key: nullKey, value: valueNode.node ?? null }));
@@ -885,6 +1114,47 @@ function consumeValueNode(items: SemanticItem[], startIdx: number): { node: Yaml
 			continue;
 		}
 		if (item.kind === "node") {
+			return { node: item.node ?? null, nextIdx: i + 1 };
+		}
+		break;
+	}
+	return i > startIdx ? { node: null, nextIdx: i } : null;
+}
+
+/**
+ * Like consumeValueNode but for implicit null-key entries (`: value`).
+ * If the next non-comment node is immediately followed by a value-sep
+ * AND is on a different line from the null key's `:`, it's actually a
+ * KEY for the next pair, not our value — return null so the null key
+ * gets a null value. When on the same line (e.g. `a: b: c: d`), consume
+ * normally to preserve the original pairing (which may produce duplicate
+ * keys that get rejected).
+ */
+function consumeValueNodeForNullKey(
+	items: SemanticItem[],
+	startIdx: number,
+	text: string,
+	valueSepOffset: number,
+): { node: YamlNode | null; nextIdx: number } | null {
+	let i = startIdx;
+	while (i < items.length) {
+		const item = items[i];
+		if (!item) break;
+		if (item.kind === "comment") {
+			i++;
+			continue;
+		}
+		if (item.kind === "node") {
+			if (i + 1 < items.length && items[i + 1]?.kind === "value-sep") {
+				// Check if the candidate node is on a different line from the
+				// null key's value-sep. Only refuse to consume cross-line nodes.
+				const nodeOffset = item.node && "offset" in item.node ? (item.node as YamlScalar).offset : 0;
+				const hasNewline = text.slice(valueSepOffset, nodeOffset).includes("\n");
+				if (hasNewline) {
+					// Cross-line: this node is a key for the next pair, not our value.
+					break;
+				}
+			}
 			return { node: item.node ?? null, nextIdx: i + 1 };
 		}
 		break;
@@ -1035,7 +1305,7 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	);
 
 	const items = flattenFlowChildren(content, state);
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
@@ -1271,7 +1541,7 @@ function composeFlatBlockMap(
 	items.unshift({ kind: "key", node: externalFirstKey });
 
 	const pairs: YamlPair[] = [];
-	buildPairs(items, pairs);
+	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
 
@@ -1381,7 +1651,23 @@ function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
 				contents = composeFlatBlockMap(children, i + 1, cst, state, key);
 				break; // consumed all remaining children
 			}
-			// Standalone scalar
+			// Standalone scalar — try multi-line plain scalar merging
+			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const resolved = resolveScalar(value, "plain", meta.tag);
+				contents = new YamlScalar({
+					value: resolved,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: child.length,
+					...(meta.tag !== undefined ? { tag: meta.tag } : {}),
+					...(meta.anchor !== undefined ? { anchor: meta.anchor } : {}),
+				});
+				if (meta.anchor) registerAnchor(contents, meta.anchor, state, child.offset);
+				clearMeta(meta);
+				i = nextIdx;
+				continue;
+			}
 			contents = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;

@@ -274,6 +274,23 @@ function isBlockScalarToken(state: ParserState): boolean {
 }
 
 /**
+ * Check if the last non-trivia child in a CST node list is a value separator
+ * (`:`) with no subsequent value content. This indicates the next block
+ * structure should be consumed as the mapping value, not ejected as a sibling.
+ */
+function lastNonTriviaIsValueSep(children: readonly CstNode[]): boolean {
+	for (let i = children.length - 1; i >= 0; i--) {
+		const c = children[i];
+		if (!c) continue;
+		if (c.type === "whitespace" && c.source === ":") return true;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") continue;
+		return false;
+	}
+	return false;
+}
+
+/**
  * Parse a block mapping at the given indentation level.
  */
 function parseBlockMapping(state: ParserState, indent: number): CstNode {
@@ -292,8 +309,12 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		// Stop conditions
 		if (isDocumentBoundary(token)) break;
 
-		// If we hit a block-seq-start or block-map-start at same or lower indent, stop
-		if (token.kind === "block-seq-start" && token.column <= indent && children.length > 0) break;
+		// If we hit a block-seq-start at same or lower indent, stop — UNLESS
+		// the last non-trivia child was a ":" value separator with no value,
+		// meaning this sequence is the value of the previous mapping entry.
+		if (token.kind === "block-seq-start" && token.column <= indent && children.length > 0) {
+			if (!lastNonTriviaIsValueSep(children)) break;
+		}
 
 		// Trivia
 		if (isTrivia(token)) {

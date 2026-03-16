@@ -148,6 +148,29 @@ Implements spec chapter 10.3.2:
   `number`
 - Everything else -> `string`
 
+### Scalar Flow Folding
+
+The composer implements YAML 1.2 §6.5 flow line folding for all scalar
+styles:
+
+- **Plain scalars** (`decodePlainScalar`): Trims outer whitespace, then
+  applies `foldFlowLines`. Multi-line plain scalars span multiple CST
+  `flow-scalar` nodes (one per source line); `collectMultilinePlainScalar`
+  merges consecutive plain scalars, stopping at block structure indicators
+  (`?`, `:`, `-`), comments, and scalars followed by value-sep (mapping
+  keys).
+- **Single-quoted scalars** (`decodeSingleQuoted`): Unescapes `''` to
+  `'`, then applies `foldFlowLines`.
+- **Double-quoted scalars** (`decodeDoubleQuoted`): Processes escape
+  sequences first, then applies folding inline. Uses `significantEnd`
+  tracking to distinguish escape-produced content (preserved) from raw
+  trailing whitespace (trimmed at fold points). Consecutive empty lines
+  are consumed in a single pass to avoid double-processing.
+
+`foldFlowLines` implements the core algorithm: bare newlines between
+non-empty lines become spaces, empty lines are preserved as newline
+characters, and leading whitespace on continuation lines is trimmed.
+
 ### CST-to-AST Mapping
 
 The composer walks CST nodes and produces:
