@@ -1236,6 +1236,11 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): voi
 		if (item.kind === "node" || item.kind === "key") {
 			const keyNode = item.node;
 			i++;
+			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
+			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
+			while (i < items.length && items[i]?.kind === "comment") {
+				i++;
+			}
 			// Look for value-sep
 			if (i < items.length && items[i]?.kind === "value-sep") {
 				i++; // skip value-sep
@@ -1419,6 +1424,44 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 				items.push(map);
 				ci = nextSig;
 				continue;
+			}
+			// Merge consecutive plain scalars in same entry (multi-line plain scalar)
+			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
+				const parts: string[] = [child.source.trim()];
+				let mergeEnd = ci + 1;
+				while (mergeEnd < children.length) {
+					const mc = children[mergeEnd];
+					if (!mc) break;
+					if (mc.type === "newline" || (mc.type === "whitespace" && mc.source.trim() === "")) {
+						mergeEnd++;
+						continue;
+					}
+					if (mc.type === "whitespace" && mc.source.trim() === "-") break;
+					if (mc.type === "flow-scalar" && getScalarStyle(mc) === "plain") {
+						parts.push(mc.source.trim());
+						mergeEnd++;
+						continue;
+					}
+					break;
+				}
+				if (parts.length > 1) {
+					const merged = foldFlowLines(parts.join("\n"));
+					const resolved = resolveScalar(merged, "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value: resolved,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: child.length,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					sawEntry = false;
+					items.push(scalar);
+					ci = mergeEnd - 1;
+					continue;
+				}
 			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
@@ -2066,8 +2109,15 @@ export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNo
 	if (node instanceof YamlMap) {
 		const result: Record<string, unknown> = {};
 		for (const pair of node.items) {
-			const keyValue = getNodeValue(pair.key, anchors);
-			const key = keyValue != null ? String(keyValue) : "";
+			let key: string;
+			if (pair.key instanceof YamlScalar) {
+				key = String(pair.key.value ?? "");
+			} else if (pair.key instanceof YamlAlias) {
+				const resolved = anchors?.get(pair.key.name);
+				key = resolved !== undefined ? String(getNodeValue(resolved, anchors) ?? "") : "";
+			} else {
+				key = "";
+			}
 			result[key] = getNodeValue(pair.value, anchors);
 		}
 		return result;
