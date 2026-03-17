@@ -1068,6 +1068,7 @@ export function createScanner(text: string): YamlScanner {
 				isWhitespace(next) ||
 				next === "-" ||
 				next === "+" ||
+				// Includes 0 so |0 enters scanBlockScalar where the header parser rejects it
 				(next >= "0" && next <= "9") ||
 				next === "#"
 			) {
