@@ -172,6 +172,22 @@ export function createScanner(text: string): YamlScanner {
 	}
 
 	/**
+	 * Check if the current position starts a document marker (--- or ...)
+	 * followed by whitespace, newline, or EOF. Used inside quoted scalars
+	 * to detect unterminated strings broken by document boundaries.
+	 */
+	function isDocumentMarkerAhead(): boolean {
+		const c0 = peek();
+		const c1 = peek(1);
+		const c2 = peek(2);
+		const c3 = peek(3);
+		if ((c0 === "-" && c1 === "-" && c2 === "-") || (c0 === "." && c1 === "." && c2 === ".")) {
+			return c3 === "" || c3 === " " || c3 === "\t" || c3 === "\n" || c3 === "\r";
+		}
+		return false;
+	}
+
+	/**
 	 * Returns true if `ch` cannot appear in a plain scalar at the current position.
 	 */
 	function isPlainScalarBreak(ch: string): boolean {
@@ -409,13 +425,15 @@ export function createScanner(text: string): YamlScanner {
 					advance();
 					return makeToken("scalar", value, start, sLine, sCol, pos - start);
 				}
-			} else if (ch === "\n") {
+			} else if (ch === "\n" || (ch === "\r" && peek(1) === "\n")) {
 				// multi-line: newline becomes space (fold)
 				value += " ";
-				advance();
-			} else if (ch === "\r" && peek(1) === "\n") {
-				value += " ";
-				advance(2);
+				if (ch === "\r") advance(2);
+				else advance();
+				// Document markers (--- or ...) at column 0 terminate the scalar
+				if (col === 0 && isDocumentMarkerAhead()) {
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else {
 				value += ch;
 				advance();
@@ -568,19 +586,14 @@ export function createScanner(text: string): YamlScanner {
 						// Invalid escape sequence — emit error token
 						return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 				}
-			} else if (ch === "\n") {
+			} else if (ch === "\n" || (ch === "\r" && peek(1) === "\n")) {
 				value += " ";
-				advance();
-				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
-				// when the scalar is nested (sCol > 0), since the tab would be acting
-				// as indentation. At column 0, tabs are just leading whitespace.
-				if (sCol > 0 && peek() === "\t") {
-					advance(); // consume the tab so it's included in the error span
+				if (ch === "\r") advance(2);
+				else advance();
+				// Document markers (--- or ...) at column 0 terminate the scalar
+				if (col === 0 && isDocumentMarkerAhead()) {
 					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 				}
-			} else if (ch === "\r" && peek(1) === "\n") {
-				value += " ";
-				advance(2);
 				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
 				// when the scalar is nested (sCol > 0), since the tab would be acting
 				// as indentation. At column 0, tabs are just leading whitespace.
@@ -628,13 +641,27 @@ export function createScanner(text: string): YamlScanner {
 			}
 		}
 
-		// Skip any trailing whitespace or comment on header line
+		// After indicator + modifiers, only whitespace, a comment (preceded by
+		// whitespace), or newline/EOF is allowed on the header line.
+		// Any other content (e.g., "first line" in "> first line") is invalid.
+		let hadHeaderWhitespace = false;
 		while (pos < text.length && isWhitespace(peek())) {
+			hadHeaderWhitespace = true;
 			advance();
 		}
-		if (pos < text.length && peek() === "#") {
-			while (pos < text.length && !isNewline(peek())) {
-				advance();
+		if (pos < text.length && !isNewline(peek()) && peek() !== "") {
+			if (peek() === "#" && hadHeaderWhitespace) {
+				// Comment on header line preceded by whitespace — valid
+				while (pos < text.length && !isNewline(peek())) {
+					advance();
+				}
+			} else {
+				// Invalid content after block scalar indicator:
+				// either # without preceding whitespace, or arbitrary text
+				while (pos < text.length && !isNewline(peek())) {
+					advance();
+				}
+				return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 			}
 		}
 
@@ -993,10 +1020,26 @@ export function createScanner(text: string): YamlScanner {
 		// Clear the empty block scalar flag once we reach non-whitespace content.
 		afterEmptyBlockScalar = false;
 
-		// Comment (must be at start of line or preceded by whitespace — but here
-		// we're already after whitespace has been consumed as a separate token)
+		// Comment: YAML 1.2 §6.6 requires # to be preceded by whitespace
+		// (or be at the start of a line) to be a valid comment indicator.
 		if (ch === "#") {
-			return scanComment();
+			if (pos === 0 || col === 0) {
+				return scanComment();
+			}
+			const prev = text[pos - 1];
+			if (prev === " " || prev === "\t" || prev === "\n" || prev === "\r") {
+				return scanComment();
+			}
+			// # without preceding whitespace after a quoted scalar is invalid
+			// (e.g., "value"# comment). In other contexts, # is valid scalar content.
+			if (prevWasQuoted) {
+				const start = pos;
+				const sLine = line;
+				const sCol = col;
+				advance();
+				return makeToken("error", "#", start, sLine, sCol);
+			}
+			// Falls through to plain scalar scanner
 		}
 
 		// Document markers (only at column 0)
@@ -1009,15 +1052,15 @@ export function createScanner(text: string): YamlScanner {
 			if (marker) return marker;
 		}
 
-		// Directive
-		if (ch === "%" && col === 0) {
+		// Directive (only at column 0 outside flow context)
+		if (ch === "%" && col === 0 && flowDepth === 0) {
 			return scanDirective();
 		}
 
 		// Block scalar indicators
 		if ((ch === "|" || ch === ">") && flowDepth === 0) {
 			// Check if this is truly a block scalar indicator:
-			// must be followed by newline, whitespace, chomping/indent, or EOF
+			// must be followed by newline, whitespace, chomping/indent, # or EOF
 			const next = peek(1);
 			if (
 				next === "" ||
@@ -1025,7 +1068,8 @@ export function createScanner(text: string): YamlScanner {
 				isWhitespace(next) ||
 				next === "-" ||
 				next === "+" ||
-				(next >= "1" && next <= "9") ||
+				// Includes 0 so |0 enters scanBlockScalar where the header parser rejects it
+				(next >= "0" && next <= "9") ||
 				next === "#"
 			) {
 				return scanBlockScalar();

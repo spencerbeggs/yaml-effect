@@ -1115,3 +1115,181 @@ describe("Composer error propagation", () => {
 		expect(Either.isLeft(result)).toBe(true);
 	});
 });
+
+// ===========================================================================
+// Issue #18: Enforce YAML directive rules
+// ===========================================================================
+
+describe("Issue #18: YAML directive validation", () => {
+	describe("duplicate %YAML directive", () => {
+		it("rejects two %YAML directives before a single document (SF5V)", () => {
+			const yaml = "%YAML 1.2\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("directive without following document", () => {
+		it("rejects %YAML directive with no following document (9MMA)", () => {
+			const yaml = "%YAML 1.2\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML directive followed by ... but no --- (B63P)", () => {
+			const yaml = "%YAML 1.2\n...\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("directive after content without document-end marker", () => {
+		it("rejects directive after content without ... (9HCY)", () => {
+			const yaml = '!foo "bar"\n%TAG ! tag:example.com,2000:app/\n---\n!foo "bar"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML mid-stream without ... (EB22)", () => {
+			const yaml = "---\nscalar1 # comment\n%YAML 1.2\n---\nscalar2\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML after content without ... (RHX7)", () => {
+			const yaml = "---\nkey: value\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("%YAML parameter validation", () => {
+		it("rejects %YAML with extra words (H7TQ)", () => {
+			const yaml = "%YAML 1.2 foo\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML with comment lacking whitespace (MUS6/00)", () => {
+			const yaml = "%YAML 1.1#...\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("duplicate %YAML across documents without ...", () => {
+		it("rejects second %YAML without document-end (MUS6/01)", () => {
+			const yaml = "%YAML 1.2\n---\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+});
+
+// ===========================================================================
+// Issue #20: Enforce comment whitespace requirement
+// ===========================================================================
+
+describe("Issue #20: Comment whitespace validation", () => {
+	describe("comment # must be preceded by whitespace", () => {
+		it("rejects # immediately after double-quoted scalar (SU5Z)", () => {
+			const yaml = 'key: "value"# invalid comment\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("block scalar header validation", () => {
+		it("rejects # without whitespace after block scalar indicator (X4QW)", () => {
+			const yaml = "block: ># comment\n  scalar\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects arbitrary text after block scalar indicator (S4GJ)", () => {
+			const yaml = "---\nfolded: > first line\n  second line\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("comment terminates plain scalar", () => {
+		// BS4K, 8XDJ, BF9H, GDY7: These require structural validation to detect
+		// extra content after comment-terminated plain scalars. They overlap with
+		// Issue #15 and will be addressed there.
+		it.todo("rejects plain scalar continuation after comment (BS4K)");
+		it.todo("rejects continuation after full-line comment (8XDJ)");
+		it.todo("rejects continuation after mid-scalar comment (BF9H)");
+		it.todo("rejects comment that looks like a mapping key (GDY7)");
+	});
+});
+
+describe("Issue #22: Block scalar syntax and document markers in quoted strings", () => {
+	describe("block scalar indent digit validation", () => {
+		it("rejects explicit indent 0 in literal block scalar (2G84/00)", () => {
+			const yaml = "--- |0\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it.todo("rejects block scalar with wrong indented line after spaces only (5LLU)");
+	});
+
+	describe("document markers inside quoted strings", () => {
+		it("rejects --- inside double-quoted string (5TRB)", () => {
+			const yaml = '---\n"\n---\n"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects ... inside single-quoted string (RXY3)", () => {
+			const yaml = "---\n'\n...\n'\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects ... with trailing content inside double-quoted string (9MQT/01)", () => {
+			const yaml = '--- "a\n... x\nb"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+});
+
+describe("Issue #19: Reject implicit mapping keys that span multiple lines", () => {
+	describe("multiline quoted implicit keys", () => {
+		it("rejects multiline double-quoted implicit key (7LBH)", () => {
+			const yaml = '"a\\nb": 1\n"c\n d": 1\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects multiline single-quoted implicit key (D49Q)", () => {
+			const yaml = "'a\\nb': 1\n'c\n d': 1\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects multiline unindented double-quoted block key (JKF3)", () => {
+			const yaml = '- - "bar\nbar": x\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("multiline plain implicit keys", () => {
+		it.todo("rejects multiline plain scalar implicit key (G7JE) — requires parser-level multiline key detection");
+	});
+
+	describe("implicit key followed by newline in flow context", () => {
+		it("rejects plain key and : on different lines in flow (DK4H)", () => {
+			const yaml = "---\n[ key\n  : value ]\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it.todo(
+			"rejects quoted key and :value on different lines in flow (ZXT5) — requires lexer changes that cause regressions",
+		);
+	});
+});

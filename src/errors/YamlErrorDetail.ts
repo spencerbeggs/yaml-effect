@@ -64,6 +64,7 @@ export const YamlComposerErrorCode = Schema.Literal(
 	"UnresolvedTag",
 	"InvalidTagValue",
 	"AliasCountExceeded",
+	"InvalidDirective",
 );
 /**
  * The union of all YAML composer error code string literals.
