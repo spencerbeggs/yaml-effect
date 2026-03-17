@@ -1309,11 +1309,6 @@ describe("Issue #15: Reject trailing tokens after complete block values", () => 
 		it.todo("rejects mapping starting at --- line (9KBC) — needs different validation approach");
 	});
 
-	describe("Group 2: Comment without preceding space", () => {
-		it.todo("rejects # without space after flow sequence end (9JBA) — moved to Group 4");
-		it.todo("rejects # without space after comma in flow (CVW2) — moved to Group 4");
-	});
-
 	describe("Group 4: Trailing content after flow collection", () => {
 		it("rejects sequence entry on same line after flow map (P2EQ)", () => {
 			const yaml = "---\n- { y: z }- invalid\n";
