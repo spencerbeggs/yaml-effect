@@ -956,6 +956,7 @@ function composeBlockMap(
 	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
+	checkMultilineImplicitKeys(pairs, state);
 
 	const offset = externalFirstKey
 		? "offset" in externalFirstKey
@@ -1356,6 +1357,72 @@ function checkDuplicateKeys(pairs: YamlPair[], state: ComposerState): void {
 	}
 }
 
+/**
+ * Validate that implicit mapping keys do not span multiple lines.
+ * YAML 1.2 §7.4.2 requires implicit keys to fit on a single line.
+ */
+function checkMultilineImplicitKeys(
+	pairs: readonly YamlPair[],
+	state: ComposerState,
+	items?: readonly SemanticItem[],
+): void {
+	// Check quoted scalar keys for newlines — quoted scalars (single/double)
+	// have CST spans that include the newline when they span multiple lines.
+	// Only check quoted styles; plain scalars in block context have single-line
+	// CST spans and explicit keys (?) are allowed to be multiline.
+	for (const pair of pairs) {
+		const key = pair.key;
+		if (key._tag !== "YamlScalar") continue;
+		if (key.length === 0) continue; // synthetic null key
+		const s = key.style;
+		if (s !== "single-quoted" && s !== "double-quoted") continue;
+		const keySource = state.text.slice(key.offset, key.offset + key.length);
+		if (keySource.includes("\n") || keySource.includes("\r")) {
+			const lc = lineCol(state.text, key.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: "Implicit mapping key must not span multiple lines",
+					offset: key.offset,
+					length: key.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+	}
+
+	// In flow context, also check if key and value-sep (:) are on different lines
+	if (!items) return;
+	for (let i = 0; i < items.length; i++) {
+		const item = items[i];
+		if (!item) continue;
+		if (item.kind !== "node" && item.kind !== "key") continue;
+		const node = item.node;
+		if (!node || node._tag !== "YamlScalar" || node.length === 0) continue;
+		// Look ahead for value-sep
+		let j = i + 1;
+		while (j < items.length && items[j]?.kind === "comment") j++;
+		const next = items[j];
+		if (!next || next.kind !== "value-sep" || next.offset === undefined) continue;
+		const keyEndLine = lineCol(state.text, node.offset + node.length - 1).line;
+		const sepLine = lineCol(state.text, next.offset).line;
+		if (keyEndLine !== sepLine) {
+			const lc = lineCol(state.text, node.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: "Implicit mapping key and value indicator must be on the same line",
+					offset: node.offset,
+					length: node.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Compose block seq
 // ---------------------------------------------------------------------------
@@ -1603,7 +1670,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					pendingMeta = {};
 					items.push({ kind: "node", node: scalar });
 				}
-				items.push({ kind: "value-sep" });
+				items.push({ kind: "value-sep", offset: child.offset });
 			}
 			continue;
 		}
@@ -1753,6 +1820,12 @@ function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 			const semItems = flattenFlowChildren(content, state);
 			const pairs: YamlPair[] = [];
 			buildPairs(semItems, pairs, state.text);
+			// Only check multiline keys for implicit mappings (no `?` marker).
+			// Explicit keys (with `?`) are allowed to span multiple lines.
+			const hasExplicitKey = segment.some((c) => c.type === "whitespace" && c.source === "?");
+			if (!hasExplicitKey) {
+				checkMultilineImplicitKeys(pairs, state, semItems);
+			}
 			const firstPair = pairs[0];
 			if (firstPair) {
 				const map = new YamlMap({
@@ -1827,6 +1900,7 @@ function composeFlatBlockMap(
 	buildPairs(items, pairs, state.text);
 
 	if (state.options.uniqueKeys) checkDuplicateKeys(pairs, state);
+	checkMultilineImplicitKeys(pairs, state);
 
 	const offset = "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : parentCst.offset;
 	const end = parentCst.offset + parentCst.length;

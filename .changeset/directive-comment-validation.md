@@ -4,4 +4,4 @@
 
 ## Bug Fixes
 
-Enforce YAML 1.2 directive rules and comment whitespace validation. Adds composer-level validation for directive placement (duplicate %YAML, missing document-start marker, directive after content without document-end marker) and lexer-level validation for comment whitespace requirements (# after quoted scalars, invalid text after block scalar indicators). Resolves 13 compliance test failures.
+Enforce YAML 1.2 directive rules, comment whitespace validation, block scalar syntax, document markers in quoted strings, and multiline implicit key rejection. Adds composer-level validation for directive placement, lexer-level validation for comment whitespace requirements, document marker detection inside quoted scalars, block scalar indent-0 rejection, and multiline implicit key detection for quoted scalars and flow context key-to-colon line alignment. Resolves 21 compliance test failures.

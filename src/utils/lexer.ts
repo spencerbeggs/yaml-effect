@@ -172,6 +172,22 @@ export function createScanner(text: string): YamlScanner {
 	}
 
 	/**
+	 * Check if the current position starts a document marker (--- or ...)
+	 * followed by whitespace, newline, or EOF. Used inside quoted scalars
+	 * to detect unterminated strings broken by document boundaries.
+	 */
+	function isDocumentMarkerAhead(): boolean {
+		const c0 = peek();
+		const c1 = peek(1);
+		const c2 = peek(2);
+		const c3 = peek(3);
+		if ((c0 === "-" && c1 === "-" && c2 === "-") || (c0 === "." && c1 === "." && c2 === ".")) {
+			return c3 === "" || c3 === " " || c3 === "\t" || c3 === "\n" || c3 === "\r";
+		}
+		return false;
+	}
+
+	/**
 	 * Returns true if `ch` cannot appear in a plain scalar at the current position.
 	 */
 	function isPlainScalarBreak(ch: string): boolean {
@@ -409,13 +425,15 @@ export function createScanner(text: string): YamlScanner {
 					advance();
 					return makeToken("scalar", value, start, sLine, sCol, pos - start);
 				}
-			} else if (ch === "\n") {
+			} else if (ch === "\n" || (ch === "\r" && peek(1) === "\n")) {
 				// multi-line: newline becomes space (fold)
 				value += " ";
-				advance();
-			} else if (ch === "\r" && peek(1) === "\n") {
-				value += " ";
-				advance(2);
+				if (ch === "\r") advance(2);
+				else advance();
+				// Document markers (--- or ...) at column 0 terminate the scalar
+				if (col === 0 && isDocumentMarkerAhead()) {
+					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
+				}
 			} else {
 				value += ch;
 				advance();
@@ -568,19 +586,14 @@ export function createScanner(text: string): YamlScanner {
 						// Invalid escape sequence — emit error token
 						return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 				}
-			} else if (ch === "\n") {
+			} else if (ch === "\n" || (ch === "\r" && peek(1) === "\n")) {
 				value += " ";
-				advance();
-				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
-				// when the scalar is nested (sCol > 0), since the tab would be acting
-				// as indentation. At column 0, tabs are just leading whitespace.
-				if (sCol > 0 && peek() === "\t") {
-					advance(); // consume the tab so it's included in the error span
+				if (ch === "\r") advance(2);
+				else advance();
+				// Document markers (--- or ...) at column 0 terminate the scalar
+				if (col === 0 && isDocumentMarkerAhead()) {
 					return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 				}
-			} else if (ch === "\r" && peek(1) === "\n") {
-				value += " ";
-				advance(2);
 				// Change 5b: tab after bare newline in double-quoted scalar is forbidden
 				// when the scalar is nested (sCol > 0), since the tab would be acting
 				// as indentation. At column 0, tabs are just leading whitespace.
@@ -1055,7 +1068,7 @@ export function createScanner(text: string): YamlScanner {
 				isWhitespace(next) ||
 				next === "-" ||
 				next === "+" ||
-				(next >= "1" && next <= "9") ||
+				(next >= "0" && next <= "9") ||
 				next === "#"
 			) {
 				return scanBlockScalar();

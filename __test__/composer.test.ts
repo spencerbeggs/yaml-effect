@@ -1223,3 +1223,73 @@ describe("Issue #20: Comment whitespace validation", () => {
 		it.todo("rejects comment that looks like a mapping key (GDY7)");
 	});
 });
+
+describe("Issue #22: Block scalar syntax and document markers in quoted strings", () => {
+	describe("block scalar indent digit validation", () => {
+		it("rejects explicit indent 0 in literal block scalar (2G84/00)", () => {
+			const yaml = "--- |0\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it.todo("rejects block scalar with wrong indented line after spaces only (5LLU)");
+	});
+
+	describe("document markers inside quoted strings", () => {
+		it("rejects --- inside double-quoted string (5TRB)", () => {
+			const yaml = '---\n"\n---\n"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects ... inside single-quoted string (RXY3)", () => {
+			const yaml = "---\n'\n...\n'\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects ... with trailing content inside double-quoted string (9MQT/01)", () => {
+			const yaml = '--- "a\n... x\nb"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+});
+
+describe("Issue #19: Reject implicit mapping keys that span multiple lines", () => {
+	describe("multiline quoted implicit keys", () => {
+		it("rejects multiline double-quoted implicit key (7LBH)", () => {
+			const yaml = '"a\\nb": 1\n"c\n d": 1\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects multiline single-quoted implicit key (D49Q)", () => {
+			const yaml = "'a\\nb': 1\n'c\n d': 1\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects multiline unindented double-quoted block key (JKF3)", () => {
+			const yaml = '- - "bar\nbar": x\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("multiline plain implicit keys", () => {
+		it.todo("rejects multiline plain scalar implicit key (G7JE) — requires parser-level multiline key detection");
+	});
+
+	describe("implicit key followed by newline in flow context", () => {
+		it("rejects plain key and : on different lines in flow (DK4H)", () => {
+			const yaml = "---\n[ key\n  : value ]\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it.todo(
+			"rejects quoted key and :value on different lines in flow (ZXT5) — requires lexer changes that cause regressions",
+		);
+	});
+});
