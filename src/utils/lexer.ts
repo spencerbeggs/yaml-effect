@@ -628,13 +628,27 @@ export function createScanner(text: string): YamlScanner {
 			}
 		}
 
-		// Skip any trailing whitespace or comment on header line
+		// After indicator + modifiers, only whitespace, a comment (preceded by
+		// whitespace), or newline/EOF is allowed on the header line.
+		// Any other content (e.g., "first line" in "> first line") is invalid.
+		let hadHeaderWhitespace = false;
 		while (pos < text.length && isWhitespace(peek())) {
+			hadHeaderWhitespace = true;
 			advance();
 		}
-		if (pos < text.length && peek() === "#") {
-			while (pos < text.length && !isNewline(peek())) {
-				advance();
+		if (pos < text.length && !isNewline(peek()) && peek() !== "") {
+			if (peek() === "#" && hadHeaderWhitespace) {
+				// Comment on header line preceded by whitespace — valid
+				while (pos < text.length && !isNewline(peek())) {
+					advance();
+				}
+			} else {
+				// Invalid content after block scalar indicator:
+				// either # without preceding whitespace, or arbitrary text
+				while (pos < text.length && !isNewline(peek())) {
+					advance();
+				}
+				return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 			}
 		}
 
@@ -993,10 +1007,26 @@ export function createScanner(text: string): YamlScanner {
 		// Clear the empty block scalar flag once we reach non-whitespace content.
 		afterEmptyBlockScalar = false;
 
-		// Comment (must be at start of line or preceded by whitespace — but here
-		// we're already after whitespace has been consumed as a separate token)
+		// Comment: YAML 1.2 §6.6 requires # to be preceded by whitespace
+		// (or be at the start of a line) to be a valid comment indicator.
 		if (ch === "#") {
-			return scanComment();
+			if (pos === 0 || col === 0) {
+				return scanComment();
+			}
+			const prev = text[pos - 1];
+			if (prev === " " || prev === "\t" || prev === "\n" || prev === "\r") {
+				return scanComment();
+			}
+			// # without preceding whitespace after a quoted scalar is invalid
+			// (e.g., "value"# comment). In other contexts, # is valid scalar content.
+			if (prevWasQuoted) {
+				const start = pos;
+				const sLine = line;
+				const sCol = col;
+				advance();
+				return makeToken("error", "#", start, sLine, sCol);
+			}
+			// Falls through to plain scalar scanner
 		}
 
 		// Document markers (only at column 0)
@@ -1009,15 +1039,15 @@ export function createScanner(text: string): YamlScanner {
 			if (marker) return marker;
 		}
 
-		// Directive
-		if (ch === "%" && col === 0) {
+		// Directive (only at column 0 outside flow context)
+		if (ch === "%" && col === 0 && flowDepth === 0) {
 			return scanDirective();
 		}
 
 		// Block scalar indicators
 		if ((ch === "|" || ch === ">") && flowDepth === 0) {
 			// Check if this is truly a block scalar indicator:
-			// must be followed by newline, whitespace, chomping/indent, or EOF
+			// must be followed by newline, whitespace, chomping/indent, # or EOF
 			const next = peek(1);
 			if (
 				next === "" ||

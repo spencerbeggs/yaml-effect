@@ -1115,3 +1115,111 @@ describe("Composer error propagation", () => {
 		expect(Either.isLeft(result)).toBe(true);
 	});
 });
+
+// ===========================================================================
+// Issue #18: Enforce YAML directive rules
+// ===========================================================================
+
+describe("Issue #18: YAML directive validation", () => {
+	describe("duplicate %YAML directive", () => {
+		it("rejects two %YAML directives before a single document (SF5V)", () => {
+			const yaml = "%YAML 1.2\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("directive without following document", () => {
+		it("rejects %YAML directive with no following document (9MMA)", () => {
+			const yaml = "%YAML 1.2\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML directive followed by ... but no --- (B63P)", () => {
+			const yaml = "%YAML 1.2\n...\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("directive after content without document-end marker", () => {
+		it("rejects directive after content without ... (9HCY)", () => {
+			const yaml = '!foo "bar"\n%TAG ! tag:example.com,2000:app/\n---\n!foo "bar"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML mid-stream without ... (EB22)", () => {
+			const yaml = "---\nscalar1 # comment\n%YAML 1.2\n---\nscalar2\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML after content without ... (RHX7)", () => {
+			const yaml = "---\nkey: value\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("%YAML parameter validation", () => {
+		it("rejects %YAML with extra words (H7TQ)", () => {
+			const yaml = "%YAML 1.2 foo\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects %YAML with comment lacking whitespace (MUS6/00)", () => {
+			const yaml = "%YAML 1.1#...\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("duplicate %YAML across documents without ...", () => {
+		it("rejects second %YAML without document-end (MUS6/01)", () => {
+			const yaml = "%YAML 1.2\n---\n%YAML 1.2\n---\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+});
+
+// ===========================================================================
+// Issue #20: Enforce comment whitespace requirement
+// ===========================================================================
+
+describe("Issue #20: Comment whitespace validation", () => {
+	describe("comment # must be preceded by whitespace", () => {
+		it("rejects # immediately after double-quoted scalar (SU5Z)", () => {
+			const yaml = 'key: "value"# invalid comment\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("block scalar header validation", () => {
+		it("rejects # without whitespace after block scalar indicator (X4QW)", () => {
+			const yaml = "block: ># comment\n  scalar\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects arbitrary text after block scalar indicator (S4GJ)", () => {
+			const yaml = "---\nfolded: > first line\n  second line\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("comment terminates plain scalar", () => {
+		// BS4K, 8XDJ, BF9H, GDY7: These require structural validation to detect
+		// extra content after comment-terminated plain scalars. They overlap with
+		// Issue #15 and will be addressed there.
+		it.todo("rejects plain scalar continuation after comment (BS4K)");
+		it.todo("rejects continuation after full-line comment (8XDJ)");
+		it.todo("rejects continuation after mid-scalar comment (BF9H)");
+		it.todo("rejects comment that looks like a mapping key (GDY7)");
+	});
+});

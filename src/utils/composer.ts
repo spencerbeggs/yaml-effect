@@ -1843,7 +1843,7 @@ function composeFlatBlockMap(
 // Compose document
 // ---------------------------------------------------------------------------
 
-function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
+function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocuments = false): YamlDocument {
 	const children = cst.children ?? [];
 	const directives: YamlDirective[] = [];
 	let contents: YamlNode | null = null;
@@ -1905,12 +1905,6 @@ function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
 		}
 		if (child.type === "tag") {
 			meta.tag = child.source;
-			i++;
-			continue;
-		}
-
-		// Content
-		if (contents !== null) {
 			i++;
 			continue;
 		}
@@ -1994,6 +1988,9 @@ function composeDocument(cst: CstNode, state: ComposerState): YamlDocument {
 		i++;
 	}
 
+	// Validate directive rules
+	validateDirectives(directives, cst, state, hasSubsequentDocuments);
+
 	return new YamlDocument({
 		contents,
 		errors: [...state.errors],
@@ -2043,6 +2040,249 @@ function parseDirective(source: string): YamlDirective | null {
 		return new YamlDirective({ name, parameters });
 	}
 	return null;
+}
+
+/**
+ * Validate YAML directive rules within a single document's CST.
+ * Pushes errors into state.errors for any violations found.
+ */
+function validateDirectives(
+	directives: YamlDirective[],
+	cst: CstNode,
+	state: ComposerState,
+	hasSubsequentDocuments = false,
+): void {
+	const children = cst.children ?? [];
+
+	// Check for duplicate %YAML directives
+	const yamlDirectives = directives.filter((d) => d.name === "YAML");
+	if (yamlDirectives.length > 1) {
+		// Find the second directive's offset in the CST
+		let directiveCount = 0;
+		for (const child of children) {
+			if (child.type === "directive" && child.source.trim().startsWith("%YAML")) {
+				directiveCount++;
+				if (directiveCount === 2) {
+					const lc = lineCol(state.text, child.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "InvalidDirective",
+							message: "Duplicate %YAML directive",
+							offset: child.offset,
+							length: child.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+					break;
+				}
+			}
+		}
+	}
+
+	// Validate %YAML directive parameters
+	for (const child of children) {
+		if (child.type !== "directive") continue;
+		const src = child.source.trim();
+		if (!src.startsWith("%YAML")) continue;
+
+		// Check for comment without preceding whitespace (e.g., %YAML 1.1#...)
+		// The lexer consumes the entire line, so we check the raw source
+		const hashIdx = src.indexOf("#");
+		if (hashIdx > 0) {
+			const before = src[hashIdx - 1];
+			if (before !== " " && before !== "\t") {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidDirective",
+						message: "Comment in directive requires preceding whitespace",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				continue;
+			}
+		}
+
+		// Strip inline comment before checking parameters
+		const withoutComment = hashIdx > 0 ? src.slice(0, hashIdx).trimEnd() : src;
+		const parts = withoutComment.slice(1).split(/\s+/);
+		// parts[0] = "YAML", rest are parameters
+		const params = parts.slice(1);
+		if (params.length !== 1) {
+			const lc = lineCol(state.text, child.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "InvalidDirective",
+					message:
+						params.length === 0
+							? "%YAML directive requires a version parameter"
+							: `%YAML directive has extra parameters: ${params.slice(1).join(" ")}`,
+					offset: child.offset,
+					length: child.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+	}
+
+	// Check that directives are followed by a document-start marker (---)
+	let hasDirective = false;
+	let hasDocumentStart = false;
+	for (const child of children) {
+		if (child.type === "directive") {
+			hasDirective = true;
+		}
+		// document-start markers are consumed as "whitespace" type with source "---"
+		if (child.type === "whitespace" && child.source === "---") {
+			hasDocumentStart = true;
+		}
+	}
+	if (hasDirective && !hasDocumentStart) {
+		// Find the first directive for error position
+		for (const child of children) {
+			if (child.type === "directive") {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidDirective",
+						message: "Directive must be followed by a document-start marker (---)",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				break;
+			}
+		}
+	}
+
+	// Check that directives don't appear after content within the same document.
+	// Only flag this when there are subsequent documents — otherwise the lexer
+	// may have incorrectly tokenized plain scalar content (e.g. "%YAML 1.2" as
+	// a continuation line) as a directive token.
+	if (hasSubsequentDocuments) {
+		let hasContent = false;
+		for (const child of children) {
+			if (
+				child.type === "flow-scalar" ||
+				child.type === "block-scalar" ||
+				child.type === "block-map" ||
+				child.type === "block-seq" ||
+				child.type === "flow-map" ||
+				child.type === "flow-seq" ||
+				child.type === "alias" ||
+				child.type === "anchor" ||
+				child.type === "tag"
+			) {
+				hasContent = true;
+			}
+			if (child.type === "directive" && hasContent) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidDirective",
+						message: "Directive after content requires a document-end marker (...) first",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
+			// Recursively check for directives inside content nodes (e.g. block-map)
+			if (hasContent && child.children) {
+				const nested = findNestedDirective(child);
+				if (nested) {
+					const lc = lineCol(state.text, nested.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "InvalidDirective",
+							message: "Directive after content requires a document-end marker (...) first",
+							offset: nested.offset,
+							length: nested.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+				}
+			}
+		}
+	}
+}
+
+/** Recursively find the first directive node within a CST subtree. */
+function findNestedDirective(node: CstNode): CstNode | null {
+	if (node.type === "directive") return node;
+	if (node.children) {
+		for (const child of node.children) {
+			const found = findNestedDirective(child);
+			if (found) return found;
+		}
+	}
+	return null;
+}
+
+/**
+ * Validate directive placement across a multi-document CST stream.
+ *
+ * YAML 1.2 requires that directives appearing between documents must be
+ * preceded by a document-end marker (`...`). This function checks each
+ * CST document node after the first: if it contains directives, the
+ * preceding document must have ended with `...`.
+ */
+function validateCrossDocumentDirectives(cstNodes: readonly CstNode[], state: ComposerState): void {
+	for (let docIdx = 1; docIdx < cstNodes.length; docIdx++) {
+		const cst = cstNodes[docIdx];
+		if (!cst) continue;
+		const children = cst.children ?? [];
+
+		// Check if this document has directives
+		const hasDirectives = children.some((c) => c.type === "directive");
+		if (!hasDirectives) continue;
+
+		// Check if the previous document ended with "..."
+		const prevCst = cstNodes[docIdx - 1];
+		if (!prevCst) continue;
+		const prevChildren = prevCst.children ?? [];
+		let prevEndedWithDocEnd = false;
+		for (let i = prevChildren.length - 1; i >= 0; i--) {
+			const c = prevChildren[i];
+			if (!c) continue;
+			// Document-end markers are stored as whitespace type with source "..."
+			if (c.source === "...") {
+				prevEndedWithDocEnd = true;
+				break;
+			}
+			if (c.type === "newline" || c.type === "whitespace" || c.type === "comment") continue;
+			break;
+		}
+
+		if (!prevEndedWithDocEnd) {
+			// Find the first directive in this document for error positioning
+			for (const child of children) {
+				if (child.type === "directive") {
+					const lc = lineCol(state.text, child.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "InvalidDirective",
+							message: "Directive between documents requires a document-end marker (...) after the previous document",
+							offset: child.offset,
+							length: child.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+					break;
+				}
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2167,15 +2407,23 @@ export function parseDocument(
 	return parseCSTAll(text).pipe(
 		Effect.flatMap((cstNodes) => {
 			const state = createState(text, options);
+
+			// Validate cross-document directive placement
+			validateCrossDocumentDirectives(cstNodes, state);
+
 			const doc = cstNodes[0];
 			if (!doc) {
 				return Effect.succeed(new YamlDocument({ contents: null, errors: [], warnings: [], directives: [] }));
 			}
 
-			const result = composeDocument(doc, state);
+			const result = composeDocument(doc, state, cstNodes.length > 1);
 
 			const fatalErrors = state.errors.filter(
-				(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+				(e) =>
+					e.code === "UndefinedAlias" ||
+					e.code === "AliasCountExceeded" ||
+					e.code === "UnexpectedToken" ||
+					e.code === "InvalidDirective",
 			);
 			if (fatalErrors.length > 0) {
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
@@ -2228,13 +2476,27 @@ export function parseAllDocuments(
 			const documents: YamlDocument[] = [];
 			const fatalErrors: YamlErrorDetail[] = [];
 
-			for (const cst of cstNodes) {
+			// Validate cross-document directive placement
+			{
+				const crossDocState = createState(text, options);
+				validateCrossDocumentDirectives(cstNodes, crossDocState);
+				const crossDocFatal = crossDocState.errors.filter((e) => e.code === "InvalidDirective");
+				if (crossDocFatal.length > 0) fatalErrors.push(...crossDocFatal);
+			}
+
+			for (let i = 0; i < cstNodes.length; i++) {
+				const cst = cstNodes[i];
+				if (!cst) continue;
 				const state = createState(text, options);
-				const doc = composeDocument(cst, state);
+				const doc = composeDocument(cst, state, i < cstNodes.length - 1);
 				documents.push(doc);
 
 				const fatal = state.errors.filter(
-					(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+					(e) =>
+						e.code === "UndefinedAlias" ||
+						e.code === "AliasCountExceeded" ||
+						e.code === "UnexpectedToken" ||
+						e.code === "InvalidDirective",
 				);
 				if (fatal.length > 0) fatalErrors.push(...fatal);
 			}
@@ -2337,7 +2599,11 @@ export function composeDocumentFromCst(
 	const result = composeDocument(cst, state);
 
 	const fatalErrors = state.errors.filter(
-		(e) => e.code === "UndefinedAlias" || e.code === "AliasCountExceeded" || e.code === "UnexpectedToken",
+		(e) =>
+			e.code === "UndefinedAlias" ||
+			e.code === "AliasCountExceeded" ||
+			e.code === "UnexpectedToken" ||
+			e.code === "InvalidDirective",
 	);
 	if (fatalErrors.length > 0) {
 		return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
