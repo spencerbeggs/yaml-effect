@@ -266,16 +266,18 @@ function collectMultilineKey(children: readonly CstNode[], startIdx: number): { 
 function collectMultilinePlainScalar(
 	children: readonly CstNode[],
 	startIdx: number,
-): { value: string; nextIdx: number } {
+	minContinuationColumn?: number,
+	sourceText?: string,
+): { value: string; nextIdx: number; partsCount: number } {
 	const first = children[startIdx];
 	if (!first || first.type !== "flow-scalar") {
-		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1 };
+		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1, partsCount: 1 };
 	}
 
 	// Only merge plain scalars (not quoted)
 	const style = getScalarStyle(first);
 	if (style !== "plain") {
-		return { value: getScalarValue(first), nextIdx: startIdx + 1 };
+		return { value: getScalarValue(first), nextIdx: startIdx + 1, partsCount: 1 };
 	}
 
 	const parts: string[] = [first.source.trim()];
@@ -305,6 +307,14 @@ function collectMultilinePlainScalar(
 			// Check if this scalar is followed by `:` — if so, it's a key, stop
 			if (hasValueSepAfterInList(children, idx + 1)) break;
 
+			// Don't merge scalars below the minimum continuation indent (236B).
+			// This prevents merging e.g. "bar" (col 2) with "invalid" (col 0)
+			// when the block mapping key is at col 0.
+			if (minContinuationColumn !== undefined && sourceText) {
+				const childColumn = lineCol(sourceText, child.offset).column;
+				if (childColumn < minContinuationColumn) break;
+			}
+
 			// Merge: empty lines between content become \n, otherwise fold to space
 			if (emptyLines > 1) {
 				// emptyLines counts all newlines including the one ending the previous line
@@ -323,11 +333,11 @@ function collectMultilinePlainScalar(
 	}
 
 	if (parts.length === 1) {
-		return { value: parts[0] ?? "", nextIdx: idx };
+		return { value: parts[0] ?? "", nextIdx: idx, partsCount: 1 };
 	}
 
 	// Apply flow folding to the collected parts
-	return { value: foldFlowLines(parts.join("\n")), nextIdx: idx };
+	return { value: foldFlowLines(parts.join("\n")), nextIdx: idx, partsCount: parts.length };
 }
 
 /**
@@ -354,17 +364,22 @@ function findNextSignificantChild(children: readonly CstNode[], startIdx: number
 }
 
 function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number): boolean {
+	return findValueSepOffset(children, startIdx) >= 0;
+}
+
+/** Find the offset of the next ":" value separator in a CST children list, or -1 if none. */
+function findValueSepOffset(children: readonly CstNode[], startIdx: number): number {
 	for (let j = startIdx; j < children.length; j++) {
 		const c = children[j];
 		if (!c) continue;
 		if (c.type === "newline" || c.type === "comment") continue;
 		if (c.type === "whitespace") {
-			if (c.source === ":") return true;
+			if (c.source === ":") return c.offset;
 			continue;
 		}
-		return false;
+		return -1;
 	}
-	return false;
+	return -1;
 }
 
 /**
@@ -945,7 +960,10 @@ function composeBlockMap(
 	const pairs: YamlPair[] = [];
 
 	// Phase 1: parse children into a flat stream of semantic items
-	const items = flattenBlockMapChildren(children, state);
+	const extKeyOffset =
+		externalFirstKey && "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : undefined;
+	const extKeyCol = extKeyOffset !== undefined ? lineCol(state.text, extKeyOffset).column : undefined;
+	const items = flattenBlockMapChildren(children, state, extKeyCol, extKeyOffset);
 
 	// If there's an external first key, prepend it
 	if (externalFirstKey) {
@@ -998,12 +1016,25 @@ function findNextContentInList(children: readonly CstNode[], startIdx: number): 
 	return null;
 }
 
-function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerState): SemanticItem[] {
+function flattenBlockMapChildren(
+	children: readonly CstNode[],
+	state: ComposerState,
+	externalKeyColumn?: number,
+	externalKeyOffset?: number,
+): SemanticItem[] {
 	const items: SemanticItem[] = [];
 	let pendingMeta: NodeMeta = {};
 	let afterValueSep = false;
+	let lastValueSepOffset = -1;
+	let lastKeyColumn = externalKeyColumn ?? -1;
+	let lastKeyOffset = externalKeyOffset ?? -1;
 
-	function pushNode(node: YamlNode) {
+	function pushNode(node: YamlNode, nodeOffset?: number) {
+		// Track key column/offset when pushing in key position (before value-sep)
+		if (!afterValueSep && nodeOffset !== undefined && nodeOffset >= 0) {
+			lastKeyColumn = lineCol(state.text, nodeOffset).column;
+			lastKeyOffset = nodeOffset;
+		}
 		items.push({ kind: "node", node });
 		afterValueSep = false;
 	}
@@ -1047,8 +1078,29 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				}
 				items.push({ kind: "value-sep", offset: child.offset });
 				afterValueSep = true;
+				lastValueSepOffset = child.offset;
 			}
-			// Skip other whitespace (spaces, "-", "?", "---", "...")
+			// Check for sequence entry on same line as value-sep (5U3A: `key: - a`).
+			// Only flag for implicit key mappings (has a key scalar on the same line
+			// before ":"), not explicit mappings (? key\n: - value) where this is valid.
+			if (
+				child.source === "-" &&
+				lastValueSepOffset >= 0 &&
+				sameLine(state.text, lastValueSepOffset, child.offset) &&
+				hasNonWhitespaceBeforeOnLine(state.text, lastValueSepOffset)
+			) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Sequence entry on same line as mapping value indicator",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			continue;
 		}
 		if (child.type === "comment") {
@@ -1083,6 +1135,34 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				pendingMeta = {};
 				pushNode(scalar);
 			}
+			// Detect same-line nested mapping (ZCZ6: `a: b: c: d`, ZL4Z: `a: 'b': c`).
+			// If we're in value position and this scalar is followed by ":"
+			// on the same line as both the preceding ":" AND the scalar itself,
+			// AND the preceding ":" was from an implicit key (has non-whitespace
+			// before it on the same line), it's an invalid nested mapping.
+			// Skip for explicit mappings (? key\n: value) where `:` starts a value.
+			const nextValueSepOffset = findValueSepOffset(children, i + 1);
+			if (
+				afterValueSep &&
+				lastValueSepOffset >= 0 &&
+				hasNonWhitespaceBeforeOnLine(state.text, lastValueSepOffset) &&
+				child.type === "flow-scalar" &&
+				nextValueSepOffset >= 0 &&
+				sameLine(state.text, lastValueSepOffset, child.offset) &&
+				sameLine(state.text, child.offset, nextValueSepOffset)
+			) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Implicit mapping key on same line as previous value indicator",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			// Check if this scalar is followed by a block-map (scalar is the first
 			// key of a nested mapping: the parser puts the first key as a sibling
 			// before its block-map child).
@@ -1103,7 +1183,67 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				getScalarStyle(child) === "plain" &&
 				!hasValueSepAfterInList(children, i + 1)
 			) {
-				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const isValuePosition = afterValueSep;
+				// In key position, a plain scalar without ":" after it is
+				// trailing content (236B, 7MNF, 6S55, 9CWY) — unless preceded
+				// by a block indicator ("-", "?") which means it's part of an
+				// explicit mapping (KK5P, 2XXW).
+				if (!isValuePosition) {
+					// Check if this scalar is the first non-whitespace on its line
+					// by scanning the source text backwards. Mid-line scalars (e.g.,
+					// after a tag/comma in FBC9) are not trailing.
+					let isLineStart = true;
+					for (let k = child.offset - 1; k >= 0; k--) {
+						const ch = state.text[k];
+						if (ch === "\n") break;
+						if (ch === " " || ch === "\t") continue;
+						isLineStart = false;
+						break;
+					}
+					if (isLineStart) {
+						let precededByIndicator = false;
+						for (let p = i - 1; p >= 0; p--) {
+							const prev = children[p];
+							if (!prev) continue;
+							if (prev.type === "whitespace" && (prev.source === "-" || prev.source === "?")) {
+								precededByIndicator = true;
+								break;
+							}
+							if (prev.type === "whitespace" && prev.source.trim() === "") continue;
+							if (prev.type === "newline") continue;
+							break;
+						}
+						if (!precededByIndicator) {
+							const lc = lineCol(state.text, child.offset);
+							state.errors.push(
+								new YamlErrorDetail({
+									code: "UnexpectedToken",
+									message: "Trailing content in block mapping",
+									offset: child.offset,
+									length: child.length,
+									line: lc.line,
+									column: lc.column,
+								}),
+							);
+						}
+					}
+				}
+				// In value position for implicit mappings (key and ":" on the same line),
+				// continuation lines must be indented more than the key column.
+				// For explicit mappings (? key\n: value), don't constrain.
+				const isImplicitMapping =
+					isValuePosition &&
+					lastKeyColumn >= 0 &&
+					lastKeyOffset >= 0 &&
+					lastValueSepOffset >= 0 &&
+					sameLine(state.text, lastKeyOffset, lastValueSepOffset);
+				const minContCol = isImplicitMapping ? lastKeyColumn + 1 : undefined;
+				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(
+					children,
+					i,
+					minContCol,
+					minContCol !== undefined ? state.text : undefined,
+				);
 				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
 				const scalar = new YamlScalar({
 					value: resolved,
@@ -1115,13 +1255,63 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 				});
 				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
 				pendingMeta = {};
-				pushNode(scalar);
+				pushNode(scalar, child.offset);
+				// After a truly MULTILINE plain scalar in value position (partsCount > 1
+				// means multiple source lines were merged), if collectMultilinePlainScalar
+				// stopped at a key at the SAME or deeper indent as the value, that's an
+				// invalid nested mapping (HU3P). Keys at a lesser indent are sibling pairs
+				// at the parent mapping level (valid, e.g. 4CQQ).
+				if (isValuePosition && partsCount > 1) {
+					const stoppedAtContent = findNextContentInList(children, nextIdx);
+					if (stoppedAtContent) {
+						const sn = stoppedAtContent.node;
+						const valueCol = lineCol(state.text, child.offset).column;
+						const nextCol = lineCol(state.text, sn.offset).column;
+						// Only flag if the next key is at same or deeper indent
+						if (nextCol >= valueCol) {
+							const isTrailingMapping =
+								// scalar followed by ":"
+								(sn.type === "flow-scalar" &&
+									getScalarStyle(sn) === "plain" &&
+									hasValueSepAfterInList(children, stoppedAtContent.idx + 1)) ||
+								// scalar followed by block-map (key before nested mapping)
+								(sn.type === "flow-scalar" &&
+									getScalarStyle(sn) === "plain" &&
+									(() => {
+										const after = findNextContentInList(children, stoppedAtContent.idx + 1);
+										return after !== null && after.node.type === "block-map";
+									})()) ||
+								// direct block-map (nested mapping without external key)
+								sn.type === "block-map";
+							if (isTrailingMapping) {
+								const lc = lineCol(state.text, sn.offset);
+								state.errors.push(
+									new YamlErrorDetail({
+										code: "UnexpectedToken",
+										message: "Mapping key after multiline plain scalar value",
+										offset: sn.offset,
+										length: sn.length,
+										line: lc.line,
+										column: lc.column,
+									}),
+								);
+							}
+						}
+					}
+				}
 				i = nextIdx - 1; // -1 because for-loop increments
 				continue;
 			}
+			// Check for trailing content after quoted scalar in value position
+			const style = getScalarStyle(child);
+			const isValuePosition = afterValueSep;
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
-			pushNode(scalar);
+			pushNode(scalar, child.offset);
+
+			if (isValuePosition && (style === "single-quoted" || style === "double-quoted")) {
+				checkTrailingContentOnSameLine(children, i + 1, child, state);
+			}
 			continue;
 		}
 		if (child.type === "alias") {
@@ -1153,15 +1343,19 @@ function flattenBlockMapChildren(children: readonly CstNode[], state: ComposerSt
 			continue;
 		}
 		if (child.type === "flow-map") {
+			const isValue = afterValueSep;
 			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			pushNode(map);
+			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
 			continue;
 		}
 		if (child.type === "flow-seq") {
+			const isValue = afterValueSep;
 			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			pushNode(seq);
+			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
 		}
 	}
 	// Flush trailing pending tag/anchor as empty scalar
@@ -1423,6 +1617,206 @@ function checkMultilineImplicitKeys(
 	}
 }
 
+/** Returns true if there is non-whitespace content before `offset` on the same line. */
+function hasNonWhitespaceBeforeOnLine(text: string, offset: number): boolean {
+	for (let i = offset - 1; i >= 0; i--) {
+		const ch = text[i];
+		if (ch === "\n" || ch === "\r") return false;
+		if (ch !== " " && ch !== "\t") return true;
+	}
+	return false; // start of string
+}
+
+/**
+ * Check for non-trivial CST content on the same line after a completed value node.
+ * Used to detect trailing content after quoted scalars and flow collections.
+ * Skips if the next non-trivia content is a ":" (value-sep), since that means
+ * this node is actually a key, not a value.
+ */
+function checkTrailingContentOnSameLine(
+	children: readonly CstNode[],
+	startIdx: number,
+	valueNode: CstNode,
+	state: ComposerState,
+): void {
+	const valueEnd = valueNode.offset + valueNode.length;
+	for (let j = startIdx; j < children.length; j++) {
+		const next = children[j];
+		if (!next) continue;
+		if (next.type === "newline") break;
+		if (next.type === "comment") break; // comments are allowed
+		if (next.type === "whitespace") {
+			if (next.source === ":") break; // this scalar is a key, not a value
+			if (next.source.trim() === "") continue;
+		}
+		// Non-trivial content — check if on same line
+		if (sameLine(state.text, valueEnd - 1, next.offset)) {
+			const lc = lineCol(state.text, next.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: "Trailing content after value on same line",
+					offset: next.offset,
+					length: next.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+		break;
+	}
+}
+
+/**
+ * Check for trailing content after a complete value at document level.
+ * After a flow collection or scalar at the top level, only trivia and
+ * document markers should follow. Skips if next meaningful content is ":"
+ * (the flow collection is being used as a mapping key).
+ */
+function checkTrailingContentAfterDocValue(
+	children: readonly CstNode[],
+	startIdx: number,
+	state: ComposerState,
+	allowMappingKey = true,
+): void {
+	for (let j = startIdx; j < children.length; j++) {
+		const next = children[j];
+		if (!next) continue;
+		if (next.type === "newline" || next.type === "comment") continue;
+		if (next.type === "whitespace") {
+			// Document markers (---, ...) are OK
+			if (next.source === "---" || next.source === "...") break;
+			// ":" means this value is a mapping key — not trailing content
+			if (next.source === ":") break;
+			if (next.source.trim() === "") continue;
+		}
+		// Non-trivial content after a complete document value.
+		// If allowed, check if this content looks like a mapping key (followed by
+		// ":" or a block-map) — it's a sibling mapping pair, not trailing content.
+		if (
+			allowMappingKey &&
+			(next.type === "flow-scalar" ||
+				next.type === "block-scalar" ||
+				next.type === "flow-map" ||
+				next.type === "flow-seq")
+		) {
+			const afterNode = findNextContentChild(children, j + 1);
+			if (hasValueSepAfter(children, j + 1) || (afterNode !== null && afterNode.type === "block-map")) {
+				break;
+			}
+		}
+		if (
+			next.type === "flow-scalar" ||
+			next.type === "block-scalar" ||
+			next.type === "block-map" ||
+			next.type === "block-seq" ||
+			next.type === "flow-map" ||
+			next.type === "flow-seq" ||
+			next.type === "anchor" ||
+			next.type === "tag" ||
+			next.type === "alias"
+		) {
+			const lc = lineCol(state.text, next.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "UnexpectedToken",
+					message: "Trailing content after document value",
+					offset: next.offset,
+					length: next.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+		break;
+	}
+}
+
+/**
+ * Returns true if offsetA and offsetB are on the same source line (no newline between them).
+ */
+function sameLine(text: string, offsetA: number, offsetB: number): boolean {
+	const lo = Math.min(offsetA, offsetB);
+	const hi = Math.max(offsetA, offsetB);
+	for (let i = lo; i < hi && i < text.length; i++) {
+		if (text[i] === "\n") return false;
+	}
+	return true;
+}
+
+/**
+ * Validate that document markers (--- and ...) are not followed by content
+ * on the same line. YAML 1.2 §9.1.4/§9.2 require these markers to be on
+ * their own line (followed only by whitespace/comments).
+ *
+ * Checks within a single document's children AND across document boundaries
+ * (e.g. `... invalid` where `...` ends doc 1 and `invalid` starts doc 2).
+ */
+function checkDocumentMarkerSameLine(
+	children: readonly CstNode[],
+	state: ComposerState,
+	nextDocChildren?: readonly CstNode[],
+): void {
+	for (let i = 0; i < children.length; i++) {
+		const child = children[i];
+		if (!child) continue;
+		// Document markers appear as "whitespace"-typed CST nodes with source "---" or "..."
+		if (child.type !== "whitespace") continue;
+		const src = child.source;
+		// Only check "..." — "---" CAN be followed by content on the same line
+		if (src !== "...") continue;
+
+		// Find next non-whitespace, non-newline sibling in same document
+		let found = false;
+		for (let j = i + 1; j < children.length; j++) {
+			const next = children[j];
+			if (!next) continue;
+			if (next.type === "newline") break;
+			if (next.type === "whitespace" && next.source.trim() === "") continue;
+			if (next.type === "comment") break; // comments are allowed after ...
+			// Non-trivial content found — check if it's on the same line
+			if (sameLine(state.text, child.offset, next.offset)) {
+				const lc = lineCol(state.text, next.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Content on same line as document-end marker",
+						offset: next.offset,
+						length: next.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
+			found = true;
+			break;
+		}
+
+		// For "..." at end of document, check first content of next document
+		if (!found && nextDocChildren) {
+			for (const next of nextDocChildren) {
+				if (!next) continue;
+				if (next.type === "newline") break;
+				if (next.type === "whitespace" && next.source.trim() === "") continue;
+				if (sameLine(state.text, child.offset, next.offset)) {
+					const lc = lineCol(state.text, next.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "UnexpectedToken",
+							message: "Content on same line as document-end marker",
+							offset: next.offset,
+							length: next.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+				}
+				break;
+			}
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Compose block seq
 // ---------------------------------------------------------------------------
@@ -1561,6 +1955,8 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			pendingMeta = {};
 			sawEntry = false;
 			items.push(map);
+			// In block-seq, flow collections are always entry values, check for trailing
+			checkTrailingContentOnSameLine(children, ci + 1, child, state);
 			continue;
 		}
 		if (child.type === "flow-seq") {
@@ -1568,6 +1964,8 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			pendingMeta = {};
 			sawEntry = false;
 			items.push(seq);
+			// In block-seq, flow collections are always entry values, check for trailing
+			checkTrailingContentOnSameLine(children, ci + 1, child, state);
 		}
 	}
 	// Flush trailing entry with no content as null
@@ -1704,6 +2102,31 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
+			// Check for # without preceding space — YAML 1.2 §6.6 requires
+			// whitespace before # for it to be a comment indicator. When # appears
+			// as a plain scalar immediately after , or ] or }, it means # wasn't
+			// preceded by whitespace.
+			if (
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				child.source.startsWith("#") &&
+				child.offset > 0
+			) {
+				const prev = state.text[child.offset - 1];
+				if (prev !== " " && prev !== "\t" && prev !== "\n" && prev !== "\r") {
+					const lc = lineCol(state.text, child.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "UnexpectedToken",
+							message: "Comment must be preceded by whitespace",
+							offset: child.offset,
+							length: child.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+				}
+			}
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 				if (hasValueSepThroughPlainScalars(children, i + 1)) {
 					// Plain scalar eventually followed by ":" (possibly through
@@ -1917,7 +2340,12 @@ function composeFlatBlockMap(
 // Compose document
 // ---------------------------------------------------------------------------
 
-function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocuments = false): YamlDocument {
+function composeDocument(
+	cst: CstNode,
+	state: ComposerState,
+	hasSubsequentDocuments = false,
+	nextDocCst?: CstNode,
+): YamlDocument {
 	const children = cst.children ?? [];
 	const directives: YamlDirective[] = [];
 	let contents: YamlNode | null = null;
@@ -2004,7 +2432,7 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 			}
 			// Standalone scalar — try multi-line plain scalar merging
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
-				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i);
 				const resolved = resolveScalar(value, "plain", meta.tag);
 				contents = new YamlScalar({
 					value: resolved,
@@ -2016,6 +2444,30 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 				});
 				if (meta.anchor) registerAnchor(contents, meta.anchor, state, child.offset);
 				clearMeta(meta);
+				// If the multiline scalar merged multiple parts and the remaining
+				// content forms a mapping, that mapping is trailing garbage (2CMS).
+				if (partsCount > 1) {
+					const nextContent = findNextContentChild(children, nextIdx);
+					if (nextContent) {
+						const isTrailing =
+							(nextContent.type === "flow-scalar" &&
+								hasValueSepAfter(children, indexOfChild(children, nextContent) + 1)) ||
+							nextContent.type === "block-map";
+						if (isTrailing) {
+							const lc = lineCol(state.text, nextContent.offset);
+							state.errors.push(
+								new YamlErrorDetail({
+									code: "UnexpectedToken",
+									message: "Trailing content after document value",
+									offset: nextContent.offset,
+									length: nextContent.length,
+									line: lc.line,
+									column: lc.column,
+								}),
+							);
+						}
+					}
+				}
 				i = nextIdx;
 				continue;
 			}
@@ -2033,9 +2485,16 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 		}
 
 		if (child.type === "block-seq") {
+			const isRootSeq = contents === null;
 			contents = composeBlockSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;
+			// Only check for trailing content when the block-seq is the root document
+			// value (BD7L, TD5N). When it's a value inside a mapping (57H4), the
+			// remaining children are sibling mapping pairs.
+			if (isRootSeq) {
+				checkTrailingContentAfterDocValue(children, i, state, false);
+			}
 			continue;
 		}
 
@@ -2043,6 +2502,11 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 			contents = composeFlowMap(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;
+			// Check for trailing content, but not if flow collection is a mapping key
+			const nextAfterFlowMap = findNextContentChild(children, i);
+			if (!nextAfterFlowMap || nextAfterFlowMap.type !== "block-map") {
+				checkTrailingContentAfterDocValue(children, i, state);
+			}
 			continue;
 		}
 
@@ -2050,6 +2514,11 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 			contents = composeFlowSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;
+			// Check for trailing content, but not if flow collection is a mapping key
+			const nextAfterFlowSeq = findNextContentChild(children, i);
+			if (!nextAfterFlowSeq || nextAfterFlowSeq.type !== "block-map") {
+				checkTrailingContentAfterDocValue(children, i, state);
+			}
 			continue;
 		}
 
@@ -2064,6 +2533,9 @@ function composeDocument(cst: CstNode, state: ComposerState, hasSubsequentDocume
 
 	// Validate directive rules
 	validateDirectives(directives, cst, state, hasSubsequentDocuments);
+
+	// Validate document marker same-line content
+	checkDocumentMarkerSameLine(children, state, nextDocCst?.children);
 
 	return new YamlDocument({
 		contents,
@@ -2490,7 +2962,7 @@ export function parseDocument(
 				return Effect.succeed(new YamlDocument({ contents: null, errors: [], warnings: [], directives: [] }));
 			}
 
-			const result = composeDocument(doc, state, cstNodes.length > 1);
+			const result = composeDocument(doc, state, cstNodes.length > 1, cstNodes[1]);
 
 			const fatalErrors = state.errors.filter(
 				(e) =>
@@ -2562,7 +3034,7 @@ export function parseAllDocuments(
 				const cst = cstNodes[i];
 				if (!cst) continue;
 				const state = createState(text, options);
-				const doc = composeDocument(cst, state, i < cstNodes.length - 1);
+				const doc = composeDocument(cst, state, i < cstNodes.length - 1, cstNodes[i + 1]);
 				documents.push(doc);
 
 				const fatal = state.errors.filter(

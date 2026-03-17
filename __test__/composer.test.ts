@@ -1293,3 +1293,135 @@ describe("Issue #19: Reject implicit mapping keys that span multiple lines", () 
 		);
 	});
 });
+
+// ===========================================================================
+// Issue #15: Reject trailing tokens after complete block values
+// ===========================================================================
+
+describe("Issue #15: Reject trailing tokens after complete block values", () => {
+	describe("Group 1: Document marker same-line content", () => {
+		it("rejects content on same line as document-end marker (3HFZ)", () => {
+			const yaml = "---\nkey: value\n... invalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it.todo("rejects mapping starting at --- line (9KBC) — needs different validation approach");
+	});
+
+	describe("Group 4: Trailing content after flow collection", () => {
+		it("rejects sequence entry on same line after flow map (P2EQ)", () => {
+			const yaml = "---\n- { y: z }- invalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects block mapping key on same line after flow map (62EZ)", () => {
+			const yaml = "---\nx: { y: z }in: valid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects content after flow sequence at document level (KS4U)", () => {
+			const yaml = "---\n[\nsequence item\n]\ninvalid item\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects # without space after flow sequence end (9JBA)", () => {
+			const yaml = "---\n[ a, b, c, ]#invalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects # without space after comma in flow (CVW2)", () => {
+			const yaml = "---\n[ a, b, c,#invalid\n]\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("Group 3: Trailing content after quoted scalar", () => {
+		it("rejects trailing content after quoted value (Q4CL)", () => {
+			const yaml = 'key1: "quoted1"\nkey2: "quoted2" trailing content\nkey3: "quoted3"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects trailing mapping-like content after quoted value (JY7Z)", () => {
+			const yaml = 'key1: "quoted1"\nkey2: "quoted2" no key: nor value\nkey3: "quoted3"\n';
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("Group 5: Nested mapping on same line", () => {
+		it("rejects colon after quoted value in mapping (ZL4Z)", () => {
+			const yaml = "---\na: 'b': c\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects nested plain colon mapping (ZCZ6)", () => {
+			const yaml = "a: b: c: d\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects mapping-like content in multiline plain scalar (HU3P)", () => {
+			const yaml = "key:\n  word1 word2\n  no: key\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects mapping in plain scalar continuation (2CMS)", () => {
+			const yaml = "this\n is\n  invalid: x\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects sequence entry on same line as mapping value (5U3A)", () => {
+			const yaml = "key: - a\n     - b\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+
+	describe("Group 6: Trailing block content", () => {
+		it("rejects stray scalar after mapping (236B)", () => {
+			const yaml = "foo:\n  bar\ninvalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects invalid scalar at sequence indent without dash (6S55)", () => {
+			const yaml = "key:\n - bar\n - baz\n invalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects stray scalar after mapping with sequence value (9CWY)", () => {
+			const yaml = "key:\n - item1\n - item2\ninvalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects invalid mapping after sequence (BD7L)", () => {
+			const yaml = "- item1\n- item2\ninvalid: x\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects stray scalar after sequence (TD5N)", () => {
+			const yaml = "- item1\n- item2\ninvalid\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+
+		it("rejects scalar without colon at col 0 after mapping (7MNF)", () => {
+			const yaml = "top1:\n  key1: val1\ntop2\n";
+			const result = Effect.runSync(Effect.either(parse(yaml)));
+			expect(Either.isLeft(result)).toBe(true);
+		});
+	});
+});
