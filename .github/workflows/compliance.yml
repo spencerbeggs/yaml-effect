@@ -24,20 +24,16 @@ jobs:
       - name: Run compliance tests
         id: compliance
         run: |
-          pnpm vitest run --project compliance --reporter=json > /tmp/compliance-results.json 2>/dev/null || true
           RAW_COMPLIANCE=1 pnpm vitest run --project compliance-raw --reporter=json > /tmp/compliance-raw-results.json 2>/dev/null || true
 
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";
 
-          const filtered = JSON.parse(readFileSync("/tmp/compliance-results.json", "utf-8"));
           const raw = JSON.parse(readFileSync("/tmp/compliance-raw-results.json", "utf-8"));
-
-          const filteredResults = filtered.testResults[0].assertionResults;
           const rawResults = raw.testResults[0].assertionResults;
 
-          // Parse-level: filtered tests where parse succeeds/fails correctly
-          const parseTests = filteredResults.filter(r =>
+          // Parse-level: raw parse/reject assertions (no it.fails inflation)
+          const parseTests = rawResults.filter(r =>
             r.title === "should parse successfully" || r.title === "should reject invalid YAML"
           );
           const parsePassing = parseTests.filter(r => r.status === "passed").length;
