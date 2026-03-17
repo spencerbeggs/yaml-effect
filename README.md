@@ -2,8 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![YAML 1.2 parse](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fcompliance.json&query=%24.parse.percentage&suffix=%25&label=YAML%201.2%20parse&color=yellow)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
-[![YAML 1.2 full](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fcompliance.json&query=%24.full.percentage&suffix=%25&label=YAML%201.2%20full&color=orange)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
+[![YAML 1.2 parse](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fparse-badge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
+[![YAML 1.2 full](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Ffull-badge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
 
 A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect — no wrappers, no ports, just a clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 

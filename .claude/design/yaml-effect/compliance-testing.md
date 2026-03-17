@@ -349,42 +349,44 @@ scalar decoder (`decodeBlockScalar`) separate from the lexer's
 Runs on every push to `main`:
 
 1. Checks out the repo with submodules
-2. Runs `pnpm vitest run --project compliance --reporter=json`
-3. A Node.js script parses the JSON reporter output and computes two
-   percentages:
-   - **Parse compliance** -- percentage of "should parse successfully" and
-     "should reject invalid YAML" assertions passing
-   - **Full compliance** -- percentage of all assertions passing
-     (includes JSON, output, roundtrip)
-4. Writes a `compliance.json` file with both metrics
-5. Pushes `compliance.json` to an orphan `badges` branch
+2. Runs both filtered (`compliance`) and raw (`compliance-raw`) test
+   suites with `--reporter=json`
+3. A Node.js script computes two percentages:
+   - **Parse compliance** -- from filtered results: percentage of "should
+     parse successfully" and "should reject invalid YAML" assertions
+     passing
+   - **Full compliance** -- from raw unfiltered results: percentage of
+     all assertions passing across all 1226 test assertions (includes
+     JSON, output, roundtrip, with no skip map filtering)
+4. Writes `compliance.json` (data), `parse-badge.json`, and
+   `full-badge.json` (shields.io endpoint format)
+5. Pushes all three files to an orphan `badges` branch
 
 ### Badge Data Format
 
+`compliance.json` contains the raw metrics:
+
 ```json
 {
-  "parse": {
-    "passing": 339,
-    "total": 440,
-    "percentage": 77,
-    "color": "yellow"
-  },
-  "full": {
-    "passing": 745,
-    "total": 1231,
-    "percentage": 61,
-    "color": "orange"
-  },
-  "lastUpdated": "2026-03-14T..."
+  "parse": { "passing": 366, "total": 402, "percentage": 91, "color": "brightgreen" },
+  "full": { "passing": 932, "total": 1226, "percentage": 76, "color": "yellow" },
+  "lastUpdated": "2026-03-17T..."
 }
+```
+
+`parse-badge.json` and `full-badge.json` use shields.io endpoint format:
+
+```json
+{ "schemaVersion": 1, "label": "YAML 1.2 parse", "message": "91%", "color": "brightgreen" }
 ```
 
 Color thresholds: >90% brightgreen, >70% yellow, >50% orange, else red.
 
 ### shields.io Integration
 
-README badges use shields.io dynamic badge URLs pointing at the raw
-`compliance.json` on the `badges` branch. The orphan branch keeps badge
+README badges use shields.io endpoint badge URLs pointing at the
+`*-badge.json` files on the `badges` branch. Endpoint badges support
+dynamic colors from the JSON payload. The orphan branch keeps badge
 data out of the main branch history.
 
 ## Open Compliance Gaps

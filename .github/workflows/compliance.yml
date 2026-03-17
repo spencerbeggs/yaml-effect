@@ -25,67 +25,29 @@ jobs:
         id: compliance
         run: |
           pnpm vitest run --project compliance --reporter=json > /tmp/compliance-results.json 2>/dev/null || true
+          RAW_COMPLIANCE=1 pnpm vitest run --project compliance-raw --reporter=json > /tmp/compliance-raw-results.json 2>/dev/null || true
 
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";
 
-          // Load skip maps to identify expected failures
-          const skipMapPath = "__test__/utils/yaml-test-suite-skip-map.ts";
-          const skipMapSrc = readFileSync(skipMapPath, "utf-8");
+          const filtered = JSON.parse(readFileSync("/tmp/compliance-results.json", "utf-8"));
+          const raw = JSON.parse(readFileSync("/tmp/compliance-raw-results.json", "utf-8"));
 
-          // Extract XFAIL test IDs (parse-level expected failures)
-          const xfailIds = new Set();
-          const xfailMatch = skipMapSrc.match(/export const XFAIL[^{]*\{([^]*?)\n\};/);
-          if (xfailMatch) {
-            for (const m of xfailMatch[1].matchAll(/^\t+["']?([^"'\s:]+)["']?\s*:/gm)) {
-              xfailIds.add(m[1]);
-            }
-          }
+          const filteredResults = filtered.testResults[0].assertionResults;
+          const rawResults = raw.testResults[0].assertionResults;
 
-          // Extract SKIP_ASSERTIONS entries
-          const skipAssertions = {};
-          const skipMatch = skipMapSrc.match(/export const SKIP_ASSERTIONS[^{]*\{([^]*?)\n\};/);
-          if (skipMatch) {
-            for (const m of skipMatch[1].matchAll(/["']?([^"'\s:]+)["']?\s*:\s*\[([^\]]+)\]/g)) {
-              skipAssertions[m[1]] = m[2];
-            }
-          }
-
-          const data = JSON.parse(readFileSync("/tmp/compliance-results.json", "utf-8"));
-          const results = data.testResults[0].assertionResults;
-
-          // Extract test ID from ancestorTitles like "[229Q] ..." or "[3RLN/01] ..."
-          function getTestId(r) {
-            const ancestor = r.ancestorTitles.find(t => /^\[.+\]/.test(t));
-            if (!ancestor) return null;
-            const match = ancestor.match(/^\[([^\]]+)\]/);
-            return match ? match[1] : null;
-          }
-
-          // Parse-level: tests where parse succeeds/fails correctly
-          const parseTests = results.filter(r =>
+          // Parse-level: filtered tests where parse succeeds/fails correctly
+          const parseTests = filteredResults.filter(r =>
             r.title === "should parse successfully" || r.title === "should reject invalid YAML"
           );
+          const parsePassing = parseTests.filter(r => r.status === "passed").length;
           const parseTotal = parseTests.length;
-          const parsePassing = parseTests.filter(r => {
-            const id = getTestId(r);
-            return r.status === "passed" && !xfailIds.has(id);
-          }).length;
           const parsePercentage = Math.round((parsePassing / parseTotal) * 100);
 
-          // Full compliance: all assertions, excluding expected failures
-          const total = results.length;
-          const passed = results.filter(r => {
-            const id = getTestId(r);
-            if (xfailIds.has(id)) return false;
-            if (skipAssertions[id]) {
-              if (r.title.includes("JSON") && skipAssertions[id].includes("json")) return false;
-              if (r.title.includes("canonical") && skipAssertions[id].includes("output")) return false;
-              if (r.title.includes("roundtrip") && skipAssertions[id].includes("roundtrip")) return false;
-            }
-            return r.status === "passed";
-          }).length;
-          const fullPercentage = Math.round((passed / total) * 100);
+          // Full compliance: raw unfiltered results against all assertions
+          const rawPassing = rawResults.filter(r => r.status === "passed").length;
+          const rawTotal = rawResults.length;
+          const fullPercentage = Math.round((rawPassing / rawTotal) * 100);
 
           function color(pct) {
             if (pct > 90) return "brightgreen";
@@ -102,17 +64,34 @@ jobs:
               color: color(parsePercentage),
             },
             full: {
-              passing: passed,
-              total,
+              passing: rawPassing,
+              total: rawTotal,
               percentage: fullPercentage,
               color: color(fullPercentage),
             },
             lastUpdated: new Date().toISOString(),
           };
 
+          // shields.io endpoint badge format
+          const parseBadge = {
+            schemaVersion: 1,
+            label: "YAML 1.2 parse",
+            message: `${parsePercentage}%`,
+            color: color(parsePercentage),
+          };
+
+          const fullBadge = {
+            schemaVersion: 1,
+            label: "YAML 1.2 full",
+            message: `${fullPercentage}%`,
+            color: color(fullPercentage),
+          };
+
           writeFileSync("/tmp/compliance.json", JSON.stringify(badge, null, 2) + "\n");
+          writeFileSync("/tmp/parse-badge.json", JSON.stringify(parseBadge, null, 2) + "\n");
+          writeFileSync("/tmp/full-badge.json", JSON.stringify(fullBadge, null, 2) + "\n");
           console.log(`Parse: ${parsePassing}/${parseTotal} (${parsePercentage}%)`);
-          console.log(`Full:  ${passed}/${total} (${fullPercentage}%)`);
+          console.log(`Full:  ${rawPassing}/${rawTotal} (${fullPercentage}%)`);
           SCRIPT
 
       - name: Update badges branch
@@ -124,10 +103,12 @@ jobs:
           # doesn't show a "Compare & pull request" banner for it
           git checkout -B badges HEAD
 
-          # Remove all tracked files, add only compliance.json
+          # Remove all tracked files, add badge data
           git rm -rf . 2>/dev/null || true
           git checkout HEAD -- .gitignore 2>/dev/null || true
           cp /tmp/compliance.json compliance.json
-          git add compliance.json
+          cp /tmp/parse-badge.json parse-badge.json
+          cp /tmp/full-badge.json full-badge.json
+          git add compliance.json parse-badge.json full-badge.json
           git commit -m "chore: update compliance badge data"
           git push origin badges --force
