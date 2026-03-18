@@ -1,5 +1,14 @@
 # yaml-effect
 
+## 0.1.7
+
+### Bug Fixes
+
+* [`bff2841`](https://github.com/spencerbeggs/yaml-effect/commit/bff2841384d55dccb34dfbe4e9fd96e8f9d594d2) Fix YAML 1.2 compliance issues: block scalar document marker termination,
+  multi-document stream parsing, incremental anchor resolution, flow tab
+  handling, and flow collection structural validation. Resolves 9 expected
+  test failures bringing filtered compliance to 100% parse pass rate.
+
 ## 0.1.6
 
 ### Bug Fixes
