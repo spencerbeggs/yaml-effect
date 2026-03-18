@@ -252,6 +252,42 @@ function collectMultilineKey(children: readonly CstNode[], startIdx: number): { 
 }
 
 /**
+ * Extract the trimmed content of the line at `offset` in `text`.
+ * Returns the trimmed text and the offset of the next line (or EOF).
+ */
+function extractLineContent(text: string, offset: number): { lineText: string; lineEndOffset: number } {
+	// Find start of line
+	let lineStart = offset;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n") {
+		lineStart--;
+	}
+	// Find end of line
+	let lineEnd = offset;
+	while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") {
+		lineEnd++;
+	}
+	return { lineText: text.slice(lineStart, lineEnd).trim(), lineEndOffset: lineEnd };
+}
+
+/**
+ * Skip all children whose offset falls on the same line as `lineOffset`.
+ * Returns the index of the first child that is past the line end.
+ */
+function skipChildrenOnLine(children: readonly CstNode[], startIdx: number, lineEndOffset: number): number {
+	let idx = startIdx;
+	while (idx < children.length) {
+		const c = children[idx];
+		if (!c) break;
+		// Children that start at or before the line end belong to this line.
+		// But newlines at the line end separate lines — stop before the newline.
+		if (c.type === "newline" && c.offset >= lineEndOffset) break;
+		if (c.offset > lineEndOffset) break;
+		idx++;
+	}
+	return idx;
+}
+
+/**
  * Collect a multi-line plain scalar from consecutive CST children.
  * Starting from a plain flow-scalar at `startIdx`, look ahead through
  * newlines and whitespace for more plain flow-scalars that continue the
@@ -262,6 +298,11 @@ function collectMultilineKey(children: readonly CstNode[], startIdx: number): { 
  * - Be a plain flow-scalar (not quoted)
  * - NOT be followed by a value-sep (`:`) — that makes it a mapping key
  * - Be separated from the previous scalar only by newlines/whitespace
+ *
+ * When the lexer mis-tokenizes continuation line content as anchors, tags,
+ * aliases, directives, or block-seq entries, this function detects such
+ * lines and extracts the raw source text as continuation parts (3MYT, FBC9,
+ * XLQ9, AB8U).
  */
 function collectMultilinePlainScalar(
 	children: readonly CstNode[],
@@ -283,6 +324,8 @@ function collectMultilinePlainScalar(
 	const parts: string[] = [first.source.trim()];
 	let emptyLines = 0;
 	let idx = startIdx + 1;
+	// Track whether we've seen a newline since the last content (for continuation detection)
+	let sawNewline = false;
 
 	while (idx < children.length) {
 		const child = children[idx];
@@ -290,6 +333,7 @@ function collectMultilinePlainScalar(
 
 		if (child.type === "newline") {
 			emptyLines++;
+			sawNewline = true;
 			idx++;
 			continue;
 		}
@@ -325,9 +369,42 @@ function collectMultilinePlainScalar(
 			}
 			parts.push(child.source.trim());
 			emptyLines = 0;
+			sawNewline = false;
 			idx++;
 			continue;
 		}
+
+		// Non-scalar node (anchor, tag, alias, directive, block-seq, etc.)
+		// On a continuation line, these may be mis-tokenized plain scalar text.
+		// Check if the raw source line is indented (indicating continuation).
+		// Directive nodes (e.g., %YAML 1.2) inside document content are always
+		// continuations since real directives only appear before `---` (XLQ9).
+		// Exclude flow-scalar and block-scalar nodes — the lexer correctly
+		// identifies these (e.g., quoted scalars like '' should not be merged
+		// as plain scalar continuation text).
+		if (sawNewline && sourceText && child.type !== "flow-scalar" && child.type !== "block-scalar") {
+			const childCol = lineCol(sourceText, child.offset).column;
+			const isDirectiveContinuation = child.type === "directive";
+			// Continuation lines must be indented (column > 0), or be directives
+			if (childCol > 0 || isDirectiveContinuation) {
+				const { lineText, lineEndOffset } = extractLineContent(sourceText, child.offset);
+				if (lineText.length > 0) {
+					// Merge empty lines
+					if (emptyLines > 1) {
+						for (let e = 0; e < emptyLines - 1; e++) {
+							parts.push("");
+						}
+					}
+					parts.push(lineText);
+					emptyLines = 0;
+					sawNewline = false;
+					// Skip all children on this line
+					idx = skipChildrenOnLine(children, idx, lineEndOffset);
+					continue;
+				}
+			}
+		}
+
 		// Any other node type — stop merging
 		break;
 	}
@@ -1292,6 +1369,71 @@ function flattenBlockMapChildren(
 				i = nextContent.idx; // skip to past the block-map
 				continue;
 			}
+			// For explicit keys (? key\n  continuation\n:), use collectMultilineKey
+			// which merges plain scalars up to the ":" value-sep (JTV5).
+			if (
+				!afterValueSep &&
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				!hasValueSepAfterInList(children, i + 1) &&
+				hasValueSepThroughPlainScalars(children, i + 1)
+			) {
+				// Check that we're preceded by "?" (explicit key context)
+				// and that the next continuation scalar is indented beyond the "?" column.
+				// `? a\n  true\n:` → merge (true at col 2 > ? at col 0) (JTV5)
+				// `? b\nc:\n` → don't merge (c at col 0 = ? at col 0) (7W2P)
+				let isExplicitKey = false;
+				let explicitKeyCol = -1;
+				for (let p = i - 1; p >= 0; p--) {
+					const prev = children[p];
+					if (!prev) continue;
+					if (prev.type === "whitespace" && prev.source === "?") {
+						explicitKeyCol = lineCol(state.text, prev.offset).column;
+						isExplicitKey = true;
+						break;
+					}
+					if (prev.type === "whitespace" && prev.source.trim() === "") continue;
+					if (prev.type === "newline") continue;
+					break;
+				}
+				// Only merge if the next scalar after a newline is indented beyond ?
+				if (isExplicitKey) {
+					let nextScalarIndented = false;
+					let sawNl = false;
+					for (let j = i + 1; j < children.length; j++) {
+						const c = children[j];
+						if (!c) continue;
+						if (c.type === "newline") {
+							sawNl = true;
+							continue;
+						}
+						if (c.type === "whitespace" && c.source.trim() === "") continue;
+						if (sawNl && c.type === "flow-scalar") {
+							const cCol = lineCol(state.text, c.offset).column;
+							nextScalarIndented = cCol > explicitKeyCol;
+						}
+						break;
+					}
+					isExplicitKey = nextScalarIndented;
+				}
+				if (isExplicitKey) {
+					const { value: keyValue, nextIdx: keyNextIdx } = collectMultilineKey(children, i);
+					const resolved = resolveScalar(keyValue, "plain", pendingMeta.tag);
+					const scalar = new YamlScalar({
+						value: resolved,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: child.length,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					pushNode(scalar, child.offset);
+					i = keyNextIdx - 1;
+					continue;
+				}
+			}
 			// For plain scalars not followed by ":", try multi-line merging
 			if (
 				child.type === "flow-scalar" &&
@@ -2001,26 +2143,15 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 				continue;
 			}
 			// Merge consecutive plain scalars in same entry (multi-line plain scalar)
+			// Uses collectMultilinePlainScalar to also handle continuation lines
+			// where the lexer mis-tokenized content as anchors, tags, block-seq, etc. (AB8U)
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
-				const parts: string[] = [child.source.trim()];
-				let mergeEnd = ci + 1;
-				while (mergeEnd < children.length) {
-					const mc = children[mergeEnd];
-					if (!mc) break;
-					if (mc.type === "newline" || (mc.type === "whitespace" && mc.source.trim() === "")) {
-						mergeEnd++;
-						continue;
-					}
-					if (mc.type === "whitespace" && mc.source.trim() === "-") break;
-					if (mc.type === "flow-scalar" && getScalarStyle(mc) === "plain") {
-						parts.push(mc.source.trim());
-						mergeEnd++;
-						continue;
-					}
-					break;
-				}
-				if (parts.length > 1) {
-					const merged = foldFlowLines(parts.join("\n"));
+				const {
+					value: merged,
+					nextIdx: mergeEnd,
+					partsCount,
+				} = collectMultilinePlainScalar(children, ci, undefined, state.text);
+				if (partsCount > 1) {
 					const resolved = resolveScalar(merged, "plain", pendingMeta.tag);
 					const scalar = new YamlScalar({
 						value: resolved,
@@ -2280,7 +2411,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					continue;
 				}
 				// Not followed by ":" — try multi-line value merging
-				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i, undefined, state.text);
 				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
 				const scalar = new YamlScalar({
 					value: resolved,
@@ -2620,7 +2751,7 @@ function composeDocument(
 			}
 			// Standalone scalar — try multi-line plain scalar merging
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
-				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i);
+				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i, undefined, state.text);
 				const resolved = resolveScalar(value, "plain", meta.tag);
 				contents = new YamlScalar({
 					value: resolved,
