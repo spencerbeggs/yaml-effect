@@ -52,10 +52,10 @@
 		"@savvy-web/lint-staged": "^0.6.1",
 		"@savvy-web/rslib-builder": "^0.18.3",
 		"@savvy-web/vitest": "^0.2.2",
-		"effect": "^3.19.19"
+		"effect": "catalog:silk"
 	},
 	"peerDependencies": {
-		"effect": "^3.19.19"
+		"effect": "catalog:silkPeers"
 	},
 	"peerDependenciesMeta": {
 		"effect": {

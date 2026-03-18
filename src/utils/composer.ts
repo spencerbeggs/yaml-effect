@@ -2016,6 +2016,23 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	const children = cst.children ?? [];
 	const pairs: YamlPair[] = [];
 
+	// Validate bracket balance
+	const hasOpen = children.some((c) => c.type === "whitespace" && c.source === "{");
+	const hasClose = children.some((c) => c.type === "whitespace" && c.source === "}");
+	if (hasOpen && !hasClose) {
+		const lc = lineCol(state.text, cst.offset);
+		state.errors.push(
+			new YamlErrorDetail({
+				code: "MalformedFlowCollection",
+				message: "Unclosed flow mapping (missing `}`)",
+				offset: cst.offset,
+				length: cst.length,
+				line: lc.line,
+				column: lc.column,
+			}),
+		);
+	}
+
 	// Filter out brackets and blank whitespace, but KEEP commas and newlines
 	// so that flattenFlowChildren can respect segment boundaries for multi-line keys.
 	const content = children.filter(
@@ -2212,6 +2229,23 @@ function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
 
+	// Validate bracket balance: check that the flow sequence has matching brackets.
+	const hasOpen = children.some((c) => c.type === "whitespace" && c.source === "[");
+	const hasClose = children.some((c) => c.type === "whitespace" && c.source === "]");
+	if (hasOpen && !hasClose) {
+		const lc = lineCol(state.text, cst.offset);
+		state.errors.push(
+			new YamlErrorDetail({
+				code: "MalformedFlowCollection",
+				message: "Unclosed flow sequence (missing `]`)",
+				offset: cst.offset,
+				length: cst.length,
+				line: lc.line,
+				column: lc.column,
+			}),
+		);
+	}
+
 	// Split children into comma-delimited segments, filtering out brackets.
 	// Each segment is processed independently: if it contains a ":" value
 	// separator, it's an implicit single-pair mapping (YAML 1.2 §7.4);
@@ -2219,14 +2253,39 @@ function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 	const segments: CstNode[][] = [];
 	let current: CstNode[] = [];
 
+	let seenContent = false;
+	let lastWasComma = false;
+
 	for (const child of children) {
 		// Skip brackets
 		if (child.type === "whitespace" && (child.source === "[" || child.source === "]")) continue;
 		// Split on commas
 		if (child.type === "whitespace" && child.source === ",") {
+			// Detect leading comma or consecutive commas (empty flow entry)
+			const hasContentInSegment = current.some(
+				(c) => c.type !== "whitespace" && c.type !== "newline" && c.type !== "comment",
+			);
+			if (!hasContentInSegment && (lastWasComma || !seenContent)) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "MalformedFlowCollection",
+						message: "Empty entry in flow sequence",
+						offset: child.offset,
+						length: 1,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			if (current.length > 0) segments.push(current);
 			current = [];
+			lastWasComma = true;
 			continue;
+		}
+		if (child.type !== "whitespace" && child.type !== "newline" && child.type !== "comment") {
+			seenContent = true;
+			lastWasComma = false;
 		}
 		current.push(child);
 	}
@@ -2371,6 +2430,20 @@ function composeDocument(
 
 		// Trivia
 		if (child.type === "whitespace" || child.type === "newline") {
+			// Detect stray flow-closing brackets at document level
+			if (child.type === "whitespace" && (child.source === "]" || child.source === "}")) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "MalformedFlowCollection",
+						message: `Unexpected flow indicator '${child.source}' at document level`,
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			i++;
 			continue;
 		}
@@ -2890,12 +2963,23 @@ function collectAnchors(node: YamlNode | null, anchors: Map<string, YamlNode>): 
  */
 export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNode>): unknown {
 	if (node === null) return null;
+	// Register this node's anchor incrementally so aliases resolve
+	// to the most recent anchor at the point of reference (not the last
+	// definition in the entire document).
+	if (anchors !== undefined) {
+		const a = (node as YamlScalar | YamlMap | YamlSeq).anchor;
+		if (a !== undefined) anchors.set(a, node);
+	}
 	if (node instanceof YamlScalar) return node.value;
 	if (node instanceof YamlMap) {
 		const result: Record<string, unknown> = {};
 		for (const pair of node.items) {
 			let key: string;
 			if (pair.key instanceof YamlScalar) {
+				// Register key anchor before resolving value
+				if (anchors !== undefined && pair.key.anchor !== undefined) {
+					anchors.set(pair.key.anchor, pair.key);
+				}
 				key = String(pair.key.value ?? "");
 			} else if (pair.key instanceof YamlAlias) {
 				const resolved = anchors?.get(pair.key.name);
@@ -2969,7 +3053,8 @@ export function parseDocument(
 					e.code === "UndefinedAlias" ||
 					e.code === "AliasCountExceeded" ||
 					e.code === "UnexpectedToken" ||
-					e.code === "InvalidDirective",
+					e.code === "InvalidDirective" ||
+					e.code === "MalformedFlowCollection",
 			);
 			if (fatalErrors.length > 0) {
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
@@ -3098,7 +3183,9 @@ export function parse(text: string, options?: Partial<YamlParseOptions>): Effect
 					return Effect.fail(new YamlComposerError({ errors: dupErrors, text }));
 				}
 			}
-			const anchors = buildAnchorMap(doc.contents);
+			// Use an empty map so getNodeValue registers anchors incrementally,
+			// ensuring aliases resolve to the most recent anchor at the point of use.
+			const anchors = new Map<string, YamlNode>();
 			return Effect.succeed(getNodeValue(doc.contents, anchors));
 		}),
 	);
@@ -3149,7 +3236,8 @@ export function composeDocumentFromCst(
 			e.code === "UndefinedAlias" ||
 			e.code === "AliasCountExceeded" ||
 			e.code === "UnexpectedToken" ||
-			e.code === "InvalidDirective",
+			e.code === "InvalidDirective" ||
+			e.code === "MalformedFlowCollection",
 	);
 	if (fatalErrors.length > 0) {
 		return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
