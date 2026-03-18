@@ -238,27 +238,27 @@ describe("Task 16: Sort keys option", () => {
 describe("Task 16: Scalar quoting rules", () => {
 	it('quotes "true" string', () => {
 		const result = str("true");
-		expect(result.trim()).toBe('"true"');
+		expect(result.trim()).toBe("'true'");
 	});
 
 	it('quotes "false" string', () => {
 		const result = str("false");
-		expect(result.trim()).toBe('"false"');
+		expect(result.trim()).toBe("'false'");
 	});
 
 	it('quotes "null" string', () => {
 		const result = str("null");
-		expect(result.trim()).toBe('"null"');
+		expect(result.trim()).toBe("'null'");
 	});
 
 	it('quotes "42" string that looks like integer', () => {
 		const result = str("42");
-		expect(result.trim()).toBe('"42"');
+		expect(result.trim()).toBe("'42'");
 	});
 
 	it("quotes empty string", () => {
 		const result = str("");
-		expect(result.trim()).toBe('""');
+		expect(result.trim()).toBe("''");
 	});
 
 	it("quotes string starting with :", () => {
@@ -898,6 +898,67 @@ describe("BigInt stringification", () => {
 // ===========================================================================
 // Control character handling
 // ===========================================================================
+
+describe("Indicator character quoting rules", () => {
+	it("does not quote :foo (colon not followed by whitespace)", () => {
+		expect(str(":foo").trim()).toBe(":foo");
+	});
+
+	it("does not quote ?foo (question mark not followed by whitespace)", () => {
+		expect(str("?foo").trim()).toBe("?foo");
+	});
+
+	it("does not quote -foo (dash not followed by whitespace)", () => {
+		expect(str("-foo").trim()).toBe("-foo");
+	});
+
+	it("does not quote ::vector (colon followed by colon)", () => {
+		expect(str("::vector").trim()).toBe("::vector");
+	});
+
+	it("does not quote ---word1 word2 (--- only a doc marker when followed by whitespace/EOF)", () => {
+		expect(str("---word1 word2").trim()).toBe("---word1 word2");
+	});
+
+	it("still quotes #foo (comment indicator always requires quoting)", () => {
+		const result = str("#foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes ': foo' (colon followed by space)", () => {
+		const result = str(": foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes '? foo' (question mark followed by space)", () => {
+		const result = str("? foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes '- foo' (dash followed by space)", () => {
+		const result = str("- foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("prefers single quotes for strings needing quoting without escapes", () => {
+		// "- foo" starts with dash+space, so requires quoting but no escapes needed
+		const result = str("- foo");
+		expect(result.trim()).toBe("'- foo'");
+	});
+
+	it("uses double quotes when escape sequences are needed", () => {
+		// String with control char that needs quoting AND escaping
+		const result = str("hello\x07world");
+		expect(result.trim()).toMatch(/^"/);
+	});
+
+	it("uses single quotes for type-conflict strings", () => {
+		expect(str(".inf").trim()).toBe("'.inf'");
+		expect(str(".nan").trim()).toBe("'.nan'");
+		expect(str("0xFF").trim()).toBe("'0xFF'");
+		expect(str("0o17").trim()).toBe("'0o17'");
+	});
+});
 
 describe("Control character handling", () => {
 	it("quotes string containing C0 control character (BEL)", () => {

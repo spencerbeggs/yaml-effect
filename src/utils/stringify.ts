@@ -99,10 +99,21 @@ function requiresQuoting(s: string): boolean {
 	if (s.includes("\n")) return true;
 	// Would be resolved as a non-string type
 	if (wouldBeResolved(s)) return true;
-	// Starts with an indicator character or whitespace (space/tab)
+	// Starts with whitespace (space/tab)
 	const first = s[0];
-	if (first !== undefined && INDICATOR_CHARS.has(first)) return true;
 	if (first === " " || first === "\t") return true;
+	// Check leading indicator characters
+	if (first !== undefined && INDICATOR_CHARS.has(first)) {
+		// ':', '?', '-' only require quoting when followed by whitespace or at end of string
+		if (first === ":" || first === "?" || first === "-") {
+			const second = s[1];
+			if (s.length === 1 || second === " " || second === "\t") return true;
+			// Otherwise these are safe as plain scalars (e.g., :foo, ?bar, -baz)
+		} else {
+			// All other indicator chars (#, {, }, [, ], etc.) always require quoting at start
+			return true;
+		}
+	}
 	// Contains ': ' (mapping value indicator with space) or ' #' (comment indicator)
 	if (s.includes(": ") || s.endsWith(":")) return true;
 	if (s.includes(" #")) return true;
@@ -194,6 +205,19 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
+/**
+ * Returns true if a string contains characters that require escape sequences,
+ * meaning it must use double-quoted style rather than single-quoted.
+ */
+function needsEscapes(s: string): boolean {
+	for (let i = 0; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === "\n" || ch === "\r" || ch === "\t" || ch === "\\" || ch === '"' || ch === "'") return true;
+		if (isControlChar(s.charCodeAt(i))) return true;
+	}
+	return false;
+}
+
 function renderString(s: string, style: ScalarStyle, indent: string): string {
 	if (s.includes("\n")) {
 		// Multi-line: prefer block styles
@@ -205,7 +229,10 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 	}
 	switch (style) {
 		case "plain":
-			if (requiresQuoting(s)) return renderDoubleQuoted(s);
+			if (requiresQuoting(s)) {
+				if (needsEscapes(s)) return renderDoubleQuoted(s);
+				return renderSingleQuoted(s);
+			}
 			return s;
 		case "single-quoted":
 			return renderSingleQuoted(s);
