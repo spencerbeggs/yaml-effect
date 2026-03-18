@@ -677,9 +677,69 @@ export function createScanner(text: string): YamlScanner {
 			}
 		}
 
-		// Determine content indentation
+		// Determine content indentation.
+		// When an explicit indentation indicator is present (e.g., |2), the digit
+		// specifies the number of additional indentation spaces relative to the
+		// current block context level n (YAML 1.2 §8.1.1.1). Content lines must
+		// have at least n+m absolute leading spaces. We compute n by scanning
+		// backward to find the indentation context of the block scalar.
 		let contentIndent = explicitIndent;
 		let foundContent = explicitIndent > 0;
+		if (explicitIndent > 0) {
+			// Determine n (parent context indentation) by looking backward from
+			// the block scalar indicator to find the preceding structure:
+			// - If preceded by ":" on same line, n = key's column indentation
+			// - If preceded by "-" on same line, n = column of "-"
+			// - If on its own line (preceded by newline/tag/anchor), n = max
+			//   active indent in blockStarted (the parent block's indent level)
+			let parentIndent = lineIndent;
+			let scanBack = start - 1;
+			// Skip whitespace before the indicator
+			while (scanBack >= 0 && (text[scanBack] === " " || text[scanBack] === "\t")) {
+				scanBack--;
+			}
+			if (scanBack >= 0 && text[scanBack] === ":") {
+				// Mapping value on same line — find the key's indentation
+				let lineStart = scanBack;
+				while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+					lineStart--;
+				}
+				let spaces = 0;
+				while (lineStart + spaces < text.length && text[lineStart + spaces] === " ") {
+					spaces++;
+				}
+				// If the first non-space char is "-" followed by space (compact
+				// sequence notation), the key starts after "- "
+				if (lineStart + spaces < text.length && text[lineStart + spaces] === "-") {
+					const afterDash = lineStart + spaces + 1;
+					if (afterDash < text.length && (text[afterDash] === " " || text[afterDash] === "\t")) {
+						parentIndent = spaces + 2;
+					} else {
+						parentIndent = spaces;
+					}
+				} else {
+					parentIndent = spaces;
+				}
+			} else if (scanBack >= 0 && text[scanBack] === "-") {
+				// Direct sequence entry value on same line — n = column of "-"
+				let lineStart = scanBack;
+				while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+					lineStart--;
+				}
+				parentIndent = scanBack - lineStart;
+			} else {
+				// Block scalar is on its own line (e.g., after a tag or anchor
+				// on a preceding line). The parent context indent is the highest
+				// active block indent level from blockStarted.
+				let maxBlockIndent = 0;
+				for (const key of blockStarted.keys()) {
+					if (key > maxBlockIndent) maxBlockIndent = key;
+				}
+				parentIndent = maxBlockIndent;
+			}
+			contentIndent = parentIndent + explicitIndent;
+			foundContent = true;
+		}
 		if (contentIndent === 0) {
 			// Auto-detect from first non-empty line
 			let scanAhead = pos;

@@ -75,7 +75,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"4Q9F": ["output"],
 	"4QFQ": ["roundtrip"],
 	"4V8U": ["output"],
-	"4WA9": ["json", "output", "roundtrip"],
+	"4WA9": ["output"],
 	"4ZYM": ["output"],
 	"52DL": ["output"],
 	"57H4": ["json", "output"],

@@ -1020,6 +1020,12 @@ describe("Error handling in composer", () => {
 		expect(typeof result).toBe("string");
 	});
 
+	it("parses block scalar with explicit indentation indicator |2 (4WA9)", () => {
+		const yaml = "- aaa: |2\n    xxx\n  bbb: |\n    xxx\n";
+		const result = val(yaml);
+		expect(result).toEqual([{ aaa: "xxx\n", bbb: "xxx\n" }]);
+	});
+
 	it("parses folded block scalar with content", () => {
 		const result = val(">\n  line1\n  line2\n  line3");
 		expect(typeof result).toBe("string");

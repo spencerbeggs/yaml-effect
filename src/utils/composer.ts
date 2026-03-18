@@ -132,8 +132,8 @@ function getScalarStyle(node: CstNode): ScalarStyle {
 	return "plain";
 }
 
-function getScalarValue(node: CstNode): string {
-	if (node.type === "block-scalar") return decodeBlockScalar(node.source);
+function getScalarValue(node: CstNode, fullText?: string): string {
+	if (node.type === "block-scalar") return decodeBlockScalar(node.source, fullText, node.offset);
 	const style = getScalarStyle(node);
 	if (style === "single-quoted") return decodeSingleQuoted(node.source);
 	if (style === "double-quoted") return decodeDoubleQuoted(node.source);
@@ -541,7 +541,84 @@ function decodeDoubleQuoted(raw: string): string {
 	return result;
 }
 
-function decodeBlockScalar(raw: string): string {
+/**
+ * Scan backward in the full document text from a block scalar indicator's
+ * position to find the parent context indentation level n. This handles:
+ * - Same-line ":" (mapping value): n = key's column indent
+ * - Same-line "-" (seq entry): n = column of "-"
+ * - Own-line (preceded by newline, tag, anchor): scan further back across
+ *   lines to find the ":" or "-" that introduced this value
+ */
+function findParentIndent(fullText: string, indicatorOffset: number): number {
+	let scanBack = indicatorOffset - 1;
+	// Skip whitespace on the same line
+	while (scanBack >= 0 && (fullText[scanBack] === " " || fullText[scanBack] === "\t")) {
+		scanBack--;
+	}
+	// If we hit ":" or "-" on the same line, handle directly
+	if (scanBack >= 0 && fullText[scanBack] === ":") {
+		return findKeyIndent(fullText, scanBack);
+	}
+	if (scanBack >= 0 && fullText[scanBack] === "-") {
+		return findColOnLine(fullText, scanBack);
+	}
+	// Block scalar is on its own line (after tag, anchor, or newline).
+	// Scan backward across lines to find the ":" or "-" that introduces
+	// this block scalar as a value.
+	while (scanBack >= 0) {
+		const ch = fullText[scanBack];
+		if (ch === ":") {
+			return findKeyIndent(fullText, scanBack);
+		}
+		if (ch === "-") {
+			// Check if this is a seq entry indicator (followed by space/newline)
+			const afterDash = scanBack + 1;
+			if (
+				afterDash >= fullText.length ||
+				fullText[afterDash] === " " ||
+				fullText[afterDash] === "\t" ||
+				fullText[afterDash] === "\n" ||
+				fullText[afterDash] === "\r"
+			) {
+				return findColOnLine(fullText, scanBack);
+			}
+		}
+		scanBack--;
+	}
+	return 0;
+}
+
+/** Find the column of a character on its line. */
+function findColOnLine(text: string, pos: number): number {
+	let lineStart = pos;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+		lineStart--;
+	}
+	return pos - lineStart;
+}
+
+/** Find the key indentation for a mapping ":" at the given position. */
+function findKeyIndent(text: string, colonPos: number): number {
+	let lineStart = colonPos;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+		lineStart--;
+	}
+	let spaces = 0;
+	while (lineStart + spaces < text.length && text[lineStart + spaces] === " ") {
+		spaces++;
+	}
+	// If the first non-space char is "-" followed by space (compact sequence),
+	// the key starts after "- "
+	if (lineStart + spaces < text.length && text[lineStart + spaces] === "-") {
+		const afterDash = lineStart + spaces + 1;
+		if (afterDash < text.length && (text[afterDash] === " " || text[afterDash] === "\t")) {
+			return spaces + 2;
+		}
+	}
+	return spaces;
+}
+
+function decodeBlockScalar(raw: string, fullText?: string, nodeOffset?: number): string {
 	const firstChar = raw.trimStart()[0];
 	const isFolded = firstChar === ">";
 	let i = raw.indexOf(firstChar === ">" ? ">" : "|");
@@ -573,9 +650,25 @@ function decodeBlockScalar(raw: string): string {
 		else i++;
 	}
 
+	// When an explicit indentation indicator is present (e.g., |2), the digit
+	// specifies additional spaces relative to the parent block indent n
+	// (YAML 1.2 §8.1.1.1). The raw CST source includes the full absolute
+	// indentation, so we need contentIndent = n + m. We compute n by scanning
+	// backward in the full text to find the parent context, using the same
+	// logic as the lexer's scanBlockScalar. When fullText/nodeOffset are not
+	// available, fall back to the explicit digit alone (works for top-level).
 	let contentIndent = explicitIndent;
 	let foundContent = explicitIndent > 0;
-	if (contentIndent === 0) {
+	if (explicitIndent > 0 && fullText !== undefined && nodeOffset !== undefined) {
+		// Determine parent indent by scanning backward from the block scalar
+		// indicator in the full text, mirroring the lexer's approach.
+		// Scan backward past whitespace, newlines, tags, anchors, and comments
+		// to find the ":" or "-" that introduces this block scalar value.
+		const parentIndent = findParentIndent(fullText, nodeOffset);
+		contentIndent = parentIndent + explicitIndent;
+		foundContent = true;
+	} else if (contentIndent === 0) {
+		// Auto-detect from first non-empty line
 		let scanAhead = i;
 		while (scanAhead < raw.length) {
 			let spaces = 0;
@@ -817,7 +910,7 @@ interface NodeMeta {
 
 function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlScalar {
 	const style = getScalarStyle(cst);
-	const rawValue = getScalarValue(cst);
+	const rawValue = getScalarValue(cst, state.text);
 	const value = resolveScalar(rawValue, style, meta?.tag);
 	const scalar = new YamlScalar({
 		value,
