@@ -287,23 +287,24 @@ export function createScanner(text: string): YamlScanner {
 				}
 				return makeToken("error", text.slice(start, pos), start, sLine, sCol);
 			}
-			// flowDepth > 0: lookahead to check if the tab precedes a
-			// flow-closing indicator (] or }), which is harmless whitespace.
-			// Tabs before content inside flow collections are still errors.
+			// flowDepth > 0: tabs are allowed in specific cases inside flow
+			// collections. Check what follows the whitespace run.
 			{
 				let lookPos = pos;
 				while (lookPos < text.length && (text[lookPos] === " " || text[lookPos] === "\t")) {
 					lookPos++;
 				}
-				const nextCh = lookPos < text.length ? text[lookPos] : undefined;
-				if (nextCh === "]" || nextCh === "}") {
+				const nextCh = lookPos < text.length ? text[lookPos] : "";
+				// Tabs before closing indicators, newlines, or EOF are valid
+				// separation space. Tabs before content are invalid (YAML 1.2 §6.1).
+				if (nextCh === "]" || nextCh === "}" || nextCh === "\n" || nextCh === "\r" || nextCh === "") {
 					while (pos < text.length && isWhitespace(peek())) {
 						advance();
 					}
 					return makeToken("whitespace", text.slice(start, pos), start, sLine, sCol);
 				}
 			}
-			// Default: tab as indentation in flow context → error
+			// Default: tab before content in flow context → error
 			while (pos < text.length && isWhitespace(peek())) {
 				advance();
 			}
@@ -361,6 +362,8 @@ export function createScanner(text: string): YamlScanner {
 		}
 		advance(3);
 		const kind = marker === "---" ? "document-start" : "document-end";
+		// Reset block tracking so the next document gets fresh block-start tokens.
+		blockStarted.clear();
 		return makeToken(kind, marker, start, sLine, sCol);
 	}
 
@@ -687,6 +690,19 @@ export function createScanner(text: string): YamlScanner {
 					spaces++;
 					scanAhead++;
 				}
+				// Document markers at column 0 terminate the block scalar
+				if (spaces === 0 && scanAhead + 2 < text.length) {
+					const sc0 = text[scanAhead];
+					const sc1 = text[scanAhead + 1];
+					const sc2 = text[scanAhead + 2];
+					const sc3 = scanAhead + 3 < text.length ? text[scanAhead + 3] : "";
+					if (
+						((sc0 === "-" && sc1 === "-" && sc2 === "-") || (sc0 === "." && sc1 === "." && sc2 === ".")) &&
+						(sc3 === "" || sc3 === " " || sc3 === "\t" || sc3 === "\n" || sc3 === "\r")
+					) {
+						break;
+					}
+				}
 				// If this is a blank line, skip it
 				if (scanAhead >= text.length || text[scanAhead] === "\n" || text[scanAhead] === "\r") {
 					if (scanAhead < text.length) {
@@ -754,6 +770,23 @@ export function createScanner(text: string): YamlScanner {
 				spaces++;
 				pos++;
 				col++;
+			}
+
+			// Document markers (--- or ...) at column 0 always terminate a block scalar,
+			// regardless of indentation level (YAML 1.2 §9.1.2).
+			if (spaces === 0 && pos + 2 < text.length) {
+				const c0 = text[pos];
+				const c1 = text[pos + 1];
+				const c2 = text[pos + 2];
+				const c3 = pos + 3 < text.length ? text[pos + 3] : "";
+				if (
+					((c0 === "-" && c1 === "-" && c2 === "-") || (c0 === "." && c1 === "." && c2 === ".")) &&
+					(c3 === "" || c3 === " " || c3 === "\t" || c3 === "\n" || c3 === "\r")
+				) {
+					pos = lineStart;
+					col = 0;
+					break;
+				}
 			}
 
 			// Check if this is a blank/empty line (newline or EOF after only spaces)

@@ -850,7 +850,19 @@ function parseDocuments(tokens: ReadonlyArray<YamlToken>, text: string): CstNode
 
 	while (!atEnd(state)) {
 		const before = state.pos;
-		documents.push(parseDocument(state));
+		const doc = parseDocument(state);
+
+		// Skip bare document-end markers that don't contain any content.
+		// A document is content-free if it only contains trivia (whitespace,
+		// newline, comment) and document-end nodes. Per YAML spec, a standalone
+		// `...` without preceding content does not produce a document.
+		const hasDocStart = doc.children?.some((c) => c.type === "whitespace" && c.source === "---");
+		const hasContent = doc.children?.some(
+			(c) => c.type !== "whitespace" && c.type !== "newline" && c.type !== "comment" && c.type !== "error",
+		);
+		if (hasDocStart || hasContent || documents.length === 0) {
+			documents.push(doc);
+		}
 
 		// Safety: if no progress was made, force-advance to avoid infinite loop
 		if (state.pos === before && !atEnd(state)) {

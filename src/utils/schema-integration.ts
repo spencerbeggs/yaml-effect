@@ -8,10 +8,11 @@
  */
 
 import { Effect, ParseResult, Schema } from "effect";
+import type { YamlNode } from "../schemas/YamlAstNodes.js";
 import type { YamlDocument } from "../schemas/YamlDocument.js";
 import type { YamlParseOptions } from "../schemas/YamlParseOptions.js";
 import type { YamlStringifyOptions } from "../schemas/YamlStringifyOptions.js";
-import { buildAnchorMap, getNodeValue, parse, parseAllDocuments, parseDocument } from "./composer.js";
+import { getNodeValue, parse, parseAllDocuments, parseDocument } from "./composer.js";
 import { stringify, stringifyDocument } from "./stringify.js";
 
 /**
@@ -181,7 +182,7 @@ export function makeYamlAllFromString(
 						docs,
 						(doc) =>
 							Effect.sync(() => {
-								const anchors = buildAnchorMap(doc.contents);
+								const anchors = new Map<string, YamlNode>();
 								return getNodeValue(doc.contents, anchors);
 							}),
 						{ concurrency: 1 },
