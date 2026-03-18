@@ -382,6 +382,16 @@ function findValueSepOffset(children: readonly CstNode[], startIdx: number): num
 	return -1;
 }
 
+/** Check if a ":" value-sep exists between startIdx (inclusive) and endIdx (exclusive). */
+function hasValueSepBetween(children: readonly CstNode[], startIdx: number, endIdx: number): boolean {
+	for (let j = startIdx; j < endIdx; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "whitespace" && c.source === ":") return true;
+	}
+	return false;
+}
+
 /**
  * Like `hasValueSepAfterInList`, but also skips over plain flow-scalars
  * that appear after a newline. Used to detect multi-line keys:
@@ -1153,6 +1163,15 @@ function flattenBlockMapChildren(
 
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
+			if (child.source === "?") {
+				// Explicit key indicator (YAML §8.2.1). The "?" simply marks
+				// that the next content node is the key of this mapping entry.
+				// We don't need to push a semantic item because the node that
+				// follows will naturally be in key position (before value-sep).
+				// Reset afterValueSep so the next node is treated as a key.
+				afterValueSep = false;
+				continue;
+			}
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
@@ -1259,8 +1278,11 @@ function flattenBlockMapChildren(
 			// Check if this scalar is followed by a block-map (scalar is the first
 			// key of a nested mapping: the parser puts the first key as a sibling
 			// before its block-map child).
+			// But NOT if there's a ":" value-sep between the scalar and the
+			// block-map — in that case, the scalar is a key at the current level
+			// and the block-map is its value (e.g., `mapping:\n  ? sky\n  : blue`).
 			const nextContent = findNextContentInList(children, i + 1);
-			if (nextContent?.node.type === "block-map") {
+			if (nextContent?.node.type === "block-map" && !hasValueSepBetween(children, i + 1, nextContent.idx)) {
 				// The scalar is the first key of the nested mapping — keys don't
 				// carry the pending anchor/tag; those belong on the map itself.
 				const key = makeScalar(child, state);
