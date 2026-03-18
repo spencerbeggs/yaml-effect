@@ -16,7 +16,7 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser accepts invalid YAML (36)
+	// Parser accepts invalid YAML (29)
 	"4HVU": "Parser accepts invalid YAML: Wrong indendation in Sequence",
 	"4JVG": "Parser accepts invalid YAML: Scalar value with two anchors",
 	"5LLU": "Parser accepts invalid YAML: Block scalar with wrong indented line after spaces only",
@@ -46,7 +46,6 @@ export const XFAIL: Record<string, string> = {
 	"Y79Y/009": "Parser accepts invalid YAML: Tab as block indentation after value indicator",
 	YJV2: "Parser accepts invalid YAML: Dash in flow sequence",
 	ZVH3: "Parser accepts invalid YAML: Wrong indented sequence item",
-	ZXT5: "Parser accepts invalid YAML: Implicit key followed by newline and adjacent value",
 };
 
 /**
@@ -81,7 +80,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"57H4": ["json", "output"],
 	"5BVJ": ["output"],
 	"5GBF": ["output"],
-	"5MUD": ["json", "output"],
+	"5MUD": ["output"],
 	"5WE3": ["output", "roundtrip"],
 	"652Z": ["output"],
 	"6BFJ": ["output"],
@@ -187,7 +186,7 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	JHB9: ["output"],
 	JQ4R: ["output"],
 	JTV5: ["output"],
-	K3WX: ["json", "output"],
+	K3WX: ["output"],
 	K527: ["output"],
 	K54U: ["output"],
 	K858: ["output", "roundtrip"],

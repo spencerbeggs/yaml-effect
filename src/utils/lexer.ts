@@ -1084,10 +1084,29 @@ export function createScanner(text: string): YamlScanner {
 
 		// Save and reset the quoted-scalar flag. The `:` handler reads
 		// `prevWasQuoted` to allow adjacent value indicators in flow context
-		// (YAML 1.2 §7.18). Reset here so it only applies to the token
-		// immediately following a quoted scalar.
+		// (YAML 1.2 §7.18). In flow context, preserve the flag across
+		// whitespace, newlines, and comments so that a colon on the next line
+		// after a quoted key is still recognized as a value indicator
+		// (e.g., { "foo"\n  :bar } or { "foo" # comment\n  :bar }).
 		const prevWasQuoted = afterQuotedScalar;
-		afterQuotedScalar = false;
+		if (flowDepth > 0) {
+			const ch0 = peek();
+			// Only reset when we encounter a content-bearing character that is
+			// NOT whitespace, newline, or a comment indicator preceded by space.
+			const isComment =
+				ch0 === "#" &&
+				(pos === 0 ||
+					col === 0 ||
+					text[pos - 1] === " " ||
+					text[pos - 1] === "\t" ||
+					text[pos - 1] === "\n" ||
+					text[pos - 1] === "\r");
+			if (!isWhitespace(ch0) && !isNewline(ch0) && !isComment) {
+				afterQuotedScalar = false;
+			}
+		} else {
+			afterQuotedScalar = false;
+		}
 
 		const ch = peek();
 
