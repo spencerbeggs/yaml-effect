@@ -498,7 +498,16 @@ function stringifyNodeLines(node: YamlNode, ctx: StringifyContext): string[] {
  * Stringifies a YamlScalar node into lines, using the node's style metadata.
  */
 function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: StringifyContext): string[] {
-	const style: ScalarStyle = ctx.forceDefaultStyles ? ctx.defaultScalarStyle : (node.style ?? ctx.defaultScalarStyle);
+	// When forcing default styles, preserve the node's original style for multiline
+	// strings (block-literal vs block-folded vs double-quoted) since the canonical
+	// output retains scalar presentation style even in normalized form.
+	const nodeStyle = node.style ?? ctx.defaultScalarStyle;
+	const style: ScalarStyle =
+		ctx.forceDefaultStyles && typeof node.value === "string" && node.value.includes("\n") && nodeStyle !== "plain"
+			? nodeStyle
+			: ctx.forceDefaultStyles
+				? ctx.defaultScalarStyle
+				: nodeStyle;
 	const val = node.value;
 
 	let lines: string[];
