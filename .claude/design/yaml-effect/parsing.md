@@ -5,8 +5,8 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-14
-last-synced: 2026-03-14
+updated: 2026-03-19
+last-synced: 2026-03-19
 completeness: 85
 related:
   - architecture.md
@@ -68,7 +68,9 @@ The scanner handles all YAML 1.2 constructs:
 - **Directives** -- `%` at column 0, consumes entire line
 - **Block scalars** -- `|` (literal) and `>` (folded) with header parsing
   (chomp `+`/`-`, explicit indent `1`-`9`), auto-indent detection, and
-  proper line folding
+  proper line folding. Explicit indentation (e.g., `|2`) is computed
+  relative to the parent block context (parent indent + explicit digit),
+  not just the digit alone
 - **Quoted scalars** -- single-quoted (with `''` escape) and double-quoted
   (with full YAML 1.2 escape sequences: `\n`, `\t`, `\x`, `\u`, `\U`,
   `\N`, `\_`, `\L`, `\P`, line continuation)
@@ -80,6 +82,9 @@ The scanner handles all YAML 1.2 constructs:
   when entering a new block scope
 - **Plain scalars** -- fallback for unquoted text, with trailing whitespace
   trimming
+- **Flow context quoted scalar handling** -- the `afterQuotedScalar` flag
+  persists across whitespace, newlines, and comments so that `:` on the
+  next line after a quoted key is recognized as a value indicator
 
 ### Stream API (`lex`)
 
@@ -113,10 +118,19 @@ with `tokens`, `text`, `pos`). Key functions:
 - `parseFlowMapping()` / `parseFlowSequence()` -- flow structures with
   bracket matching
 - `parseBlockScalar()` -- wraps lexer-produced block scalar tokens
-- `parseBlockValue()` -- content after `:` in a block mapping
+- `parseBlockValue()` -- content after `:` in a block mapping. Handles
+  `block-seq-start`/`block-seq-entry` tokens after explicit keys (gated
+  by `explicitKey` parameter)
 - `parseSequenceEntryContent()` -- content after `-` in a sequence, with
   implicit mapping detection via `hasImplicitMapAhead()`
-- `parseImplicitBlockMapping()` -- handles `- key: value` patterns
+- `parseImplicitBlockMapping()` -- handles `- key: value` patterns. Checks
+  token column against parent sequence indent, breaking out when content
+  returns to parent level
+- `lastNonTriviaIsValueSep()` -- skips anchor and tag nodes (metadata, not
+  values) when checking if the previous non-trivia token was a value
+  separator
+- `findFirstSeqEntryColumn()` -- helper for resolving indent level of the
+  first sequence entry in a block
 
 CST node construction:
 
@@ -158,7 +172,11 @@ styles:
   `flow-scalar` nodes (one per source line); `collectMultilinePlainScalar`
   merges consecutive plain scalars, stopping at block structure indicators
   (`?`, `:`, `-`), comments, and scalars followed by value-sep (mapping
-  keys).
+  keys). Continuation line detection also handles non-scalar CST nodes
+  (anchors, tags, aliases, directives at non-document-start positions)
+  via `extractLineContent` and `skipChildrenOnLine` helpers. Multi-line
+  explicit keys (`?` followed by indented continuation scalars) are
+  merged via `collectMultilineKey`.
 - **Single-quoted scalars** (`decodeSingleQuoted`): Unescapes `''` to
   `'`, then applies `foldFlowLines`.
 - **Double-quoted scalars** (`decodeDoubleQuoted`): Processes escape
@@ -175,7 +193,8 @@ characters, and leading whitespace on continuation lines is trimmed.
 
 The composer walks CST nodes and produces:
 
-- `document` -> `YamlDocument` (with directives, errors, warnings, comment)
+- `document` -> `YamlDocument` (with directives, errors, warnings, comment,
+  hasDocumentStart)
 - `block-map` / `flow-map` -> `YamlMap` with `YamlPair` items
 - `block-seq` / `flow-seq` -> `YamlSeq` with `YamlNode` items
 - `flow-scalar` / `block-scalar` -> `YamlScalar` with resolved value and
@@ -183,6 +202,33 @@ The composer walks CST nodes and produces:
 - `alias` -> `YamlAlias`
 - `anchor` / `tag` -> applied to the next value node
 - `comment` -> attached to parent node's `comment` field
+
+`hasDocumentStart` is detected by checking for a `whitespace` CST node
+with `source === "---"` among the document's children.
+
+### TAG Directive Resolution
+
+The composer processes `%TAG` directives to build a tag handle prefix
+map (`tagMap` on `ComposerState`). The `resolveTagHandle()` function
+expands tag handles when resolving scalars:
+
+- `!!` shorthand is expanded via the `!!` mapping (defaults to
+  `tag:yaml.org,2002:`)
+- Named handles like `!e!` are expanded via their `%TAG` definition
+- Primary `!` handle is expanded via the `!` mapping
+
+The tag map is populated during `composeDocument` and threaded through
+all `resolveScalar()` calls.
+
+### Block Map Flattening
+
+`flattenBlockMapChildren()` reorganizes raw CST children into a
+structured key/value sequence. Notable behaviors:
+
+- `?` whitespace nodes reset the `afterValueSep` flag
+- `hasValueSepBetween` check prevents false scalar-before-block-map
+  pattern matching (where a scalar sibling should not be absorbed as
+  a key if a value separator appears between them)
 
 ### Anchor/Alias Handling
 
@@ -202,6 +248,20 @@ Composition errors produce `YamlComposerError` containing:
 
 Error codes: `UndefinedAlias`, `DuplicateAnchor`, `CircularAlias`,
 `UnresolvedTag`, `InvalidTagValue`, `AliasCountExceeded`.
+
+### Block Scalar Decoding
+
+The composer's `decodeBlockScalar()` re-decodes block scalar content from
+the CST `source` field independently of the lexer. Explicit indentation
+is computed using `findParentIndent()`, which scans backward through the
+full source text to find the `:` or `-` that introduced the block scalar,
+then adds the explicit indent digit to that parent indent level. This
+ensures correct content extraction when block scalars are nested inside
+mappings or sequences.
+
+See also the "Dual Block Scalar Decoders" note in
+[compliance-testing.md](./compliance-testing.md) -- any block scalar fix
+must be applied in both the lexer and composer.
 
 ### Composer Public API
 

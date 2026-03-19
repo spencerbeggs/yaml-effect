@@ -5,8 +5,8 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-14
-last-synced: 2026-03-14
+updated: 2026-03-19
+last-synced: 2026-03-19
 completeness: 85
 related:
   - architecture.md
@@ -128,6 +128,9 @@ Fields:
 - `warnings: Array<YamlErrorDetail>` -- non-fatal warnings
 - `directives: Array<YamlDirective>`
 - `comment?: String` -- document-level comment
+- `hasDocumentStart: Boolean` (default: `false`) -- whether `---` was
+  present in the source. Used by `stringifyDocument()` to decide whether
+  to emit a document-start marker in output
 
 ## Token (`src/schemas/YamlToken.ts`)
 
@@ -230,6 +233,11 @@ Type guard predicates exported for each (e.g., `isCstKeyEvent`,
 - `defaultCollectionStyle: CollectionStyle` (default: `"block"`)
 - `sortKeys: Boolean` (default: `false`)
 - `finalNewline: Boolean` (default: `true`)
+- `forceDefaultStyles: Boolean` (default: `false`) -- when true, overrides
+  AST node collection styles with the defaults from options. Multiline
+  scalar sub-styles (block-literal, block-folded, double-quoted) are
+  preserved. Primarily used for canonical output comparison in compliance
+  testing
 
 ### YamlFormattingOptions (`src/schemas/YamlFormattingOptions.ts`)
 
