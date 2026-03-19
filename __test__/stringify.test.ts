@@ -999,3 +999,62 @@ describe("Control character handling", () => {
 		expect(result.trim()).toMatch(/"/);
 	});
 });
+
+// ===========================================================================
+// Compact notation for block sequences as mapping values
+// ===========================================================================
+
+describe("Compact notation for block sequences as mapping values", () => {
+	it("uses compact notation for sequence values in mappings", () => {
+		const result = str({ key: ["a", "b"] });
+		expect(result).toBe("key:\n- a\n- b\n");
+	});
+
+	it("still indents nested mapping values", () => {
+		const result = str({ key: { nested: "val" } });
+		expect(result).toBe("key:\n  nested: val\n");
+	});
+
+	it("still indents block scalar content in mappings", () => {
+		const result = str({ key: "multi\nline\n" });
+		// Block scalar content is indented (currently uses double indent — task #8 tracks fixing this)
+		expect(result).toContain("key: |");
+		expect(result).toContain("multi");
+		expect(result).toContain("line");
+	});
+
+	it("uses compact notation with multiple mapping keys having sequence values", () => {
+		const result = str({
+			hr: ["Mark McGwire", "Sammy Sosa"],
+			rbi: ["Sammy Sosa", "Ken Griffey"],
+		});
+		expect(result).toBe("hr:\n- Mark McGwire\n- Sammy Sosa\nrbi:\n- Sammy Sosa\n- Ken Griffey\n");
+	});
+
+	it("does not apply compact notation to empty arrays", () => {
+		const result = str({ key: [] });
+		expect(result).toBe("key: []\n");
+	});
+
+	it("does not apply compact notation when flow style is used", () => {
+		const result = str({ key: [1, 2] }, { defaultCollectionStyle: "flow" });
+		expect(result).toBe("{key: [1, 2]}\n");
+	});
+
+	it("handles mixed sequence and mapping values", () => {
+		const result = str({ seq: ["a", "b"], map: { x: 1 } });
+		expect(result).toBe("seq:\n- a\n- b\nmap:\n  x: 1\n");
+	});
+
+	it("handles nested sequences within sequence values", () => {
+		const result = str({
+			key: [
+				[1, 2],
+				[3, 4],
+			],
+		});
+		const lines = result.split("\n").filter((l) => l.length > 0);
+		expect(lines[0]).toBe("key:");
+		expect(lines[1]).toBe("- - 1");
+	});
+});

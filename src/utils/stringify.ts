@@ -450,8 +450,14 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 				for (let i = 1; i < valLines.length; i++) {
 					lines.push(`${pad}${valLines[i]}`);
 				}
+			} else if (Array.isArray(val) && val.length > 0) {
+				// Block sequence as mapping value: compact notation (no extra indent)
+				lines.push(`${keyStr}:`);
+				for (const vl of valLines) {
+					lines.push(vl);
+				}
 			} else {
-				// Nested block collection: key on its own line, value indented
+				// Nested block mapping: key on its own line, value indented
 				lines.push(`${keyStr}:`);
 				for (const vl of valLines) {
 					lines.push(`${pad}${vl}`);
@@ -541,7 +547,17 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			continue;
 		}
 		const valLines = stringifyNodeLines(valNode, ctx);
-		if (valLines.length === 1) {
+		const isBlockSeqValue =
+			valNode instanceof YamlSeq &&
+			valNode.items.length > 0 &&
+			(ctx.forceDefaultStyles ? ctx.defaultCollectionStyle : (valNode.style ?? ctx.defaultCollectionStyle)) === "block";
+		if (isBlockSeqValue) {
+			// Block sequence as mapping value: compact notation (no extra indent)
+			lines.push(`${keyStr}:`);
+			for (const vl of valLines) {
+				lines.push(vl);
+			}
+		} else if (valLines.length === 1) {
 			lines.push(`${keyStr}: ${valLines[0]}`);
 		} else {
 			const first = valLines[0];
