@@ -214,7 +214,7 @@ function renderBlockFolded(s: string, indent: string): string {
 function needsEscapes(s: string): boolean {
 	for (let i = 0; i < s.length; i++) {
 		const ch = s[i];
-		if (ch === "\n" || ch === "\r" || ch === "\t" || ch === "\\" || ch === '"' || ch === "'") return true;
+		if (ch === "\n" || ch === "\r" || ch === "\t") return true;
 		if (isControlChar(s.charCodeAt(i))) return true;
 	}
 	return false;
@@ -823,10 +823,21 @@ export function stringifyDocument(
 			const body = opts.finalNewline ? `${result}\n` : result;
 
 			if (doc.hasDocumentStart) {
-				// When the root node has a tag, put --- and body on the same line: --- !!tag value
 				const rootTag = doc.contents && "tag" in doc.contents ? doc.contents.tag : undefined;
 				if (rootTag) {
-					return doc.comment ? `# ${doc.comment}\n--- ${body}` : `--- ${body}`;
+					// Strip the tag from body's first line (already prepended by stringifyNodeLines)
+					// and place it on the --- line. For block collections, content must start
+					// on the next line to avoid ambiguous `--- !!map key: val` parsing.
+					const tagPrefix = `${rootTag} `;
+					const bodyWithoutTag = body.startsWith(tagPrefix) ? body.slice(tagPrefix.length) : body;
+					const docStart = `--- ${rootTag}`;
+					// For block collections, content must start on the next line to avoid
+					// ambiguous `--- !!map key: val` parsing. For scalars, keep inline.
+					const isCollection = doc.contents instanceof YamlMap || doc.contents instanceof YamlSeq;
+					const sep = isCollection ? "\n" : " ";
+					return doc.comment
+						? `# ${doc.comment}\n${docStart}${sep}${bodyWithoutTag}`
+						: `${docStart}${sep}${bodyWithoutTag}`;
 				}
 				return doc.comment ? `# ${doc.comment}\n---\n${body}` : `---\n${body}`;
 			}
