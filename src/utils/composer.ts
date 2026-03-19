@@ -111,8 +111,11 @@ function resolveTaggedScalar(rawValue: string, tag: string): unknown {
 	}
 }
 
-function resolveScalar(rawValue: string, style: ScalarStyle, tag?: string): unknown {
-	if (tag) return resolveTaggedScalar(rawValue, tag);
+function resolveScalar(rawValue: string, style: ScalarStyle, tag?: string, state?: ComposerState): unknown {
+	if (tag) {
+		const resolvedTag = state ? resolveTagHandle(tag, state) : tag;
+		return resolveTaggedScalar(rawValue, resolvedTag);
+	}
 	if (style !== "plain") return rawValue;
 	return resolvePlainScalar(rawValue);
 }
@@ -925,6 +928,8 @@ interface ComposerState {
 		readonly maxAliasCount: number;
 		readonly uniqueKeys: boolean;
 	};
+	/** Tag handle to prefix map from %TAG directives (e.g. "!!" maps to "tag:yaml.org,2002:") */
+	tagMap: Map<string, string>;
 }
 
 function createState(text: string, options?: Partial<YamlParseOptions>): ComposerState {
@@ -939,7 +944,54 @@ function createState(text: string, options?: Partial<YamlParseOptions>): Compose
 			maxAliasCount: options?.maxAliasCount ?? 100,
 			uniqueKeys: options?.uniqueKeys ?? true,
 		},
+		tagMap: new Map(),
 	};
+}
+
+/**
+ * Resolve a tag shorthand using the document's %TAG directives.
+ * For example, with `%TAG !! tag:example.com,2000:app/`, the tag `!!int`
+ * resolves to `tag:example.com,2000:app/int`.
+ *
+ * Returns the resolved tag URI, or the original tag if no directive matches.
+ */
+function resolveTagHandle(tag: string, state: ComposerState): string {
+	// Verbatim tags: !<...> — return the content as-is
+	if (tag.startsWith("!<") && tag.endsWith(">")) {
+		return tag.slice(2, -1);
+	}
+	// Secondary tag handle: !!suffix
+	if (tag.startsWith("!!")) {
+		const prefix = state.tagMap.get("!!");
+		if (prefix) {
+			return prefix + tag.slice(2);
+		}
+		// Default secondary tag handle: tag:yaml.org,2002:
+		return `tag:yaml.org,2002:${tag.slice(2)}`;
+	}
+	// Named tag handle: !name!suffix
+	const namedMatch = tag.match(/^(![\w-]*!)(.*)$/);
+	if (namedMatch) {
+		const handle = namedMatch[1];
+		const suffix = namedMatch[2];
+		if (handle) {
+			const prefix = state.tagMap.get(handle);
+			if (prefix) {
+				return prefix + (suffix ?? "");
+			}
+		}
+	}
+	// Primary tag handle: !suffix (non-empty suffix)
+	if (tag.startsWith("!") && tag.length > 1 && !tag.startsWith("!!")) {
+		const prefix = state.tagMap.get("!");
+		if (prefix) {
+			return prefix + tag.slice(1);
+		}
+		// Default primary: local tag
+		return tag;
+	}
+	// Non-specific tag: ! alone
+	return tag;
 }
 
 // ---------------------------------------------------------------------------
@@ -998,7 +1050,7 @@ interface NodeMeta {
 function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlScalar {
 	const style = getScalarStyle(cst);
 	const rawValue = getScalarValue(cst, state.text);
-	const value = resolveScalar(rawValue, style, meta?.tag);
+	const value = resolveScalar(rawValue, style, meta?.tag, state);
 	const scalar = new YamlScalar({
 		value,
 		style,
@@ -1252,7 +1304,7 @@ function flattenBlockMapChildren(
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
-					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const value = resolveScalar("", "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value,
 						style: "plain" as ScalarStyle,
@@ -1311,7 +1363,7 @@ function flattenBlockMapChildren(
 			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
 			// But NOT when meta is in key position: `!!str a: b` — tag is for key.
 			if (afterValueSep && hasMeta(pendingMeta) && hasValueSepAfterInList(children, i + 1)) {
-				const value = resolveScalar("", "plain", pendingMeta.tag);
+				const value = resolveScalar("", "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value,
 					style: "plain" as ScalarStyle,
@@ -1418,7 +1470,7 @@ function flattenBlockMapChildren(
 				}
 				if (isExplicitKey) {
 					const { value: keyValue, nextIdx: keyNextIdx } = collectMultilineKey(children, i);
-					const resolved = resolveScalar(keyValue, "plain", pendingMeta.tag);
+					const resolved = resolveScalar(keyValue, "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
@@ -1501,7 +1553,7 @@ function flattenBlockMapChildren(
 					minContCol,
 					minContCol !== undefined ? state.text : undefined,
 				);
-				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -1617,7 +1669,7 @@ function flattenBlockMapChildren(
 	}
 	// Flush trailing pending tag/anchor as empty scalar
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -2152,7 +2204,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 					partsCount,
 				} = collectMultilinePlainScalar(children, ci, undefined, state.text);
 				if (partsCount > 1) {
-					const resolved = resolveScalar(merged, "plain", pendingMeta.tag);
+					const resolved = resolveScalar(merged, "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
@@ -2227,7 +2279,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., - !!str)
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -2318,7 +2370,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
-					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const value = resolveScalar("", "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value,
 						style: "plain" as ScalarStyle,
@@ -2395,7 +2447,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					// Plain scalar eventually followed by ":" (possibly through
 					// continuation plain scalars) — merge as multi-line key
 					const { value, nextIdx } = collectMultilineKey(children, i);
-					const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+					const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
@@ -2412,7 +2464,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 				}
 				// Not followed by ":" — try multi-line value merging
 				const { value, nextIdx } = collectMultilinePlainScalar(children, i, undefined, state.text);
-				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -2452,7 +2504,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., !!str at end of flow)
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -2669,7 +2721,17 @@ function composeDocument(
 		// Directives
 		if (child.type === "directive") {
 			const directive = parseDirective(child.source);
-			if (directive) directives.push(directive);
+			if (directive) {
+				directives.push(directive);
+				// Populate tag map from %TAG directives
+				if (directive.name === "TAG" && directive.parameters.length >= 2) {
+					const handle = directive.parameters[0];
+					const prefix = directive.parameters[1];
+					if (handle && prefix) {
+						state.tagMap.set(handle, prefix);
+					}
+				}
+			}
 			i++;
 			continue;
 		}
@@ -2752,7 +2814,7 @@ function composeDocument(
 			// Standalone scalar — try multi-line plain scalar merging
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i, undefined, state.text);
-				const resolved = resolveScalar(value, "plain", meta.tag);
+				const resolved = resolveScalar(value, "plain", meta.tag, state);
 				contents = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,

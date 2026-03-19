@@ -285,6 +285,9 @@ function lastNonTriviaIsValueSep(children: readonly CstNode[]): boolean {
 		if (c.type === "whitespace" && c.source === ":") return true;
 		if (c.type === "newline" || c.type === "comment") continue;
 		if (c.type === "whitespace") continue;
+		// Anchors and tags are metadata that attach to the next value —
+		// they don't count as value content for the purpose of this check.
+		if (c.type === "anchor" || c.type === "tag") continue;
 		return false;
 	}
 	return false;
@@ -709,6 +712,9 @@ function parseImplicitBlockMapping(state: ParserState, seqIndent: number): CstNo
 				children.push(parseBlockScalar(state));
 				continue;
 			}
+			// If this content token is at or below the parent sequence indent
+			// AND we already have entries, it belongs to a parent scope.
+			if (entryIndent >= 0 && token.column <= seqIndent) break;
 			// Track the indent of the first key
 			if (entryIndent < 0) {
 				entryIndent = token.column;
