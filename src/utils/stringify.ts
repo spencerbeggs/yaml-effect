@@ -384,7 +384,7 @@ function stringifyArrayLines(arr: unknown[], ctx: StringifyContext): string[] {
 			if (first.startsWith("|") || first.startsWith(">")) {
 				lines.push(`- ${first}`);
 				for (let i = 1; i < itemLines.length; i++) {
-					lines.push(`${pad}${itemLines[i]}`);
+					lines.push(itemLines[i]);
 				}
 			} else {
 				// Nested mapping or sequence — indent continuation lines by one level
@@ -450,7 +450,7 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 				// Block scalar header on same line as key
 				lines.push(`${keyStr}: ${first}`);
 				for (let i = 1; i < valLines.length; i++) {
-					lines.push(`${pad}${valLines[i]}`);
+					lines.push(valLines[i]);
 				}
 			} else if (Array.isArray(val) && val.length > 0) {
 				// Block sequence as mapping value: compact notation (no extra indent)
@@ -594,7 +594,7 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			if (first.startsWith("|") || first.startsWith(">")) {
 				lines.push(`${keyStr}: ${first}`);
 				for (let i = 1; i < valLines.length; i++) {
-					lines.push(`${pad}${valLines[i]}`);
+					lines.push(valLines[i]);
 				}
 			} else {
 				lines.push(`${keyStr}:`);
@@ -657,7 +657,7 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 			if (first.startsWith("|") || first.startsWith(">")) {
 				lines.push(`- ${first}`);
 				for (let i = 1; i < itemLines.length; i++) {
-					lines.push(`${pad}${itemLines[i]}`);
+					lines.push(itemLines[i]);
 				}
 			} else {
 				// Nested mapping or sequence — indent continuation lines by one level
