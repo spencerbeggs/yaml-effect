@@ -140,7 +140,7 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 								return;
 							}
 							const docs = Either.getOrThrow(docsResult);
-							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc)));
+							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
 							const stringified = parts.join("---\n");
 							expect(stringified).toBe(tc.outYaml);
 						} else {
@@ -149,7 +149,9 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 								expect.unreachable(`Parse failed for ${tc.id}`);
 								return;
 							}
-							const stringified = Effect.runSync(stringifyDocument(Either.getOrThrow(docResult)));
+							const stringified = Effect.runSync(
+								stringifyDocument(Either.getOrThrow(docResult), { forceDefaultStyles: true }),
+							);
 							expect(stringified).toBe(tc.outYaml);
 						}
 					});

@@ -290,6 +290,7 @@ interface StringifyContext {
 	defaultScalarStyle: ScalarStyle;
 	defaultCollectionStyle: CollectionStyle;
 	sortKeys: boolean;
+	forceDefaultStyles: boolean;
 	seen: Set<object>;
 }
 
@@ -489,7 +490,7 @@ function stringifyNodeLines(node: YamlNode, ctx: StringifyContext): string[] {
  * Stringifies a YamlScalar node into lines, using the node's style metadata.
  */
 function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: StringifyContext): string[] {
-	const style: ScalarStyle = node.style ?? ctx.defaultScalarStyle;
+	const style: ScalarStyle = ctx.forceDefaultStyles ? ctx.defaultScalarStyle : (node.style ?? ctx.defaultScalarStyle);
 	const val = node.value;
 
 	if (val === null || val === undefined) return ["null"];
@@ -506,7 +507,9 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
  * Stringifies a YamlMap node into lines, using the node's collection style.
  */
 function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: StringifyContext): string[] {
-	const style: CollectionStyle = node.style ?? ctx.defaultCollectionStyle;
+	const style: CollectionStyle = ctx.forceDefaultStyles
+		? ctx.defaultCollectionStyle
+		: (node.style ?? ctx.defaultCollectionStyle);
 	let items = [...node.items];
 	if (ctx.sortKeys) {
 		items = items.sort((a, b) => {
@@ -562,7 +565,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
  * Stringifies a YamlSeq node into lines, using the node's collection style.
  */
 function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: StringifyContext): string[] {
-	const style: CollectionStyle = node.style ?? ctx.defaultCollectionStyle;
+	const style: CollectionStyle = ctx.forceDefaultStyles
+		? ctx.defaultCollectionStyle
+		: (node.style ?? ctx.defaultCollectionStyle);
 	const items = [...node.items];
 
 	if (items.length === 0) return ["[]"];
@@ -664,6 +669,7 @@ export function stringify(
 				defaultScalarStyle: opts.defaultScalarStyle,
 				defaultCollectionStyle: opts.defaultCollectionStyle,
 				sortKeys: opts.sortKeys,
+				forceDefaultStyles: opts.forceDefaultStyles,
 				seen: new Set(),
 			};
 			const result = stringifyValue(value, ctx);
@@ -722,6 +728,7 @@ export function stringifyDocument(
 				defaultScalarStyle: opts.defaultScalarStyle,
 				defaultCollectionStyle: opts.defaultCollectionStyle,
 				sortKeys: opts.sortKeys,
+				forceDefaultStyles: opts.forceDefaultStyles,
 				seen: new Set(),
 			};
 
