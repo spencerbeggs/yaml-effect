@@ -114,6 +114,8 @@ function requiresQuoting(s: string): boolean {
 			return true;
 		}
 	}
+	// Starts with document marker prefix (--- or ...) — ambiguous at line start
+	if (s.startsWith("---") || s.startsWith("...")) return true;
 	// Contains ': ' (mapping value indicator with space) or ' #' (comment indicator)
 	if (s.includes(": ") || s.endsWith(":")) return true;
 	if (s.includes(" #")) return true;

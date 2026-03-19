@@ -916,8 +916,9 @@ describe("Indicator character quoting rules", () => {
 		expect(str("::vector").trim()).toBe("::vector");
 	});
 
-	it("does not quote ---word1 word2 (--- only a doc marker when followed by whitespace/EOF)", () => {
-		expect(str("---word1 word2").trim()).toBe("---word1 word2");
+	it("quotes ---word1 word2 (--- prefix is ambiguous at line start)", () => {
+		const result = str("---word1 word2").trim();
+		expect(result).toBe("'---word1 word2'");
 	});
 
 	it("still quotes #foo (comment indicator always requires quoting)", () => {
