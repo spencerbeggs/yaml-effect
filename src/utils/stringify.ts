@@ -501,14 +501,23 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	const style: ScalarStyle = ctx.forceDefaultStyles ? ctx.defaultScalarStyle : (node.style ?? ctx.defaultScalarStyle);
 	const val = node.value;
 
-	if (val === null || val === undefined) return ["null"];
-	if (typeof val === "boolean") return [val ? "true" : "false"];
-	if (typeof val === "number") return [renderNumber(val)];
-	if (typeof val === "string") {
+	let lines: string[];
+	if (val === null || val === undefined) {
+		lines = ["null"];
+	} else if (typeof val === "boolean") {
+		lines = [val ? "true" : "false"];
+	} else if (typeof val === "number") {
+		lines = [renderNumber(val)];
+	} else if (typeof val === "string") {
 		const rendered = renderString(val, style, " ".repeat(ctx.indent));
-		return rendered.split("\n");
+		lines = rendered.split("\n");
+	} else {
+		lines = [renderDoubleQuoted(String(val))];
 	}
-	return [renderDoubleQuoted(String(val))];
+	if (node.anchor) {
+		lines[0] = `&${node.anchor} ${lines[0]}`;
+	}
+	return lines;
 }
 
 /**
@@ -527,7 +536,13 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		});
 	}
 
-	if (items.length === 0) return ["{}"];
+	if (items.length === 0) {
+		const emptyLines = ["{}"];
+		if (node.anchor) {
+			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
+		}
+		return emptyLines;
+	}
 
 	if (style === "flow") {
 		const pairs = items.map((pair) => {
@@ -535,7 +550,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			const valStr = pair.value ? stringifyNodeLines(pair.value, ctx).join(" ") : "null";
 			return `${keyStr}: ${valStr}`;
 		});
-		return [`{${pairs.join(", ")}}`];
+		const flowLines = [`{${pairs.join(", ")}}`];
+		if (node.anchor) {
+			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
+		}
+		return flowLines;
 	}
 
 	// Block style
@@ -576,6 +595,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			}
 		}
 	}
+	if (node.anchor) {
+		lines[0] = `&${node.anchor} ${lines[0]}`;
+	}
 	return lines;
 }
 
@@ -588,11 +610,21 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 		: (node.style ?? ctx.defaultCollectionStyle);
 	const items = [...node.items];
 
-	if (items.length === 0) return ["[]"];
+	if (items.length === 0) {
+		const emptyLines = ["[]"];
+		if (node.anchor) {
+			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
+		}
+		return emptyLines;
+	}
 
 	if (style === "flow") {
 		const parts = items.map((item) => stringifyNodeLines(item, ctx).join(" "));
-		return [`[${parts.join(", ")}]`];
+		const flowLines = [`[${parts.join(", ")}]`];
+		if (node.anchor) {
+			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
+		}
+		return flowLines;
 	}
 
 	// Block style
@@ -617,6 +649,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 				}
 			}
 		}
+	}
+	if (node.anchor) {
+		lines[0] = `&${node.anchor} ${lines[0]}`;
 	}
 	return lines;
 }
