@@ -111,8 +111,11 @@ function resolveTaggedScalar(rawValue: string, tag: string): unknown {
 	}
 }
 
-function resolveScalar(rawValue: string, style: ScalarStyle, tag?: string): unknown {
-	if (tag) return resolveTaggedScalar(rawValue, tag);
+function resolveScalar(rawValue: string, style: ScalarStyle, tag?: string, state?: ComposerState): unknown {
+	if (tag) {
+		const resolvedTag = state ? resolveTagHandle(tag, state) : tag;
+		return resolveTaggedScalar(rawValue, resolvedTag);
+	}
 	if (style !== "plain") return rawValue;
 	return resolvePlainScalar(rawValue);
 }
@@ -132,8 +135,8 @@ function getScalarStyle(node: CstNode): ScalarStyle {
 	return "plain";
 }
 
-function getScalarValue(node: CstNode): string {
-	if (node.type === "block-scalar") return decodeBlockScalar(node.source);
+function getScalarValue(node: CstNode, fullText?: string): string {
+	if (node.type === "block-scalar") return decodeBlockScalar(node.source, fullText, node.offset);
 	const style = getScalarStyle(node);
 	if (style === "single-quoted") return decodeSingleQuoted(node.source);
 	if (style === "double-quoted") return decodeDoubleQuoted(node.source);
@@ -252,6 +255,42 @@ function collectMultilineKey(children: readonly CstNode[], startIdx: number): { 
 }
 
 /**
+ * Extract the trimmed content of the line at `offset` in `text`.
+ * Returns the trimmed text and the offset of the next line (or EOF).
+ */
+function extractLineContent(text: string, offset: number): { lineText: string; lineEndOffset: number } {
+	// Find start of line
+	let lineStart = offset;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n") {
+		lineStart--;
+	}
+	// Find end of line
+	let lineEnd = offset;
+	while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") {
+		lineEnd++;
+	}
+	return { lineText: text.slice(lineStart, lineEnd).trim(), lineEndOffset: lineEnd };
+}
+
+/**
+ * Skip all children whose offset falls on the same line as `lineOffset`.
+ * Returns the index of the first child that is past the line end.
+ */
+function skipChildrenOnLine(children: readonly CstNode[], startIdx: number, lineEndOffset: number): number {
+	let idx = startIdx;
+	while (idx < children.length) {
+		const c = children[idx];
+		if (!c) break;
+		// Children that start at or before the line end belong to this line.
+		// But newlines at the line end separate lines — stop before the newline.
+		if (c.type === "newline" && c.offset >= lineEndOffset) break;
+		if (c.offset > lineEndOffset) break;
+		idx++;
+	}
+	return idx;
+}
+
+/**
  * Collect a multi-line plain scalar from consecutive CST children.
  * Starting from a plain flow-scalar at `startIdx`, look ahead through
  * newlines and whitespace for more plain flow-scalars that continue the
@@ -262,6 +301,11 @@ function collectMultilineKey(children: readonly CstNode[], startIdx: number): { 
  * - Be a plain flow-scalar (not quoted)
  * - NOT be followed by a value-sep (`:`) — that makes it a mapping key
  * - Be separated from the previous scalar only by newlines/whitespace
+ *
+ * When the lexer mis-tokenizes continuation line content as anchors, tags,
+ * aliases, directives, or block-seq entries, this function detects such
+ * lines and extracts the raw source text as continuation parts (3MYT, FBC9,
+ * XLQ9, AB8U).
  */
 function collectMultilinePlainScalar(
 	children: readonly CstNode[],
@@ -283,6 +327,8 @@ function collectMultilinePlainScalar(
 	const parts: string[] = [first.source.trim()];
 	let emptyLines = 0;
 	let idx = startIdx + 1;
+	// Track whether we've seen a newline since the last content (for continuation detection)
+	let sawNewline = false;
 
 	while (idx < children.length) {
 		const child = children[idx];
@@ -290,6 +336,7 @@ function collectMultilinePlainScalar(
 
 		if (child.type === "newline") {
 			emptyLines++;
+			sawNewline = true;
 			idx++;
 			continue;
 		}
@@ -325,9 +372,42 @@ function collectMultilinePlainScalar(
 			}
 			parts.push(child.source.trim());
 			emptyLines = 0;
+			sawNewline = false;
 			idx++;
 			continue;
 		}
+
+		// Non-scalar node (anchor, tag, alias, directive, block-seq, etc.)
+		// On a continuation line, these may be mis-tokenized plain scalar text.
+		// Check if the raw source line is indented (indicating continuation).
+		// Directive nodes (e.g., %YAML 1.2) inside document content are always
+		// continuations since real directives only appear before `---` (XLQ9).
+		// Exclude flow-scalar and block-scalar nodes — the lexer correctly
+		// identifies these (e.g., quoted scalars like '' should not be merged
+		// as plain scalar continuation text).
+		if (sawNewline && sourceText && child.type !== "flow-scalar" && child.type !== "block-scalar") {
+			const childCol = lineCol(sourceText, child.offset).column;
+			const isDirectiveContinuation = child.type === "directive";
+			// Continuation lines must be indented (column > 0), or be directives
+			if (childCol > 0 || isDirectiveContinuation) {
+				const { lineText, lineEndOffset } = extractLineContent(sourceText, child.offset);
+				if (lineText.length > 0) {
+					// Merge empty lines
+					if (emptyLines > 1) {
+						for (let e = 0; e < emptyLines - 1; e++) {
+							parts.push("");
+						}
+					}
+					parts.push(lineText);
+					emptyLines = 0;
+					sawNewline = false;
+					// Skip all children on this line
+					idx = skipChildrenOnLine(children, idx, lineEndOffset);
+					continue;
+				}
+			}
+		}
+
 		// Any other node type — stop merging
 		break;
 	}
@@ -380,6 +460,16 @@ function findValueSepOffset(children: readonly CstNode[], startIdx: number): num
 		return -1;
 	}
 	return -1;
+}
+
+/** Check if a ":" value-sep exists between startIdx (inclusive) and endIdx (exclusive). */
+function hasValueSepBetween(children: readonly CstNode[], startIdx: number, endIdx: number): boolean {
+	for (let j = startIdx; j < endIdx; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "whitespace" && c.source === ":") return true;
+	}
+	return false;
 }
 
 /**
@@ -541,7 +631,84 @@ function decodeDoubleQuoted(raw: string): string {
 	return result;
 }
 
-function decodeBlockScalar(raw: string): string {
+/**
+ * Scan backward in the full document text from a block scalar indicator's
+ * position to find the parent context indentation level n. This handles:
+ * - Same-line ":" (mapping value): n = key's column indent
+ * - Same-line "-" (seq entry): n = column of "-"
+ * - Own-line (preceded by newline, tag, anchor): scan further back across
+ *   lines to find the ":" or "-" that introduced this value
+ */
+function findParentIndent(fullText: string, indicatorOffset: number): number {
+	let scanBack = indicatorOffset - 1;
+	// Skip whitespace on the same line
+	while (scanBack >= 0 && (fullText[scanBack] === " " || fullText[scanBack] === "\t")) {
+		scanBack--;
+	}
+	// If we hit ":" or "-" on the same line, handle directly
+	if (scanBack >= 0 && fullText[scanBack] === ":") {
+		return findKeyIndent(fullText, scanBack);
+	}
+	if (scanBack >= 0 && fullText[scanBack] === "-") {
+		return findColOnLine(fullText, scanBack);
+	}
+	// Block scalar is on its own line (after tag, anchor, or newline).
+	// Scan backward across lines to find the ":" or "-" that introduces
+	// this block scalar as a value.
+	while (scanBack >= 0) {
+		const ch = fullText[scanBack];
+		if (ch === ":") {
+			return findKeyIndent(fullText, scanBack);
+		}
+		if (ch === "-") {
+			// Check if this is a seq entry indicator (followed by space/newline)
+			const afterDash = scanBack + 1;
+			if (
+				afterDash >= fullText.length ||
+				fullText[afterDash] === " " ||
+				fullText[afterDash] === "\t" ||
+				fullText[afterDash] === "\n" ||
+				fullText[afterDash] === "\r"
+			) {
+				return findColOnLine(fullText, scanBack);
+			}
+		}
+		scanBack--;
+	}
+	return 0;
+}
+
+/** Find the column of a character on its line. */
+function findColOnLine(text: string, pos: number): number {
+	let lineStart = pos;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+		lineStart--;
+	}
+	return pos - lineStart;
+}
+
+/** Find the key indentation for a mapping ":" at the given position. */
+function findKeyIndent(text: string, colonPos: number): number {
+	let lineStart = colonPos;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+		lineStart--;
+	}
+	let spaces = 0;
+	while (lineStart + spaces < text.length && text[lineStart + spaces] === " ") {
+		spaces++;
+	}
+	// If the first non-space char is "-" followed by space (compact sequence),
+	// the key starts after "- "
+	if (lineStart + spaces < text.length && text[lineStart + spaces] === "-") {
+		const afterDash = lineStart + spaces + 1;
+		if (afterDash < text.length && (text[afterDash] === " " || text[afterDash] === "\t")) {
+			return spaces + 2;
+		}
+	}
+	return spaces;
+}
+
+function decodeBlockScalar(raw: string, fullText?: string, nodeOffset?: number): string {
 	const firstChar = raw.trimStart()[0];
 	const isFolded = firstChar === ">";
 	let i = raw.indexOf(firstChar === ">" ? ">" : "|");
@@ -573,9 +740,25 @@ function decodeBlockScalar(raw: string): string {
 		else i++;
 	}
 
+	// When an explicit indentation indicator is present (e.g., |2), the digit
+	// specifies additional spaces relative to the parent block indent n
+	// (YAML 1.2 §8.1.1.1). The raw CST source includes the full absolute
+	// indentation, so we need contentIndent = n + m. We compute n by scanning
+	// backward in the full text to find the parent context, using the same
+	// logic as the lexer's scanBlockScalar. When fullText/nodeOffset are not
+	// available, fall back to the explicit digit alone (works for top-level).
 	let contentIndent = explicitIndent;
 	let foundContent = explicitIndent > 0;
-	if (contentIndent === 0) {
+	if (explicitIndent > 0 && fullText !== undefined && nodeOffset !== undefined) {
+		// Determine parent indent by scanning backward from the block scalar
+		// indicator in the full text, mirroring the lexer's approach.
+		// Scan backward past whitespace, newlines, tags, anchors, and comments
+		// to find the ":" or "-" that introduces this block scalar value.
+		const parentIndent = findParentIndent(fullText, nodeOffset);
+		contentIndent = parentIndent + explicitIndent;
+		foundContent = true;
+	} else if (contentIndent === 0) {
+		// Auto-detect from first non-empty line
 		let scanAhead = i;
 		while (scanAhead < raw.length) {
 			let spaces = 0;
@@ -745,6 +928,8 @@ interface ComposerState {
 		readonly maxAliasCount: number;
 		readonly uniqueKeys: boolean;
 	};
+	/** Tag handle to prefix map from %TAG directives (e.g. "!!" maps to "tag:yaml.org,2002:") */
+	tagMap: Map<string, string>;
 }
 
 function createState(text: string, options?: Partial<YamlParseOptions>): ComposerState {
@@ -759,7 +944,54 @@ function createState(text: string, options?: Partial<YamlParseOptions>): Compose
 			maxAliasCount: options?.maxAliasCount ?? 100,
 			uniqueKeys: options?.uniqueKeys ?? true,
 		},
+		tagMap: new Map(),
 	};
+}
+
+/**
+ * Resolve a tag shorthand using the document's %TAG directives.
+ * For example, with `%TAG !! tag:example.com,2000:app/`, the tag `!!int`
+ * resolves to `tag:example.com,2000:app/int`.
+ *
+ * Returns the resolved tag URI, or the original tag if no directive matches.
+ */
+function resolveTagHandle(tag: string, state: ComposerState): string {
+	// Verbatim tags: !<...> — return the content as-is
+	if (tag.startsWith("!<") && tag.endsWith(">")) {
+		return tag.slice(2, -1);
+	}
+	// Secondary tag handle: !!suffix
+	if (tag.startsWith("!!")) {
+		const prefix = state.tagMap.get("!!");
+		if (prefix) {
+			return prefix + tag.slice(2);
+		}
+		// Default secondary tag handle: tag:yaml.org,2002:
+		return `tag:yaml.org,2002:${tag.slice(2)}`;
+	}
+	// Named tag handle: !name!suffix
+	const namedMatch = tag.match(/^(![\w-]*!)(.*)$/);
+	if (namedMatch) {
+		const handle = namedMatch[1];
+		const suffix = namedMatch[2];
+		if (handle) {
+			const prefix = state.tagMap.get(handle);
+			if (prefix) {
+				return prefix + (suffix ?? "");
+			}
+		}
+	}
+	// Primary tag handle: !suffix (non-empty suffix)
+	if (tag.startsWith("!") && tag.length > 1 && !tag.startsWith("!!")) {
+		const prefix = state.tagMap.get("!");
+		if (prefix) {
+			return prefix + tag.slice(1);
+		}
+		// Default primary: local tag
+		return tag;
+	}
+	// Non-specific tag: ! alone
+	return tag;
 }
 
 // ---------------------------------------------------------------------------
@@ -817,8 +1049,8 @@ interface NodeMeta {
 
 function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlScalar {
 	const style = getScalarStyle(cst);
-	const rawValue = getScalarValue(cst);
-	const value = resolveScalar(rawValue, style, meta?.tag);
+	const rawValue = getScalarValue(cst, state.text);
+	const value = resolveScalar(rawValue, style, meta?.tag, state);
 	const scalar = new YamlScalar({
 		value,
 		style,
@@ -1060,10 +1292,19 @@ function flattenBlockMapChildren(
 
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
+			if (child.source === "?") {
+				// Explicit key indicator (YAML §8.2.1). The "?" simply marks
+				// that the next content node is the key of this mapping entry.
+				// We don't need to push a semantic item because the node that
+				// follows will naturally be in key position (before value-sep).
+				// Reset afterValueSep so the next node is treated as a key.
+				afterValueSep = false;
+				continue;
+			}
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
-					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const value = resolveScalar("", "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value,
 						style: "plain" as ScalarStyle,
@@ -1122,7 +1363,7 @@ function flattenBlockMapChildren(
 			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
 			// But NOT when meta is in key position: `!!str a: b` — tag is for key.
 			if (afterValueSep && hasMeta(pendingMeta) && hasValueSepAfterInList(children, i + 1)) {
-				const value = resolveScalar("", "plain", pendingMeta.tag);
+				const value = resolveScalar("", "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value,
 					style: "plain" as ScalarStyle,
@@ -1166,8 +1407,11 @@ function flattenBlockMapChildren(
 			// Check if this scalar is followed by a block-map (scalar is the first
 			// key of a nested mapping: the parser puts the first key as a sibling
 			// before its block-map child).
+			// But NOT if there's a ":" value-sep between the scalar and the
+			// block-map — in that case, the scalar is a key at the current level
+			// and the block-map is its value (e.g., `mapping:\n  ? sky\n  : blue`).
 			const nextContent = findNextContentInList(children, i + 1);
-			if (nextContent?.node.type === "block-map") {
+			if (nextContent?.node.type === "block-map" && !hasValueSepBetween(children, i + 1, nextContent.idx)) {
 				// The scalar is the first key of the nested mapping — keys don't
 				// carry the pending anchor/tag; those belong on the map itself.
 				const key = makeScalar(child, state);
@@ -1176,6 +1420,71 @@ function flattenBlockMapChildren(
 				pushNode(map);
 				i = nextContent.idx; // skip to past the block-map
 				continue;
+			}
+			// For explicit keys (? key\n  continuation\n:), use collectMultilineKey
+			// which merges plain scalars up to the ":" value-sep (JTV5).
+			if (
+				!afterValueSep &&
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				!hasValueSepAfterInList(children, i + 1) &&
+				hasValueSepThroughPlainScalars(children, i + 1)
+			) {
+				// Check that we're preceded by "?" (explicit key context)
+				// and that the next continuation scalar is indented beyond the "?" column.
+				// `? a\n  true\n:` → merge (true at col 2 > ? at col 0) (JTV5)
+				// `? b\nc:\n` → don't merge (c at col 0 = ? at col 0) (7W2P)
+				let isExplicitKey = false;
+				let explicitKeyCol = -1;
+				for (let p = i - 1; p >= 0; p--) {
+					const prev = children[p];
+					if (!prev) continue;
+					if (prev.type === "whitespace" && prev.source === "?") {
+						explicitKeyCol = lineCol(state.text, prev.offset).column;
+						isExplicitKey = true;
+						break;
+					}
+					if (prev.type === "whitespace" && prev.source.trim() === "") continue;
+					if (prev.type === "newline") continue;
+					break;
+				}
+				// Only merge if the next scalar after a newline is indented beyond ?
+				if (isExplicitKey) {
+					let nextScalarIndented = false;
+					let sawNl = false;
+					for (let j = i + 1; j < children.length; j++) {
+						const c = children[j];
+						if (!c) continue;
+						if (c.type === "newline") {
+							sawNl = true;
+							continue;
+						}
+						if (c.type === "whitespace" && c.source.trim() === "") continue;
+						if (sawNl && c.type === "flow-scalar") {
+							const cCol = lineCol(state.text, c.offset).column;
+							nextScalarIndented = cCol > explicitKeyCol;
+						}
+						break;
+					}
+					isExplicitKey = nextScalarIndented;
+				}
+				if (isExplicitKey) {
+					const { value: keyValue, nextIdx: keyNextIdx } = collectMultilineKey(children, i);
+					const resolved = resolveScalar(keyValue, "plain", pendingMeta.tag, state);
+					const scalar = new YamlScalar({
+						value: resolved,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: child.length,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					pushNode(scalar, child.offset);
+					i = keyNextIdx - 1;
+					continue;
+				}
 			}
 			// For plain scalars not followed by ":", try multi-line merging
 			if (
@@ -1244,7 +1553,7 @@ function flattenBlockMapChildren(
 					minContCol,
 					minContCol !== undefined ? state.text : undefined,
 				);
-				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -1360,7 +1669,7 @@ function flattenBlockMapChildren(
 	}
 	// Flush trailing pending tag/anchor as empty scalar
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -1886,27 +2195,16 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 				continue;
 			}
 			// Merge consecutive plain scalars in same entry (multi-line plain scalar)
+			// Uses collectMultilinePlainScalar to also handle continuation lines
+			// where the lexer mis-tokenized content as anchors, tags, block-seq, etc. (AB8U)
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
-				const parts: string[] = [child.source.trim()];
-				let mergeEnd = ci + 1;
-				while (mergeEnd < children.length) {
-					const mc = children[mergeEnd];
-					if (!mc) break;
-					if (mc.type === "newline" || (mc.type === "whitespace" && mc.source.trim() === "")) {
-						mergeEnd++;
-						continue;
-					}
-					if (mc.type === "whitespace" && mc.source.trim() === "-") break;
-					if (mc.type === "flow-scalar" && getScalarStyle(mc) === "plain") {
-						parts.push(mc.source.trim());
-						mergeEnd++;
-						continue;
-					}
-					break;
-				}
-				if (parts.length > 1) {
-					const merged = foldFlowLines(parts.join("\n"));
-					const resolved = resolveScalar(merged, "plain", pendingMeta.tag);
+				const {
+					value: merged,
+					nextIdx: mergeEnd,
+					partsCount,
+				} = collectMultilinePlainScalar(children, ci, undefined, state.text);
+				if (partsCount > 1) {
+					const resolved = resolveScalar(merged, "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
@@ -1981,7 +2279,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., - !!str)
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -2072,7 +2370,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {
-					const value = resolveScalar("", "plain", pendingMeta.tag);
+					const value = resolveScalar("", "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value,
 						style: "plain" as ScalarStyle,
@@ -2149,7 +2447,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					// Plain scalar eventually followed by ":" (possibly through
 					// continuation plain scalars) — merge as multi-line key
 					const { value, nextIdx } = collectMultilineKey(children, i);
-					const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+					const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
@@ -2165,8 +2463,8 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					continue;
 				}
 				// Not followed by ":" — try multi-line value merging
-				const { value, nextIdx } = collectMultilinePlainScalar(children, i);
-				const resolved = resolveScalar(value, "plain", pendingMeta.tag);
+				const { value, nextIdx } = collectMultilinePlainScalar(children, i, undefined, state.text);
+				const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -2206,7 +2504,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 	}
 	// Flush trailing pending tag/anchor as empty scalar (e.g., !!str at end of flow)
 	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag);
+		const value = resolveScalar("", "plain", pendingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
@@ -2423,7 +2721,17 @@ function composeDocument(
 		// Directives
 		if (child.type === "directive") {
 			const directive = parseDirective(child.source);
-			if (directive) directives.push(directive);
+			if (directive) {
+				directives.push(directive);
+				// Populate tag map from %TAG directives
+				if (directive.name === "TAG" && directive.parameters.length >= 2) {
+					const handle = directive.parameters[0];
+					const prefix = directive.parameters[1];
+					if (handle && prefix) {
+						state.tagMap.set(handle, prefix);
+					}
+				}
+			}
 			i++;
 			continue;
 		}
@@ -2505,8 +2813,8 @@ function composeDocument(
 			}
 			// Standalone scalar — try multi-line plain scalar merging
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
-				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i);
-				const resolved = resolveScalar(value, "plain", meta.tag);
+				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i, undefined, state.text);
+				const resolved = resolveScalar(value, "plain", meta.tag, state);
 				contents = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -2610,11 +2918,15 @@ function composeDocument(
 	// Validate document marker same-line content
 	checkDocumentMarkerSameLine(children, state, nextDocCst?.children);
 
+	// Detect whether `---` document start marker was present in the CST
+	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+
 	return new YamlDocument({
 		contents,
 		errors: [...state.errors],
 		warnings: [...state.warnings],
 		directives,
+		hasDocumentStart: hasDocStart,
 		...(documentComment !== undefined ? { comment: documentComment } : {}),
 	});
 }

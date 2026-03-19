@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-14
-last-synced: 2026-03-14
-completeness: 80
+updated: 2026-03-19
+last-synced: 2026-03-19
+completeness: 85
 related:
   - architecture.md
   - schemas.md
@@ -44,7 +44,8 @@ function stringifyDocument(
 `style`, collection `style`).
 
 Both accept `YamlStringifyOptions` with defaults: indent 2, lineWidth 80,
-plain scalars, block collections, no key sorting, trailing newline.
+plain scalars, block collections, no key sorting, trailing newline,
+forceDefaultStyles false.
 
 ## Scalar Rendering
 
@@ -65,8 +66,15 @@ A string requires quoting when:
 - Starts with a YAML indicator character (`:`, `#`, `{`, `}`, `[`, `]`,
   `,`, `&`, `*`, `?`, `|`, `-`, `<`, `>`, `=`, `!`, `%`, `@`, `` ` ``)
 - Starts with space or tab
-- Contains `:` or ends with `:`
-- Contains `#`
+- Starts with `---` or `...` (document markers)
+- `:`, `?`, `-` at start require quoting only when followed by whitespace
+  or when the string is a single character
+- Contains `#` (always quoted)
+
+When quoting is needed but the string contains no escape sequences
+(no `\n`, `\r`, `\t`, `\`, `"`, `'`, or C0 control chars -- checked
+via the `needsEscapes()` helper), the stringifier prefers single-quoted
+style over double-quoted to produce cleaner output.
 
 ### Rendering Functions
 
@@ -105,6 +113,23 @@ A string requires quoting when:
 The `isBlockCollection()` helper ensures non-empty block collections are
 never placed inline after a key colon.
 
+### Compact Notation
+
+Block sequence values under a mapping key use compact notation -- the
+first sequence entry appears at the same indent level as the key rather
+than being indented relative to it. This matches the canonical YAML
+style expected by the yaml-test-suite:
+
+```yaml
+key:
+- item1
+- item2
+```
+
+Block scalar content lines are emitted without an extra indent prefix
+relative to the key (the block scalar header already establishes the
+indent level).
+
 ## AST Node Stringification
 
 When stringifying `YamlDocument` via `stringifyDocument()`, the stringifier
@@ -114,6 +139,26 @@ reads style metadata from each AST node:
 - `YamlMap.style` / `YamlSeq.style` determines block vs flow
 - `YamlAlias` renders as `*name`
 - Nodes without explicit style fall back to the options defaults
+
+### AST Metadata Preservation
+
+`stringifyDocument()` preserves additional AST metadata:
+
+- **Anchors**: `&name` is prepended to the first line of scalar, map, and
+  seq node output
+- **Tags**: tag string is prepended before anchors (ordering:
+  `!!tag &anchor value`)
+- **Document start**: `---\n` is emitted when `doc.hasDocumentStart` is
+  true. When the root node has a tag, the inline form `--- content` is
+  used instead
+
+### forceDefaultStyles Option
+
+When `forceDefaultStyles` is `true`, node collection styles (block/flow)
+are overridden with the options defaults. However, multiline scalar
+sub-styles (block-literal, block-folded, double-quoted) are preserved to
+maintain content fidelity. This option is primarily used for canonical
+output comparison in compliance testing.
 
 Document-level comments are prepended as `# comment\n`.
 

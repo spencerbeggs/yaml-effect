@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
-import { parse, parseAllDocuments, stringify } from "../src/index.js";
+import { parse, parseAllDocuments, parseDocument, stringify, stringifyDocument } from "../src/index.js";
 import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
 import { SKIP, SKIP_ASSERTIONS, XFAIL } from "./utils/yaml-test-suite-skip-map.js";
@@ -133,13 +133,27 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 				if (tc.outYaml !== undefined && !shouldSkipAssertion(tc.id, "output")) {
 					const outFn = isXfail ? it.fails : it;
 					outFn("should match canonical output", () => {
-						const result = parseYaml(tc.yaml);
-						if (Either.isLeft(result)) {
-							expect.unreachable(`Parse failed for ${tc.id}`);
-							return;
+						if (tc.isMultiDocument) {
+							const docsResult = Effect.runSync(Effect.either(parseAllDocuments(tc.yaml, { uniqueKeys: false })));
+							if (Either.isLeft(docsResult)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							const docs = Either.getOrThrow(docsResult);
+							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
+							const stringified = parts.join("---\n");
+							expect(stringified).toBe(tc.outYaml);
+						} else {
+							const docResult = Effect.runSync(Effect.either(parseDocument(tc.yaml, { uniqueKeys: false })));
+							if (Either.isLeft(docResult)) {
+								expect.unreachable(`Parse failed for ${tc.id}`);
+								return;
+							}
+							const stringified = Effect.runSync(
+								stringifyDocument(Either.getOrThrow(docResult), { forceDefaultStyles: true }),
+							);
+							expect(stringified).toBe(tc.outYaml);
 						}
-						const stringified = Effect.runSync(stringify(Either.getOrThrow(result)));
-						expect(stringified).toBe(tc.outYaml);
 					});
 				}
 

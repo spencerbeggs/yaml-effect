@@ -285,9 +285,29 @@ function lastNonTriviaIsValueSep(children: readonly CstNode[]): boolean {
 		if (c.type === "whitespace" && c.source === ":") return true;
 		if (c.type === "newline" || c.type === "comment") continue;
 		if (c.type === "whitespace") continue;
+		// Anchors and tags are metadata that attach to the next value —
+		// they don't count as value content for the purpose of this check.
+		if (c.type === "anchor" || c.type === "tag") continue;
 		return false;
 	}
 	return false;
+}
+
+/**
+ * Find the column of the first block-seq-entry in the token stream,
+ * skipping the zero-width block-seq-start marker and any trivia.
+ * Falls back to `fallback` if no entry is found.
+ */
+function findFirstSeqEntryColumn(state: ParserState, fallback: number): number {
+	for (let i = state.pos; i < state.tokens.length; i++) {
+		const t = state.tokens[i];
+		if (!t) break;
+		if (t.kind === "block-seq-start") continue;
+		if (isTrivia(t)) continue;
+		if (t.kind === "block-seq-entry") return t.column;
+		break;
+	}
+	return fallback;
 }
 
 /**
@@ -295,6 +315,7 @@ function lastNonTriviaIsValueSep(children: readonly CstNode[]): boolean {
  */
 function parseBlockMapping(state: ParserState, indent: number): CstNode {
 	const children: CstNode[] = [];
+	let sawExplicitKey = false;
 
 	// Consume the block-map-start token
 	const startToken = peek(state);
@@ -312,6 +333,9 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		// If we hit a block-seq-start at same or lower indent, stop — UNLESS
 		// the last non-trivia child was a ":" value separator with no value,
 		// meaning this sequence is the value of the previous mapping entry.
+		// For explicit key mappings, the sequence after ":" is already
+		// consumed by parseBlockValue, so this check only applies to
+		// sequences appearing on a subsequent line after ":" (not same-line).
 		if (token.kind === "block-seq-start" && token.column <= indent && children.length > 0) {
 			if (!lastNonTriviaIsValueSep(children)) break;
 		}
@@ -324,6 +348,7 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 
 		// Block map key indicator (?)
 		if (token.kind === "block-map-key") {
+			sawExplicitKey = true;
 			const leaf = consumeLeafToken(state);
 			if (leaf) children.push(leaf);
 			continue;
@@ -333,8 +358,10 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		if (token.kind === "block-map-value") {
 			const leaf = consumeLeafToken(state);
 			if (leaf) children.push(leaf);
-			// After ":", consume the value
-			children.push(...parseBlockValue(state, indent));
+			// After ":", consume the value. Pass explicitKey context so
+			// parseBlockValue knows whether inline sequences are valid.
+			children.push(...parseBlockValue(state, indent, sawExplicitKey));
+			sawExplicitKey = false;
 			continue;
 		}
 
@@ -400,7 +427,7 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 /**
  * Parse the value part after a ":" in a block mapping.
  */
-function parseBlockValue(state: ParserState, _parentIndent: number): CstNode[] {
+function parseBlockValue(state: ParserState, _parentIndent: number, explicitKey = false): CstNode[] {
 	const nodes: CstNode[] = [];
 
 	while (!atEnd(state)) {
@@ -436,6 +463,19 @@ function parseBlockValue(state: ParserState, _parentIndent: number): CstNode[] {
 		// Block scalar
 		if (isBlockScalarToken(state)) {
 			nodes.push(parseBlockScalar(state));
+			break;
+		}
+
+		// Block sequence starting on the same line as ":" in an explicit
+		// mapping (e.g., "? key\n: - one"). Inline sequences after implicit
+		// keys (e.g., "key: - a") are invalid per YAML 1.2 §8.2.1 and are
+		// left as leaf tokens for the composer to reject.
+		if (explicitKey && (token.kind === "block-seq-start" || token.kind === "block-seq-entry")) {
+			// The lexer's block-seq-start column may not match the entry
+			// column (it uses lineIndent from the ":" indicator). Find the
+			// actual entry column to use as the sequence indent.
+			const seqIndent = findFirstSeqEntryColumn(state, token.column);
+			nodes.push(parseBlockSequence(state, seqIndent));
 			break;
 		}
 
@@ -672,6 +712,9 @@ function parseImplicitBlockMapping(state: ParserState, seqIndent: number): CstNo
 				children.push(parseBlockScalar(state));
 				continue;
 			}
+			// If this content token is at or below the parent sequence indent
+			// AND we already have entries, it belongs to a parent scope.
+			if (entryIndent >= 0 && token.column <= seqIndent) break;
 			// Track the indent of the first key
 			if (entryIndent < 0) {
 				entryIndent = token.column;

@@ -238,27 +238,27 @@ describe("Task 16: Sort keys option", () => {
 describe("Task 16: Scalar quoting rules", () => {
 	it('quotes "true" string', () => {
 		const result = str("true");
-		expect(result.trim()).toBe('"true"');
+		expect(result.trim()).toBe("'true'");
 	});
 
 	it('quotes "false" string', () => {
 		const result = str("false");
-		expect(result.trim()).toBe('"false"');
+		expect(result.trim()).toBe("'false'");
 	});
 
 	it('quotes "null" string', () => {
 		const result = str("null");
-		expect(result.trim()).toBe('"null"');
+		expect(result.trim()).toBe("'null'");
 	});
 
 	it('quotes "42" string that looks like integer', () => {
 		const result = str("42");
-		expect(result.trim()).toBe('"42"');
+		expect(result.trim()).toBe("'42'");
 	});
 
 	it("quotes empty string", () => {
 		const result = str("");
-		expect(result.trim()).toBe('""');
+		expect(result.trim()).toBe("''");
 	});
 
 	it("quotes string starting with :", () => {
@@ -899,6 +899,68 @@ describe("BigInt stringification", () => {
 // Control character handling
 // ===========================================================================
 
+describe("Indicator character quoting rules", () => {
+	it("does not quote :foo (colon not followed by whitespace)", () => {
+		expect(str(":foo").trim()).toBe(":foo");
+	});
+
+	it("does not quote ?foo (question mark not followed by whitespace)", () => {
+		expect(str("?foo").trim()).toBe("?foo");
+	});
+
+	it("does not quote -foo (dash not followed by whitespace)", () => {
+		expect(str("-foo").trim()).toBe("-foo");
+	});
+
+	it("does not quote ::vector (colon followed by colon)", () => {
+		expect(str("::vector").trim()).toBe("::vector");
+	});
+
+	it("quotes ---word1 word2 (--- prefix is ambiguous at line start)", () => {
+		const result = str("---word1 word2").trim();
+		expect(result).toBe("'---word1 word2'");
+	});
+
+	it("still quotes #foo (comment indicator always requires quoting)", () => {
+		const result = str("#foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes ': foo' (colon followed by space)", () => {
+		const result = str(": foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes '? foo' (question mark followed by space)", () => {
+		const result = str("? foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("quotes '- foo' (dash followed by space)", () => {
+		const result = str("- foo");
+		expect(result.trim()).toMatch(/^['"]/);
+	});
+
+	it("prefers single quotes for strings needing quoting without escapes", () => {
+		// "- foo" starts with dash+space, so requires quoting but no escapes needed
+		const result = str("- foo");
+		expect(result.trim()).toBe("'- foo'");
+	});
+
+	it("uses double quotes when escape sequences are needed", () => {
+		// String with control char that needs quoting AND escaping
+		const result = str("hello\x07world");
+		expect(result.trim()).toMatch(/^"/);
+	});
+
+	it("uses single quotes for type-conflict strings", () => {
+		expect(str(".inf").trim()).toBe("'.inf'");
+		expect(str(".nan").trim()).toBe("'.nan'");
+		expect(str("0xFF").trim()).toBe("'0xFF'");
+		expect(str("0o17").trim()).toBe("'0o17'");
+	});
+});
+
 describe("Control character handling", () => {
 	it("quotes string containing C0 control character (BEL)", () => {
 		const result = str("hello\x07world");
@@ -936,5 +998,64 @@ describe("Control character handling", () => {
 		// Even with plain default, control chars force double-quoted output
 		const result = str("hello\x02world");
 		expect(result.trim()).toMatch(/"/);
+	});
+});
+
+// ===========================================================================
+// Compact notation for block sequences as mapping values
+// ===========================================================================
+
+describe("Compact notation for block sequences as mapping values", () => {
+	it("uses compact notation for sequence values in mappings", () => {
+		const result = str({ key: ["a", "b"] });
+		expect(result).toBe("key:\n- a\n- b\n");
+	});
+
+	it("still indents nested mapping values", () => {
+		const result = str({ key: { nested: "val" } });
+		expect(result).toBe("key:\n  nested: val\n");
+	});
+
+	it("still indents block scalar content in mappings", () => {
+		const result = str({ key: "multi\nline\n" });
+		// Block scalar content is indented (currently uses double indent — task #8 tracks fixing this)
+		expect(result).toContain("key: |");
+		expect(result).toContain("multi");
+		expect(result).toContain("line");
+	});
+
+	it("uses compact notation with multiple mapping keys having sequence values", () => {
+		const result = str({
+			hr: ["Mark McGwire", "Sammy Sosa"],
+			rbi: ["Sammy Sosa", "Ken Griffey"],
+		});
+		expect(result).toBe("hr:\n- Mark McGwire\n- Sammy Sosa\nrbi:\n- Sammy Sosa\n- Ken Griffey\n");
+	});
+
+	it("does not apply compact notation to empty arrays", () => {
+		const result = str({ key: [] });
+		expect(result).toBe("key: []\n");
+	});
+
+	it("does not apply compact notation when flow style is used", () => {
+		const result = str({ key: [1, 2] }, { defaultCollectionStyle: "flow" });
+		expect(result).toBe("{key: [1, 2]}\n");
+	});
+
+	it("handles mixed sequence and mapping values", () => {
+		const result = str({ seq: ["a", "b"], map: { x: 1 } });
+		expect(result).toBe("seq:\n- a\n- b\nmap:\n  x: 1\n");
+	});
+
+	it("handles nested sequences within sequence values", () => {
+		const result = str({
+			key: [
+				[1, 2],
+				[3, 4],
+			],
+		});
+		const lines = result.split("\n").filter((l) => l.length > 0);
+		expect(lines[0]).toBe("key:");
+		expect(lines[1]).toBe("- - 1");
 	});
 });

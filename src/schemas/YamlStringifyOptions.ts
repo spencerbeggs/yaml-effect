@@ -33,4 +33,5 @@ export class YamlStringifyOptions extends Schema.Class<YamlStringifyOptions>("Ya
 	defaultCollectionStyle: Schema.optionalWith(CollectionStyle, { default: () => "block" as const }),
 	sortKeys: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 	finalNewline: Schema.optionalWith(Schema.Boolean, { default: () => true }),
+	forceDefaultStyles: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 }) {}

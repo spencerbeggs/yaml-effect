@@ -5,8 +5,8 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-14
-last-synced: 2026-03-14
+updated: 2026-03-19
+last-synced: 2026-03-19
 completeness: 85
 related:
   - architecture.md

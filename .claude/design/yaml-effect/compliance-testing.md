@@ -5,8 +5,8 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-03-14
-last-synced: 2026-03-14
+updated: 2026-03-19
+last-synced: 2026-03-19
 completeness: 90
 related:
   - architecture.md
@@ -181,15 +181,18 @@ all test cases are relevant.
 export const XFAIL: Record<string, string> = { ... };
 ```
 
-Tests that run with `it.fails` -- the test is expected to fail. Two
-categories of XFAIL entries:
+Tests that run with `it.fails` -- the test is expected to fail. One
+remaining category of XFAIL entries:
 
-1. **Parser rejects valid YAML** (16 tests) -- our parser throws on input
-   the spec says is valid. Mostly tab handling and edge-case block
-   mappings.
-2. **Parser accepts invalid YAML** (87 tests) -- our parser succeeds on
+1. **Parser accepts invalid YAML** (29 tests) -- our parser succeeds on
    input the spec says should be rejected. Missing validation for various
-   structural constraints.
+   structural constraints (indentation, anchors, flow collection syntax).
+
+Previously there were also "parser rejects valid YAML" entries, but
+all 16 have been resolved through lexer, parser, and composer fixes
+(block scalar indentation, quoted scalar flow context, multi-line
+plain scalars, implicit block mapping indent tracking, explicit key
+handling).
 
 When an XFAIL test is marked with `it.fails`, Vitest expects the
 assertion to fail. If a code fix causes the test to start passing,
@@ -236,9 +239,14 @@ resolution errors, incorrect scalar coercion, wrong collection structure.
 
 ### 3. Canonical Output Match
 
-Stringifies the parsed value and compares against `out.yaml`. Tests that
-our stringifier produces the expected canonical form. Only runs when
-`out.yaml` exists and `"output"` is not in `SKIP_ASSERTIONS`.
+Uses `parseDocument()` + `stringifyDocument({ forceDefaultStyles: true })`
+to produce canonical output, then compares against `out.yaml`. The
+`forceDefaultStyles` option overrides AST node collection styles with
+block defaults while preserving multiline scalar sub-styles, producing
+output closer to the canonical form expected by the test suite. For
+multi-document inputs, each document is stringified independently and
+joined. Only runs when `out.yaml` exists and `"output"` is not in
+`SKIP_ASSERTIONS`.
 
 ### 4. Stringify Roundtrip
 
@@ -368,16 +376,16 @@ Runs on every push to `main`:
 
 ```json
 {
-  "parse": { "passing": 366, "total": 402, "percentage": 91, "color": "brightgreen" },
-  "full": { "passing": 932, "total": 1226, "percentage": 76, "color": "yellow" },
-  "lastUpdated": "2026-03-17T..."
+  "parse": { "passing": 373, "total": 402, "percentage": 93, "color": "brightgreen" },
+  "full": { "passing": 1008, "total": 1226, "percentage": 82, "color": "yellow" },
+  "lastUpdated": "2026-03-19T..."
 }
 ```
 
 `parse-badge.json` and `full-badge.json` use shields.io endpoint format:
 
 ```json
-{ "schemaVersion": 1, "label": "YAML 1.2 parse", "message": "91%", "color": "brightgreen" }
+{ "schemaVersion": 1, "label": "YAML 1.2 parse", "message": "93%", "color": "brightgreen" }
 ```
 
 Color thresholds: >90% brightgreen, >70% yellow, >50% orange, else red.
@@ -397,29 +405,64 @@ into per-category issues (#15, #16).
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | #6 | Fix multi-document test harness to use `parseAllDocuments` | **Resolved** |
-| #7 | Fix tab handling in lexer for YAML 1.2 compliance | Partial (5 XFAIL resolved) |
-| #8 | Fix block scalar content normalization | Partial (trailing whitespace fixed) |
-| #9 | Fix double-quoted and plain scalar folding rules | **Mostly resolved** (18 assertions fixed) |
+| #7 | Fix tab handling in lexer for YAML 1.2 compliance | **Resolved** (all XFAIL cleared) |
+| #8 | Fix block scalar content normalization | **Mostly resolved** (explicit indent fix) |
+| #9 | Fix double-quoted and plain scalar folding rules | **Resolved** |
 | #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
-| #11 | Fix canonical output and roundtrip stringifier compliance | Open |
-| #15 | Parser rejects valid YAML | Open (remaining XFAIL "rejects valid") |
-| #16 | Parser accepts invalid YAML | Open (89 XFAIL "accepts invalid") |
+| #11 | Fix canonical output and roundtrip stringifier compliance | Partial (compact notation, anchor/tag/document-start output, forceDefaultStyles) |
+| #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
+| #16 | Parser accepts invalid YAML | Open (29 XFAIL "accepts invalid") |
 
-Current compliance: 818/903 assertions passing, 85 expected failures.
-Use `pnpm run test:compliance-raw` to see unfiltered results (844/1226).
+Current compliance: 1008/1226 raw assertions passing (82.2%), 29 XFAIL
+(all "accepts invalid"), 0 JSON comparison failures, ~82 SKIP_ASSERTIONS
+entries (output/roundtrip). Use `pnpm run test:compliance-raw` to see
+unfiltered results.
+
+### Key Compliance Improvements (feat/more-compliance)
+
+The jump from 77% to 82.2% raw compliance came from several categories
+of fixes:
+
+- **All "rejects valid" XFAIL cleared**: Lexer block scalar explicit
+  indent fix, parser implicit block mapping indent tracking,
+  `afterQuotedScalar` flow context persistence, multi-line plain scalar
+  continuation detection, explicit key block sequence handling
+- **JSON comparison**: All JSON comparison failures resolved (0 remaining
+  `"json"` entries in SKIP_ASSERTIONS)
+- **Canonical output**: `stringifyDocument` with `forceDefaultStyles`
+  produces output much closer to canonical form -- compact sequence
+  notation, anchor/tag preservation, document-start markers
+- **TAG directive resolution**: Full `%TAG` directive support with handle
+  expansion throughout document composition
+- **Block scalar indentation**: `findParentIndent()` in composer
+  correctly computes explicit indent relative to parent context
 
 ### Dual Block Scalar Decoders
 
 Block scalar fixes must be applied in **both** locations:
 
-1. **Lexer** (`src/utils/lexer.ts` — `scanBlockScalar()`): Produces the
-   token value when lexing.
-2. **Composer** (`src/utils/composer.ts` — `decodeBlockScalar()`): Re-decodes
+1. **Lexer** (`src/utils/lexer.ts` -- `scanBlockScalar()`): Produces the
+   token value when lexing. Explicit indentation (e.g., `|2`) is computed
+   relative to the parent block context (parent indent + explicit digit).
+2. **Composer** (`src/utils/composer.ts` -- `decodeBlockScalar()`): Re-decodes
    from the CST `source` field. The composer does NOT use the lexer's
-   decoded value; it re-parses the raw source independently.
+   decoded value; it re-parses the raw source independently. Uses
+   `findParentIndent()` to scan backward through the full source text
+   and locate the `:` or `-` that introduced the block scalar.
 
 Both contain nearly identical logic for indent detection, line collection,
 and chomp handling. Any fix to block scalar content must be applied to both.
+
+### Canonical Output Testing Strategy
+
+The compliance test harness uses `parseDocument()` +
+`stringifyDocument({ forceDefaultStyles: true })` rather than
+`parse()` + `stringify()` for canonical output comparison. This
+preserves AST metadata (anchors, tags, document-start markers, scalar
+styles) while normalizing collection styles to block defaults. This
+approach resolved a large class of output comparison failures that were
+caused by flow-style collections in the AST being stringified in their
+original style rather than the canonical block form.
 
 ## Key Files
 
@@ -429,6 +472,7 @@ and chomp handling. Any fix to block scalar content must be applied to both.
 | `__test__/yaml-test-suite-raw.test.ts` | Unfiltered test runner (no skip maps) |
 | `__test__/utils/yaml-test-suite.ts` | Test data loader (flat + numbered subdirs) |
 | `__test__/utils/yaml-test-suite-skip-map.ts` | SKIP, XFAIL, SKIP_ASSERTIONS maps |
+| `__test__/debug-multiline.test.ts` | Multi-line plain scalar regression guards |
 | `__test__/fixtures/yaml-test-suite/` | Git submodule (data-2022-01-17) |
 | `vitest.config.ts` | Compliance + compliance-raw Vitest projects |
 | `.github/workflows/compliance.yml` | Badge generation action |
