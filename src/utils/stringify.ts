@@ -517,6 +517,9 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	if (node.anchor) {
 		lines[0] = `&${node.anchor} ${lines[0]}`;
 	}
+	if (node.tag) {
+		lines[0] = `${node.tag} ${lines[0]}`;
+	}
 	return lines;
 }
 
@@ -541,6 +544,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		if (node.anchor) {
 			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
 		}
+		if (node.tag) {
+			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
+		}
 		return emptyLines;
 	}
 
@@ -553,6 +559,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		const flowLines = [`{${pairs.join(", ")}}`];
 		if (node.anchor) {
 			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
+		}
+		if (node.tag) {
+			flowLines[0] = `${node.tag} ${flowLines[0]}`;
 		}
 		return flowLines;
 	}
@@ -598,6 +607,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	if (node.anchor) {
 		lines[0] = `&${node.anchor} ${lines[0]}`;
 	}
+	if (node.tag) {
+		lines[0] = `${node.tag} ${lines[0]}`;
+	}
 	return lines;
 }
 
@@ -615,6 +627,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 		if (node.anchor) {
 			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
 		}
+		if (node.tag) {
+			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
+		}
 		return emptyLines;
 	}
 
@@ -623,6 +638,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 		const flowLines = [`[${parts.join(", ")}]`];
 		if (node.anchor) {
 			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
+		}
+		if (node.tag) {
+			flowLines[0] = `${node.tag} ${flowLines[0]}`;
 		}
 		return flowLines;
 	}
@@ -652,6 +670,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	}
 	if (node.anchor) {
 		lines[0] = `&${node.anchor} ${lines[0]}`;
+	}
+	if (node.tag) {
+		lines[0] = `${node.tag} ${lines[0]}`;
 	}
 	return lines;
 }
@@ -793,6 +814,11 @@ export function stringifyDocument(
 			const body = opts.finalNewline ? `${result}\n` : result;
 
 			if (doc.hasDocumentStart) {
+				// When the root node has a tag, put --- and body on the same line: --- !!tag value
+				const rootTag = doc.contents && "tag" in doc.contents ? doc.contents.tag : undefined;
+				if (rootTag) {
+					return doc.comment ? `# ${doc.comment}\n--- ${body}` : `--- ${body}`;
+				}
 				return doc.comment ? `# ${doc.comment}\n---\n${body}` : `---\n${body}`;
 			}
 			return doc.comment ? `# ${doc.comment}\n${body}` : body;
