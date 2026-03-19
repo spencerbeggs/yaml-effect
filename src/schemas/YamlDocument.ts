@@ -67,4 +67,5 @@ export class YamlDocument extends Schema.Class<YamlDocument>("YamlDocument")({
 	warnings: Schema.Array(YamlErrorDetail),
 	directives: Schema.Array(YamlDirective),
 	comment: Schema.optional(Schema.String),
+	hasDocumentStart: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 }) {}

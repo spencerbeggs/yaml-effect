@@ -754,6 +754,10 @@ export function stringifyDocument(
 
 			const result = stringifyNodeLines(doc.contents, ctx).join("\n");
 			const body = opts.finalNewline ? `${result}\n` : result;
+
+			if (doc.hasDocumentStart) {
+				return doc.comment ? `# ${doc.comment}\n---\n${body}` : `---\n${body}`;
+			}
 			return doc.comment ? `# ${doc.comment}\n${body}` : body;
 		},
 		catch: (err) => {

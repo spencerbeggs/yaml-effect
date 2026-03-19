@@ -2918,11 +2918,15 @@ function composeDocument(
 	// Validate document marker same-line content
 	checkDocumentMarkerSameLine(children, state, nextDocCst?.children);
 
+	// Detect whether `---` document start marker was present in the CST
+	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+
 	return new YamlDocument({
 		contents,
 		errors: [...state.errors],
 		warnings: [...state.warnings],
 		directives,
+		hasDocumentStart: hasDocStart,
 		...(documentComment !== undefined ? { comment: documentComment } : {}),
 	});
 }

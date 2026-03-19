@@ -308,6 +308,7 @@ function formatImpl(text: string, raw: RawFormatOptions): Effect.Effect<string, 
 				warnings: doc.warnings,
 				directives: doc.directives,
 				comment: opts.preserveComments ? doc.comment : undefined,
+				hasDocumentStart: doc.hasDocumentStart,
 			});
 
 			return stringifyDocument(outputDoc, {
@@ -457,6 +458,7 @@ function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): Yaml
 			warnings: doc.warnings,
 			directives: doc.directives,
 			comment: doc.comment,
+			hasDocumentStart: doc.hasDocumentStart,
 		});
 	}
 
@@ -472,6 +474,7 @@ function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): Yaml
 		warnings: doc.warnings,
 		directives: doc.directives,
 		comment: doc.comment,
+		hasDocumentStart: doc.hasDocumentStart,
 	});
 }
 
@@ -890,6 +893,7 @@ export function stripComments(text: string, replaceCh?: string): Effect.Effect<s
 				errors: doc.errors,
 				warnings: doc.warnings,
 				directives: doc.directives,
+				hasDocumentStart: doc.hasDocumentStart,
 			});
 
 			return stringifyDocument(strippedDoc).pipe(
