@@ -2816,6 +2816,10 @@ function composeDocument(
 	let contents: YamlNode | null = null;
 	let documentComment: string | undefined;
 
+	// Whether this document has a `---` marker — used to determine if
+	// metadata (tag/anchor) applies to the root mapping or the first key.
+	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+
 	let i = 0;
 	const meta: NodeMeta = {};
 
@@ -2906,7 +2910,6 @@ function composeDocument(
 			if (nextContent && nextContent.type === "block-map") {
 				// When metadata (tag/anchor) appears after a document-start marker (---),
 				// it applies to the root mapping node. Otherwise, it applies to the key.
-				const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
 				if (hasDocStart && hasMeta(meta)) {
 					const mapMeta = { ...meta };
 					const key = makeScalar(child, state);
@@ -2922,7 +2925,6 @@ function composeDocument(
 			}
 			// Check if followed by ":" (value-sep) — flat mapping without block-map wrapper
 			if (hasValueSepAfter(children, i + 1)) {
-				const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
 				if (hasDocStart && hasMeta(meta)) {
 					const mapMeta = { ...meta };
 					const key = makeScalar(child, state);
@@ -3042,8 +3044,6 @@ function composeDocument(
 	// Validate document marker same-line content
 	checkDocumentMarkerSameLine(children, state, nextDocCst?.children);
 
-	// Detect whether `---` document start marker was present in the CST
-	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
 	// Detect whether `...` document end marker was present in the CST
 	const hasDocEnd = children.some((c) => c.type === "whitespace" && c.source === "...");
 

@@ -92,13 +92,13 @@ function wouldBeResolved(s: string): boolean {
  * comment/mapping-value patterns (`: `, ` #`). This is the single gate that
  * decides whether a plain scalar is safe or must be wrapped in quotes.
  */
-function requiresQuoting(s: string): boolean {
+function requiresQuoting(s: string, ignoreType = false): boolean {
 	// Empty string must be quoted
 	if (s === "") return true;
 	// Contains newlines — use block literal instead
 	if (s.includes("\n")) return true;
-	// Would be resolved as a non-string type
-	if (wouldBeResolved(s)) return true;
+	// Would be resolved as a non-string type (skip when a tag overrides resolution)
+	if (!ignoreType && wouldBeResolved(s)) return true;
 	// Starts with whitespace (space/tab)
 	const first = s[0];
 	if (first === " " || first === "\t") return true;
@@ -120,33 +120,6 @@ function requiresQuoting(s: string): boolean {
 	if (s.includes(": ") || s.endsWith(":")) return true;
 	if (s.includes(" #")) return true;
 	// C0 control characters (except tab) require quoting
-	for (let i = 0; i < s.length; i++) {
-		if (isControlChar(s.charCodeAt(i))) return true;
-	}
-	return false;
-}
-
-/**
- * Like {@link requiresQuoting} but skips the type-conflict check.
- * Used when a tag is present (e.g., `!` non-specific tag) since the tag
- * overrides type resolution and the value can safely remain plain.
- */
-function requiresQuotingIgnoringType(s: string): boolean {
-	if (s === "") return true;
-	if (s.includes("\n")) return true;
-	const first = s[0];
-	if (first === " " || first === "\t") return true;
-	if (first !== undefined && INDICATOR_CHARS.has(first)) {
-		if (first === ":" || first === "?" || first === "-") {
-			const second = s[1];
-			if (s.length === 1 || second === " " || second === "\t") return true;
-		} else {
-			return true;
-		}
-	}
-	if (s.startsWith("---") || s.startsWith("...")) return true;
-	if (s.includes(": ") || s.endsWith(":")) return true;
-	if (s.includes(" #")) return true;
 	for (let i = 0; i < s.length; i++) {
 		if (isControlChar(s.charCodeAt(i))) return true;
 	}
@@ -316,7 +289,7 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
-function renderString(s: string, style: ScalarStyle, indent: string): string {
+function renderString(s: string, style: ScalarStyle, indent: string, ignoreType = false): string {
 	if (s.includes("\n")) {
 		// Multi-line: prefer block styles
 		if (style === "block-literal") return renderBlockLiteral(s, indent);
@@ -327,45 +300,11 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 	}
 	switch (style) {
 		case "plain":
-			if (requiresQuoting(s)) {
+			if (requiresQuoting(s, ignoreType)) {
 				// Prefer single-quoted when no escape sequences are needed.
 				// Only use double-quoted for chars that need YAML escapes
 				// (tab, CR, control chars). Backslashes are literal in
 				// single-quoted YAML and do NOT need double-quoting.
-				if (s.includes("\t") || s.includes("\r")) {
-					return renderDoubleQuoted(s);
-				}
-				for (let i = 0; i < s.length; i++) {
-					if (isControlChar(s.charCodeAt(i))) return renderDoubleQuoted(s);
-				}
-				return renderSingleQuoted(s);
-			}
-			return s;
-		case "single-quoted":
-			return renderSingleQuoted(s);
-		case "double-quoted":
-			return renderDoubleQuoted(s);
-		case "block-literal":
-			return renderBlockLiteral(s, indent);
-		case "block-folded":
-			return renderBlockFolded(s, indent);
-	}
-}
-
-/**
- * Like {@link renderString} but skips type-conflict checks for plain style.
- * Used when a tag is present, since the tag overrides type resolution.
- */
-function renderStringWithTag(s: string, style: ScalarStyle, indent: string): string {
-	if (s.includes("\n")) {
-		if (style === "block-literal") return renderBlockLiteral(s, indent);
-		if (style === "block-folded") return renderBlockFolded(s, indent);
-		if (style === "plain" || style === "single-quoted") return renderBlockLiteral(s, indent);
-		return renderDoubleQuoted(s);
-	}
-	switch (style) {
-		case "plain":
-			if (requiresQuotingIgnoringType(s)) {
 				if (s.includes("\t") || s.includes("\r")) {
 					return renderDoubleQuoted(s);
 				}
@@ -721,9 +660,7 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 		lines = [renderNumber(val)];
 	} else if (typeof val === "string") {
 		// When a tag is present, type-conflict quoting is unnecessary
-		const rendered = node.tag
-			? renderStringWithTag(val, style, " ".repeat(ctx.indent))
-			: renderString(val, style, " ".repeat(ctx.indent));
+		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
