@@ -2920,6 +2920,8 @@ function composeDocument(
 
 	// Detect whether `---` document start marker was present in the CST
 	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+	// Detect whether `...` document end marker was present in the CST
+	const hasDocEnd = children.some((c) => c.type === "whitespace" && c.source === "...");
 
 	return new YamlDocument({
 		contents,
@@ -2927,6 +2929,7 @@ function composeDocument(
 		warnings: [...state.warnings],
 		directives,
 		hasDocumentStart: hasDocStart,
+		hasDocumentEnd: hasDocEnd,
 		...(documentComment !== undefined ? { comment: documentComment } : {}),
 	});
 }
