@@ -141,7 +141,7 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 							}
 							const docs = Either.getOrThrow(docsResult);
 							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
-							const stringified = parts.join("---\n");
+							const stringified = parts.join("");
 							expect(stringified).toBe(tc.outYaml);
 						} else {
 							const docResult = Effect.runSync(Effect.either(parseDocument(tc.yaml, { uniqueKeys: false })));

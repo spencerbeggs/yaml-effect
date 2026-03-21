@@ -10,7 +10,7 @@
 import { Effect } from "effect";
 import { YamlStringifyError } from "../errors/YamlStringifyError.js";
 import type { YamlNode } from "../schemas/YamlAstNodes.js";
-import { YamlAlias, YamlMap, YamlScalar, YamlSeq } from "../schemas/YamlAstNodes.js";
+import { YamlAlias, YamlMap, YamlPair, YamlScalar, YamlSeq } from "../schemas/YamlAstNodes.js";
 import type { YamlDocument } from "../schemas/YamlDocument.js";
 import type { CollectionStyle, ScalarStyle } from "../schemas/YamlShared.js";
 import { YamlStringifyOptions } from "../schemas/YamlStringifyOptions.js";
@@ -176,7 +176,7 @@ function renderBlockLiteral(s: string, indent: string): string {
 	if (s.endsWith("\n")) {
 		lines.pop();
 	}
-	return `|${chomp}\n${lines.map((l) => `${indent}${l}`).join("\n")}`;
+	return `|${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
 }
 
 /**
@@ -193,7 +193,7 @@ function renderBlockFolded(s: string, indent: string): string {
 	if (s.endsWith("\n")) {
 		lines.pop();
 	}
-	return `>${chomp}\n${lines.map((l) => `${indent}${l}`).join("\n")}`;
+	return `>${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
 }
 
 /**
@@ -207,19 +207,6 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
-/**
- * Returns true if a string contains characters that require escape sequences,
- * meaning it must use double-quoted style rather than single-quoted.
- */
-function needsEscapes(s: string): boolean {
-	for (let i = 0; i < s.length; i++) {
-		const ch = s[i];
-		if (ch === "\n" || ch === "\r" || ch === "\t") return true;
-		if (isControlChar(s.charCodeAt(i))) return true;
-	}
-	return false;
-}
-
 function renderString(s: string, style: ScalarStyle, indent: string): string {
 	if (s.includes("\n")) {
 		// Multi-line: prefer block styles
@@ -232,7 +219,16 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 	switch (style) {
 		case "plain":
 			if (requiresQuoting(s)) {
-				if (needsEscapes(s)) return renderDoubleQuoted(s);
+				// Prefer single-quoted when no escape sequences are needed.
+				// Only use double-quoted for chars that need YAML escapes
+				// (tab, CR, control chars). Backslashes are literal in
+				// single-quoted YAML and do NOT need double-quoting.
+				if (s.includes("\t") || s.includes("\r")) {
+					return renderDoubleQuoted(s);
+				}
+				for (let i = 0; i < s.length; i++) {
+					if (isControlChar(s.charCodeAt(i))) return renderDoubleQuoted(s);
+				}
 				return renderSingleQuoted(s);
 			}
 			return s;
@@ -471,6 +467,54 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 }
 
 // ---------------------------------------------------------------------------
+// Comment stripping (for canonical output)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively strips all comment fields from AST nodes.
+ * Used when forceDefaultStyles is true to produce canonical output.
+ */
+function stripNodeComments(node: YamlNode): YamlNode {
+	if (node instanceof YamlScalar) {
+		return new YamlScalar({
+			value: node.value,
+			style: node.style,
+			tag: node.tag,
+			anchor: node.anchor,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlMap) {
+		return new YamlMap({
+			items: node.items.map(
+				(pair) =>
+					new YamlPair({
+						key: stripNodeComments(pair.key),
+						value: pair.value ? stripNodeComments(pair.value) : null,
+					}),
+			),
+			style: node.style,
+			tag: node.tag,
+			anchor: node.anchor,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlSeq) {
+		return new YamlSeq({
+			items: node.items.map(stripNodeComments),
+			style: node.style,
+			tag: node.tag,
+			anchor: node.anchor,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	return node;
+}
+
+// ---------------------------------------------------------------------------
 // AST node stringification
 // ---------------------------------------------------------------------------
 
@@ -502,17 +546,39 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	// strings (block-literal vs block-folded vs double-quoted) since the canonical
 	// output retains scalar presentation style even in normalized form.
 	const nodeStyle = node.style ?? ctx.defaultScalarStyle;
+	// When forcing default styles, preserve block scalar sub-styles
+	// (block-literal, block-folded) since the canonical output retains
+	// scalar presentation style even in normalized form. Also preserve
+	// double-quoted style when the value contains characters that would
+	// render differently (newlines produce escape sequences in double-quoted).
+	const isBlockStyle = nodeStyle === "block-literal" || nodeStyle === "block-folded";
+	const isDoubleWithNewlines =
+		nodeStyle === "double-quoted" && typeof node.value === "string" && node.value.includes("\n");
 	const style: ScalarStyle =
-		ctx.forceDefaultStyles && typeof node.value === "string" && node.value.includes("\n") && nodeStyle !== "plain"
+		ctx.forceDefaultStyles && typeof node.value === "string" && (isBlockStyle || isDoubleWithNewlines)
 			? nodeStyle
 			: ctx.forceDefaultStyles
 				? ctx.defaultScalarStyle
 				: nodeStyle;
 	const val = node.value;
 
+	// Empty scalar (zero-length in source) with tag or anchor: render just tag/anchor
+	const isEmpty = node.length === 0 && (val === null || val === undefined || val === "");
+	if (isEmpty && (node.tag || node.anchor)) {
+		const parts: string[] = [];
+		if (node.tag) parts.push(node.tag);
+		if (node.anchor) parts.push(`&${node.anchor}`);
+		return [parts.join(" ")];
+	}
+
 	let lines: string[];
 	if (val === null || val === undefined) {
-		lines = ["null"];
+		// Empty scalar (zero-length) without tag/anchor renders as empty string
+		if (isEmpty) {
+			lines = [""];
+		} else {
+			lines = ["null"];
+		}
 	} else if (typeof val === "boolean") {
 		lines = [val ? "true" : "false"];
 	} else if (typeof val === "number") {
@@ -523,11 +589,12 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
 	}
-	if (node.anchor) {
-		lines[0] = `&${node.anchor} ${lines[0]}`;
-	}
+	// Canonical ordering: &anchor !!tag value (anchor before tag)
 	if (node.tag) {
 		lines[0] = `${node.tag} ${lines[0]}`;
+	}
+	if (node.anchor) {
+		lines[0] = `&${node.anchor} ${lines[0]}`;
 	}
 	return lines;
 }
@@ -550,11 +617,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 
 	if (items.length === 0) {
 		const emptyLines = ["{}"];
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
 		if (node.tag) {
 			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
+		}
+		if (node.anchor) {
+			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
 		}
 		return emptyLines;
 	}
@@ -566,11 +633,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			return `${keyStr}: ${valStr}`;
 		});
 		const flowLines = [`{${pairs.join(", ")}}`];
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
 		if (node.tag) {
 			flowLines[0] = `${node.tag} ${flowLines[0]}`;
+		}
+		if (node.anchor) {
+			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
 		}
 		return flowLines;
 	}
@@ -580,9 +647,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	const lines: string[] = [];
 	for (const pair of items) {
 		const keyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
+		// Alias keys need space before colon to avoid ambiguity (e.g., `*a :` not `*a:`)
+		const sep = pair.key instanceof YamlAlias ? " :" : ":";
 		const valNode = pair.value;
 		if (!valNode) {
-			lines.push(`${keyStr}:`);
+			lines.push(`${keyStr}${sep}`);
 			continue;
 		}
 		const valLines = stringifyNodeLines(valNode, ctx);
@@ -592,34 +661,77 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			(ctx.forceDefaultStyles ? ctx.defaultCollectionStyle : (valNode.style ?? ctx.defaultCollectionStyle)) === "block";
 		if (isBlockSeqValue) {
 			// Block sequence as mapping value: compact notation (no extra indent)
-			lines.push(`${keyStr}:`);
-			for (const vl of valLines) {
-				lines.push(vl);
+			// If seq has metadata (anchor/tag), place it on the key line
+			const seqMeta = buildMetadataPrefix(valNode.tag, valNode.anchor);
+			const startIdx = seqMeta ? 1 : 0; // skip metadata line if present
+			lines.push(seqMeta ? `${keyStr}${sep} ${seqMeta}` : `${keyStr}${sep}`);
+			for (let i = startIdx; i < valLines.length; i++) {
+				lines.push(valLines[i]);
+			}
+		} else if (
+			valNode instanceof YamlMap &&
+			valNode.items.length > 0 &&
+			(ctx.forceDefaultStyles ? ctx.defaultCollectionStyle : (valNode.style ?? ctx.defaultCollectionStyle)) === "block"
+		) {
+			// Non-empty block mapping as value: put on next line with indent
+			const mapMeta = buildMetadataPrefix(valNode.tag, valNode.anchor);
+			const startIdx = mapMeta ? 1 : 0;
+			lines.push(mapMeta ? `${keyStr}${sep} ${mapMeta}` : `${keyStr}${sep}`);
+			for (let i = startIdx; i < valLines.length; i++) {
+				lines.push(`${pad}${valLines[i]}`);
 			}
 		} else if (valLines.length === 1) {
-			lines.push(`${keyStr}: ${valLines[0]}`);
+			// Empty value: `key:` with no trailing space
+			lines.push(valLines[0] === "" ? `${keyStr}${sep}` : `${keyStr}${sep} ${valLines[0]}`);
 		} else {
 			const first = valLines[0];
 			if (first.startsWith("|") || first.startsWith(">")) {
-				lines.push(`${keyStr}: ${first}`);
+				lines.push(`${keyStr}${sep} ${first}`);
 				for (let i = 1; i < valLines.length; i++) {
 					lines.push(valLines[i]);
 				}
 			} else {
-				lines.push(`${keyStr}:`);
-				for (const vl of valLines) {
-					lines.push(`${pad}${vl}`);
+				// Check if this is a block map value with metadata prefix
+				const isBlockMapValue =
+					valNode instanceof YamlMap &&
+					(ctx.forceDefaultStyles ? ctx.defaultCollectionStyle : (valNode.style ?? ctx.defaultCollectionStyle)) ===
+						"block";
+				const mapMeta = isBlockMapValue ? buildMetadataPrefix(valNode.tag, valNode.anchor) : undefined;
+				if (mapMeta) {
+					// Place metadata on key line, content indented on next lines
+					const startIdx = 1; // skip metadata line
+					lines.push(`${keyStr}${sep} ${mapMeta}`);
+					for (let i = startIdx; i < valLines.length; i++) {
+						lines.push(`${pad}${valLines[i]}`);
+					}
+				} else {
+					lines.push(`${keyStr}${sep}`);
+					for (const vl of valLines) {
+						lines.push(`${pad}${vl}`);
+					}
 				}
 			}
 		}
 	}
-	if (node.anchor) {
-		lines[0] = `&${node.anchor} ${lines[0]}`;
-	}
-	if (node.tag) {
-		lines[0] = `${node.tag} ${lines[0]}`;
+	// Anchor/tag on block collections: place on own line before content
+	const prefix = buildMetadataPrefix(node.tag, node.anchor);
+	if (prefix) {
+		lines.unshift(prefix);
 	}
 	return lines;
+}
+
+/**
+ * Builds a metadata prefix string from tag and anchor.
+ * Returns the combined prefix or undefined if neither is present.
+ */
+function buildMetadataPrefix(tag: string | undefined, anchor: string | undefined): string | undefined {
+	if (!tag && !anchor) return undefined;
+	// Canonical ordering: &anchor !!tag (anchor before tag)
+	const parts: string[] = [];
+	if (anchor) parts.push(`&${anchor}`);
+	if (tag) parts.push(tag);
+	return parts.join(" ");
 }
 
 /**
@@ -633,11 +745,11 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 
 	if (items.length === 0) {
 		const emptyLines = ["[]"];
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
 		if (node.tag) {
 			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
+		}
+		if (node.anchor) {
+			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
 		}
 		return emptyLines;
 	}
@@ -645,11 +757,11 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	if (style === "flow") {
 		const parts = items.map((item) => stringifyNodeLines(item, ctx).join(" "));
 		const flowLines = [`[${parts.join(", ")}]`];
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
 		if (node.tag) {
 			flowLines[0] = `${node.tag} ${flowLines[0]}`;
+		}
+		if (node.anchor) {
+			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
 		}
 		return flowLines;
 	}
@@ -660,7 +772,8 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	for (const item of items) {
 		const itemLines = stringifyNodeLines(item, ctx);
 		if (itemLines.length === 1) {
-			lines.push(`- ${itemLines[0]}`);
+			// Empty value: just `-` with no trailing space
+			lines.push(itemLines[0] === "" ? "-" : `- ${itemLines[0]}`);
 		} else {
 			const first = itemLines[0];
 			if (first.startsWith("|") || first.startsWith(">")) {
@@ -670,18 +783,17 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 				}
 			} else {
 				// Nested mapping or sequence — indent continuation lines by one level
-				lines.push(`- ${itemLines[0]}`);
+				lines.push(first === "" ? "-" : `- ${first}`);
 				for (let i = 1; i < itemLines.length; i++) {
 					lines.push(`${pad}${itemLines[i]}`);
 				}
 			}
 		}
 	}
-	if (node.anchor) {
-		lines[0] = `&${node.anchor} ${lines[0]}`;
-	}
-	if (node.tag) {
-		lines[0] = `${node.tag} ${lines[0]}`;
+	// Anchor/tag on block sequences: place on own line before content
+	const prefix = buildMetadataPrefix(node.tag, node.anchor);
+	if (prefix) {
+		lines.unshift(prefix);
 	}
 	return lines;
 }
@@ -815,33 +927,62 @@ export function stringifyDocument(
 				seen: new Set(),
 			};
 
-			if (doc.contents === null) {
+			// Strip comments when producing canonical output
+			let contents = doc.contents;
+			const docComment = ctx.forceDefaultStyles ? undefined : doc.comment;
+			if (ctx.forceDefaultStyles && contents) {
+				contents = stripNodeComments(contents);
+			}
+
+			if (contents === null) {
+				// Empty document (no contents) — canonical output is empty string
+				if (ctx.forceDefaultStyles) return "";
 				return opts.finalNewline ? "null\n" : "null";
 			}
 
-			const result = stringifyNodeLines(doc.contents, ctx).join("\n");
+			const result = stringifyNodeLines(contents, ctx).join("\n");
 			const body = opts.finalNewline ? `${result}\n` : result;
 
+			const docEnd = doc.hasDocumentEnd ? "...\n" : "";
+
 			if (doc.hasDocumentStart) {
-				const rootTag = doc.contents && "tag" in doc.contents ? doc.contents.tag : undefined;
-				if (rootTag) {
-					// Strip the tag from body's first line (already prepended by stringifyNodeLines)
-					// and place it on the --- line. For block collections, content must start
-					// on the next line to avoid ambiguous `--- !!map key: val` parsing.
-					const tagPrefix = `${rootTag} `;
-					const bodyWithoutTag = body.startsWith(tagPrefix) ? body.slice(tagPrefix.length) : body;
-					const docStart = `--- ${rootTag}`;
-					// For block collections, content must start on the next line to avoid
-					// ambiguous `--- !!map key: val` parsing. For scalars, keep inline.
-					const isCollection = doc.contents instanceof YamlMap || doc.contents instanceof YamlSeq;
+				const rootTag = contents && "tag" in contents ? contents.tag : undefined;
+				const rootAnchor = contents && "anchor" in contents ? contents.anchor : undefined;
+				const isCollection = contents instanceof YamlMap || contents instanceof YamlSeq;
+				const isScalar = contents instanceof YamlScalar;
+
+				if (rootTag || rootAnchor) {
+					// Build metadata prefix — canonical ordering: &anchor !!tag
+					const metaParts: string[] = [];
+					if (rootAnchor) metaParts.push(`&${rootAnchor}`);
+					if (rootTag) metaParts.push(rootTag);
+					const metaStr = metaParts.join(" ");
+
+					// Strip tag/anchor prefix from body (already prepended by stringifyNodeLines)
+					let bodyClean = body;
+					// For block collections, the metadata is on its own line
+					const metaLinePrefix = `${metaStr}\n`;
+					const metaInlinePrefix = `${metaStr} `;
+					if (bodyClean.startsWith(metaLinePrefix)) {
+						bodyClean = bodyClean.slice(metaLinePrefix.length);
+					} else if (bodyClean.startsWith(metaInlinePrefix)) {
+						bodyClean = bodyClean.slice(metaInlinePrefix.length);
+					}
+
+					const docStart = `--- ${metaStr}`;
 					const sep = isCollection ? "\n" : " ";
-					return doc.comment
-						? `# ${doc.comment}\n${docStart}${sep}${bodyWithoutTag}`
-						: `${docStart}${sep}${bodyWithoutTag}`;
+					return docComment
+						? `# ${docComment}\n${docStart}${sep}${bodyClean}${docEnd}`
+						: `${docStart}${sep}${bodyClean}${docEnd}`;
 				}
-				return doc.comment ? `# ${doc.comment}\n---\n${body}` : `---\n${body}`;
+
+				// No tag/anchor — inline scalars after ---
+				if (isScalar && !isCollection) {
+					return docComment ? `# ${docComment}\n--- ${body}${docEnd}` : `--- ${body}${docEnd}`;
+				}
+				return docComment ? `# ${docComment}\n---\n${body}${docEnd}` : `---\n${body}${docEnd}`;
 			}
-			return doc.comment ? `# ${doc.comment}\n${body}` : body;
+			return docComment ? `# ${docComment}\n${body}${docEnd}` : `${body}${docEnd}`;
 		},
 		catch: (err) => {
 			const reason = err instanceof Error ? err.message : String(err);
