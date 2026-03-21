@@ -126,6 +126,33 @@ function requiresQuoting(s: string): boolean {
 	return false;
 }
 
+/**
+ * Like {@link requiresQuoting} but skips the type-conflict check.
+ * Used when a tag is present (e.g., `!` non-specific tag) since the tag
+ * overrides type resolution and the value can safely remain plain.
+ */
+function requiresQuotingIgnoringType(s: string): boolean {
+	if (s === "") return true;
+	if (s.includes("\n")) return true;
+	const first = s[0];
+	if (first === " " || first === "\t") return true;
+	if (first !== undefined && INDICATOR_CHARS.has(first)) {
+		if (first === ":" || first === "?" || first === "-") {
+			const second = s[1];
+			if (s.length === 1 || second === " " || second === "\t") return true;
+		} else {
+			return true;
+		}
+	}
+	if (s.startsWith("---") || s.startsWith("...")) return true;
+	if (s.includes(": ") || s.endsWith(":")) return true;
+	if (s.includes(" #")) return true;
+	for (let i = 0; i < s.length; i++) {
+		if (isControlChar(s.charCodeAt(i))) return true;
+	}
+	return false;
+}
+
 // ---------------------------------------------------------------------------
 // Scalar rendering
 // ---------------------------------------------------------------------------
@@ -223,6 +250,40 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 				// Only use double-quoted for chars that need YAML escapes
 				// (tab, CR, control chars). Backslashes are literal in
 				// single-quoted YAML and do NOT need double-quoting.
+				if (s.includes("\t") || s.includes("\r")) {
+					return renderDoubleQuoted(s);
+				}
+				for (let i = 0; i < s.length; i++) {
+					if (isControlChar(s.charCodeAt(i))) return renderDoubleQuoted(s);
+				}
+				return renderSingleQuoted(s);
+			}
+			return s;
+		case "single-quoted":
+			return renderSingleQuoted(s);
+		case "double-quoted":
+			return renderDoubleQuoted(s);
+		case "block-literal":
+			return renderBlockLiteral(s, indent);
+		case "block-folded":
+			return renderBlockFolded(s, indent);
+	}
+}
+
+/**
+ * Like {@link renderString} but skips type-conflict checks for plain style.
+ * Used when a tag is present, since the tag overrides type resolution.
+ */
+function renderStringWithTag(s: string, style: ScalarStyle, indent: string): string {
+	if (s.includes("\n")) {
+		if (style === "block-literal") return renderBlockLiteral(s, indent);
+		if (style === "block-folded") return renderBlockFolded(s, indent);
+		if (style === "plain" || style === "single-quoted") return renderBlockLiteral(s, indent);
+		return renderDoubleQuoted(s);
+	}
+	switch (style) {
+		case "plain":
+			if (requiresQuotingIgnoringType(s)) {
 				if (s.includes("\t") || s.includes("\r")) {
 					return renderDoubleQuoted(s);
 				}
@@ -546,20 +607,25 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	// strings (block-literal vs block-folded vs double-quoted) since the canonical
 	// output retains scalar presentation style even in normalized form.
 	const nodeStyle = node.style ?? ctx.defaultScalarStyle;
-	// When forcing default styles, preserve block scalar sub-styles
-	// (block-literal, block-folded) since the canonical output retains
-	// scalar presentation style even in normalized form. Also preserve
-	// double-quoted style when the value contains characters that would
-	// render differently (newlines produce escape sequences in double-quoted).
-	const isBlockStyle = nodeStyle === "block-literal" || nodeStyle === "block-folded";
-	const isDoubleWithNewlines =
-		nodeStyle === "double-quoted" && typeof node.value === "string" && node.value.includes("\n");
-	const style: ScalarStyle =
-		ctx.forceDefaultStyles && typeof node.value === "string" && (isBlockStyle || isDoubleWithNewlines)
-			? nodeStyle
-			: ctx.forceDefaultStyles
-				? ctx.defaultScalarStyle
-				: nodeStyle;
+	// When forcing default styles (canonical output), use the node's own style
+	// but downgrade quoted styles to plain when the value is safe as a plain
+	// scalar. This matches canonical behavior: quoting is preserved only when
+	// removing it would change the resolved type or create ambiguity.
+	let style: ScalarStyle;
+	if (ctx.forceDefaultStyles && typeof node.value === "string") {
+		const isQuotedStyle = nodeStyle === "single-quoted" || nodeStyle === "double-quoted";
+		// Downgrade quoted to plain when the value is safe as plain.
+		// When a tag is present (e.g., `!` non-specific tag), type-conflict
+		// quoting is unnecessary since the tag overrides type resolution.
+		const needsQuotes = node.tag ? requiresQuotingIgnoringType(node.value) : requiresQuoting(node.value);
+		if (isQuotedStyle && !needsQuotes) {
+			style = "plain";
+		} else {
+			style = nodeStyle;
+		}
+	} else {
+		style = nodeStyle;
+	}
 	const val = node.value;
 
 	// Empty scalar (zero-length in source) with tag or anchor: render just tag/anchor
@@ -584,7 +650,10 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	} else if (typeof val === "number") {
 		lines = [renderNumber(val)];
 	} else if (typeof val === "string") {
-		const rendered = renderString(val, style, " ".repeat(ctx.indent));
+		// When a tag is present, type-conflict quoting is unnecessary
+		const rendered = node.tag
+			? renderStringWithTag(val, style, " ".repeat(ctx.indent))
+			: renderString(val, style, " ".repeat(ctx.indent));
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
