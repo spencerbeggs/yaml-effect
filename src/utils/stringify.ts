@@ -208,6 +208,11 @@ function renderBlockLiteral(s: string, indent: string): string {
 
 /**
  * Renders a string scalar using block folded style (greater-than `>`).
+ *
+ * In folded block scalars, a single newline between content lines is folded
+ * into a space by the reader. To preserve a literal newline in the value,
+ * the output must contain an empty line (double newline). Each empty line
+ * in the value already produces the correct number of blank lines.
  */
 function renderBlockFolded(s: string, indent: string): string {
 	let chomp = "";
@@ -216,11 +221,73 @@ function renderBlockFolded(s: string, indent: string): string {
 	} else if (!s.endsWith("\n")) {
 		chomp = "-";
 	}
-	const lines = s.split("\n");
+
+	// Split the value into lines and build folded output.
+	// In folded scalars, the reader folds bare newlines between same-indent
+	// content lines into spaces. To preserve a literal \n in the value:
+	// - Between two "normal" (non-indented) lines → insert empty line
+	// - Before a "more-indented" line (starts with space/tab) → no extra line
+	//   needed, the reader preserves newlines before more-indented lines
+	// - Empty lines in the value → emit as-is (already preserved by reader)
+	const valueLines = s.split("\n");
 	if (s.endsWith("\n")) {
-		lines.pop();
+		valueLines.pop();
 	}
-	return `>${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
+
+	// Build folded output from the resolved value lines.
+	//
+	// Folded scalar reading rules (YAML 1.2 §8.2.1):
+	// - Bare newline between same-indent content lines → folded to space
+	// - Empty line (blank line) → preserves the newline
+	// - The line break BEFORE an empty line or more-indented line is also
+	//   preserved (not folded)
+	//
+	// To reverse this for rendering:
+	// - Between consecutive non-empty, non-more-indented lines: insert an
+	//   empty line (prevents the reader from folding to space)
+	// - When a non-empty line is followed by empty line(s): the line break
+	//   after the content is preserved by the reader, so we need an extra
+	//   empty line in the output to account for it
+	const outputLines: string[] = [];
+	let prevNonEmpty = false;
+	let prevMoreIndented = false;
+	for (let i = 0; i < valueLines.length; i++) {
+		const line = valueLines[i];
+		if (line === "") {
+			// If the previous line was non-empty, non-more-indented content,
+			// the \n after it is preserved (not folded) because it's followed
+			// by an empty line. Emit an extra empty line for that preserved \n.
+			// Exception: if the next non-empty content is more-indented, the
+			// reader already preserves the linebreak, so skip the extra line.
+			if (prevNonEmpty && !prevMoreIndented) {
+				// Look ahead to find the next non-empty line
+				let nextContentMoreIndented = false;
+				for (let j = i + 1; j < valueLines.length; j++) {
+					if (valueLines[j] !== "") {
+						nextContentMoreIndented = valueLines[j].startsWith(" ") || valueLines[j].startsWith("\t");
+						break;
+					}
+				}
+				if (!nextContentMoreIndented) {
+					outputLines.push("");
+				}
+			}
+			outputLines.push("");
+			prevNonEmpty = false;
+			prevMoreIndented = false;
+		} else {
+			const isMoreIndented = line.startsWith(" ") || line.startsWith("\t");
+			if (prevNonEmpty && !isMoreIndented) {
+				// Fold break: insert empty line between consecutive content lines
+				outputLines.push("");
+			}
+			outputLines.push(`${indent}${line}`);
+			prevNonEmpty = true;
+			prevMoreIndented = isMoreIndented;
+		}
+	}
+
+	return `>${chomp}\n${outputLines.join("\n")}`;
 }
 
 /**
