@@ -176,9 +176,9 @@ function renderBlockLiteral(s: string, indent: string): string {
 	if (s.endsWith("\n")) {
 		lines.pop();
 	}
-	// Explicit indent indicator needed when first content line starts with
-	// space or tab — without it, the reader would include the leading
-	// whitespace in the auto-detected indentation level.
+	// Explicit indent indicator needed when:
+	// - First content line starts with space (reader would misdetect indent)
+	// - Value starts with empty lines (reader can't auto-detect indent)
 	let indentIndicator = "";
 	const firstContent = lines.find((l) => l !== "");
 	if (firstContent?.startsWith(" ")) {
@@ -215,7 +215,9 @@ function renderBlockFolded(s: string, indent: string): string {
 		valueLines.pop();
 	}
 
-	// Explicit indent indicator when first content line starts with space/tab
+	// Explicit indent indicator needed when first content line starts with
+	// space — without it, the reader would include the leading whitespace
+	// in the auto-detected indentation level.
 	let indentIndicator = "";
 	const firstContent = valueLines.find((l) => l !== "");
 	if (firstContent?.startsWith(" ")) {
