@@ -1837,6 +1837,79 @@ function consumeValueNodeForNullKey(
 	return i > startIdx ? { node: null, nextIdx: i } : null;
 }
 
+/**
+ * Validate that flow collection entries are separated by commas.
+ *
+ * Detects the specific pattern: content, `:`, content, content (no comma).
+ * This catches `{foo: 1 bar: 2}` while allowing multiline plain scalars
+ * like `{multi\n  line: value}` (consecutive scalars without colon between).
+ *
+ * State machine: idle → saw-colon → saw-value → error-if-no-comma
+ */
+function validateFlowSeparators(
+	children: readonly CstNode[],
+	state: ComposerState,
+	openBracket: string,
+	closeBracket: string,
+): void {
+	// Track: after seeing "scalar : scalar", the next scalar without comma is an error
+	let colonCount = 0; // number of colons seen since last comma
+	let contentAfterColon = 0; // content tokens after the most recent colon
+
+	for (const child of children) {
+		if (child.type === "whitespace" && (child.source === openBracket || child.source === closeBracket)) continue;
+		if (child.type === "newline") continue;
+		if (child.type === "comment") {
+			// A comment between content tokens in a flow collection breaks
+			// plain scalar continuation — if content follows, it needs a comma.
+			if (contentAfterColon > 0) {
+				colonCount = 1;
+				contentAfterColon = 1;
+			}
+			continue;
+		}
+		if (child.type === "whitespace" && child.source.trim() === "") continue;
+
+		if (child.type === "whitespace" && child.source === ",") {
+			colonCount = 0;
+			contentAfterColon = 0;
+			continue;
+		}
+		if (child.type === "whitespace" && child.source === ":") {
+			colonCount++;
+			contentAfterColon = 0;
+			continue;
+		}
+
+		const isContent =
+			child.type === "flow-scalar" ||
+			child.type === "block-scalar" ||
+			child.type === "flow-map" ||
+			child.type === "flow-seq" ||
+			child.type === "alias";
+
+		if (isContent) {
+			contentAfterColon++;
+			// Error: we've seen at least one colon, a value after it, and now
+			// another content token without a comma. This means something like
+			// `key: value nextkey` (missing comma).
+			if (colonCount > 0 && contentAfterColon > 1) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "MalformedFlowCollection",
+						message: "Missing comma between flow collection entries",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
+		}
+	}
+}
+
 function checkDuplicateKeys(pairs: YamlPair[], state: ComposerState): void {
 	const seen = new Set<unknown>();
 	for (const pair of pairs) {
@@ -2331,6 +2404,11 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 		);
 	}
 
+	// Validate that flow mapping entries are separated by commas.
+	// Between consecutive content tokens (scalars, nested collections),
+	// there must be a comma separator unless one is a value indicator (:).
+	validateFlowSeparators(children, state, "{", "}");
+
 	// Filter out brackets and blank whitespace, but KEEP commas and newlines
 	// so that flattenFlowChildren can respect segment boundaries for multi-line keys.
 	const content = children.filter(
@@ -2526,6 +2604,9 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSeq {
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
+
+	// Validate flow separators (commas between entries)
+	validateFlowSeparators(children, state, "[", "]");
 
 	// Validate bracket balance: check that the flow sequence has matching brackets.
 	const hasOpen = children.some((c) => c.type === "whitespace" && c.source === "[");
