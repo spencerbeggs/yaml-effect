@@ -2520,6 +2520,26 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					);
 				}
 			}
+			// Validate: plain `-` or `?` alone in flow context is invalid.
+			// These are block indicators that cannot be plain scalars in flow
+			// context unless followed by a non-space safe character (§7.3.3).
+			if (
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				(child.source === "-" || child.source === "?")
+			) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: `Invalid plain scalar '${child.source}' in flow context`,
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 				if (hasValueSepThroughPlainScalars(children, i + 1)) {
 					// Plain scalar eventually followed by ":" (possibly through

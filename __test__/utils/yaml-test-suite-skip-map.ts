@@ -29,7 +29,6 @@ export const XFAIL: Record<string, string> = {
 	CXX2: "Parser accepts invalid YAML: Mapping with anchor on document start line",
 	DMG6: "Parser accepts invalid YAML: Wrong indendation in Map",
 	EW3V: "Parser accepts invalid YAML: Wrong indendation in mapping",
-	G5U8: "Parser accepts invalid YAML: Plain dashes in flow sequence",
 	G9HC: "Parser accepts invalid YAML: Invalid anchor in zero indented sequence",
 	H7J7: "Parser accepts invalid YAML: Node anchor not indented",
 	N4JP: "Parser accepts invalid YAML: Bad indentation in mapping",
@@ -44,7 +43,6 @@ export const XFAIL: Record<string, string> = {
 	"VJP3/00": "Parser accepts invalid YAML: Flow collections over many lines",
 	W9L4: "Parser accepts invalid YAML: Literal block scalar with more spaces in first line",
 	"Y79Y/009": "Parser accepts invalid YAML: Tab as block indentation after value indicator",
-	YJV2: "Parser accepts invalid YAML: Dash in flow sequence",
 	ZVH3: "Parser accepts invalid YAML: Wrong indented sequence item",
 };
 
