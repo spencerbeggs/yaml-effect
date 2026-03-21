@@ -1,6 +1,6 @@
 {
 	"name": "yaml-effect",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"private": true,
 	"description": "A pure Effect-based YAML 1.2 parser and stringifier for TypeScript.",
 	"keywords": ["yaml", "effect", "parser", "stringify", "yaml-1.2", "typescript", "effect-ts", "schema"],
