@@ -18,7 +18,7 @@ import { YamlFormattingOptions } from "../schemas/YamlFormattingOptions.js";
 import type { CollectionStyle, ScalarStyle, YamlPath } from "../schemas/YamlShared.js";
 import { YamlEdit } from "../schemas/YamlShared.js";
 import { parseDocument } from "./composer.js";
-import { stringifyDocument } from "./stringify.js";
+import { stringifyDocument, stripNodeComments } from "./stringify.js";
 
 // ---------------------------------------------------------------------------
 // Internal: character-level diff
@@ -179,57 +179,6 @@ export const applyEdits: {
 // Internal: strip comments from AST nodes
 // ---------------------------------------------------------------------------
 
-/**
- * Recursively create a copy of a YamlNode with all comment fields removed.
- *
- * @privateRemarks
- * This creates shallow copies of each node with the `comment` field omitted.
- * YamlAlias nodes are returned as-is because they have no comment field.
- * The function is pure — no nodes in the original tree are mutated.
- *
- * @internal
- */
-function stripNodeComments(node: YamlNode): YamlNode {
-	if (node instanceof YamlScalar) {
-		return new YamlScalar({
-			value: node.value,
-			style: node.style,
-			tag: node.tag,
-			anchor: node.anchor,
-			offset: node.offset,
-			length: node.length,
-		});
-	}
-	if (node instanceof YamlMap) {
-		return new YamlMap({
-			items: node.items.map(
-				(pair) =>
-					new YamlPair({
-						key: stripNodeComments(pair.key),
-						value: pair.value ? stripNodeComments(pair.value) : null,
-					}),
-			),
-			style: node.style,
-			tag: node.tag,
-			anchor: node.anchor,
-			offset: node.offset,
-			length: node.length,
-		});
-	}
-	if (node instanceof YamlSeq) {
-		return new YamlSeq({
-			items: node.items.map(stripNodeComments),
-			style: node.style,
-			tag: node.tag,
-			anchor: node.anchor,
-			offset: node.offset,
-			length: node.length,
-		});
-	}
-	// YamlAlias has no comment field
-	return node;
-}
-
 // ---------------------------------------------------------------------------
 // Internal: raw options shape (avoids Schema.Class validation for range)
 // ---------------------------------------------------------------------------
@@ -309,6 +258,7 @@ function formatImpl(text: string, raw: RawFormatOptions): Effect.Effect<string, 
 				directives: doc.directives,
 				comment: opts.preserveComments ? doc.comment : undefined,
 				hasDocumentStart: doc.hasDocumentStart,
+				hasDocumentEnd: doc.hasDocumentEnd,
 			});
 
 			return stringifyDocument(outputDoc, {
@@ -459,6 +409,7 @@ function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): Yaml
 			directives: doc.directives,
 			comment: doc.comment,
 			hasDocumentStart: doc.hasDocumentStart,
+			hasDocumentEnd: doc.hasDocumentEnd,
 		});
 	}
 
@@ -475,6 +426,7 @@ function modifyDocument(doc: YamlDocument, path: YamlPath, value: unknown): Yaml
 		directives: doc.directives,
 		comment: doc.comment,
 		hasDocumentStart: doc.hasDocumentStart,
+		hasDocumentEnd: doc.hasDocumentEnd,
 	});
 }
 
@@ -894,6 +846,7 @@ export function stripComments(text: string, replaceCh?: string): Effect.Effect<s
 				warnings: doc.warnings,
 				directives: doc.directives,
 				hasDocumentStart: doc.hasDocumentStart,
+				hasDocumentEnd: doc.hasDocumentEnd,
 			});
 
 			return stringifyDocument(strippedDoc).pipe(

@@ -1837,6 +1837,79 @@ function consumeValueNodeForNullKey(
 	return i > startIdx ? { node: null, nextIdx: i } : null;
 }
 
+/**
+ * Validate that flow collection entries are separated by commas.
+ *
+ * Detects the specific pattern: content, `:`, content, content (no comma).
+ * This catches `{foo: 1 bar: 2}` while allowing multiline plain scalars
+ * like `{multi\n  line: value}` (consecutive scalars without colon between).
+ *
+ * State machine: idle → saw-colon → saw-value → error-if-no-comma
+ */
+function validateFlowSeparators(
+	children: readonly CstNode[],
+	state: ComposerState,
+	openBracket: string,
+	closeBracket: string,
+): void {
+	// Track: after seeing "scalar : scalar", the next scalar without comma is an error
+	let colonCount = 0; // number of colons seen since last comma
+	let contentAfterColon = 0; // content tokens after the most recent colon
+
+	for (const child of children) {
+		if (child.type === "whitespace" && (child.source === openBracket || child.source === closeBracket)) continue;
+		if (child.type === "newline") continue;
+		if (child.type === "comment") {
+			// A comment between content tokens in a flow collection breaks
+			// plain scalar continuation — if content follows, it needs a comma.
+			if (contentAfterColon > 0) {
+				colonCount = 1;
+				contentAfterColon = 1;
+			}
+			continue;
+		}
+		if (child.type === "whitespace" && child.source.trim() === "") continue;
+
+		if (child.type === "whitespace" && child.source === ",") {
+			colonCount = 0;
+			contentAfterColon = 0;
+			continue;
+		}
+		if (child.type === "whitespace" && child.source === ":") {
+			colonCount++;
+			contentAfterColon = 0;
+			continue;
+		}
+
+		const isContent =
+			child.type === "flow-scalar" ||
+			child.type === "block-scalar" ||
+			child.type === "flow-map" ||
+			child.type === "flow-seq" ||
+			child.type === "alias";
+
+		if (isContent) {
+			contentAfterColon++;
+			// Error: we've seen at least one colon, a value after it, and now
+			// another content token without a comma. This means something like
+			// `key: value nextkey` (missing comma).
+			if (colonCount > 0 && contentAfterColon > 1) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "MalformedFlowCollection",
+						message: "Missing comma between flow collection entries",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
+		}
+	}
+}
+
 function checkDuplicateKeys(pairs: YamlPair[], state: ComposerState): void {
 	const seen = new Set<unknown>();
 	for (const pair of pairs) {
@@ -2331,6 +2404,11 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 		);
 	}
 
+	// Validate that flow mapping entries are separated by commas.
+	// Between consecutive content tokens (scalars, nested collections),
+	// there must be a comma separator unless one is a value indicator (:).
+	validateFlowSeparators(children, state, "{", "}");
+
 	// Filter out brackets and blank whitespace, but KEEP commas and newlines
 	// so that flattenFlowChildren can respect segment boundaries for multi-line keys.
 	const content = children.filter(
@@ -2442,6 +2520,26 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 					);
 				}
 			}
+			// Validate: plain `-` or `?` alone in flow context is invalid.
+			// These are block indicators that cannot be plain scalars in flow
+			// context unless followed by a non-space safe character (§7.3.3).
+			if (
+				child.type === "flow-scalar" &&
+				getScalarStyle(child) === "plain" &&
+				(child.source === "-" || child.source === "?")
+			) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: `Invalid plain scalar '${child.source}' in flow context`,
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 				if (hasValueSepThroughPlainScalars(children, i + 1)) {
 					// Plain scalar eventually followed by ":" (possibly through
@@ -2526,6 +2624,9 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSeq {
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
+
+	// Validate flow separators (commas between entries)
+	validateFlowSeparators(children, state, "[", "]");
 
 	// Validate bracket balance: check that the flow sequence has matching brackets.
 	const hasOpen = children.some((c) => c.type === "whitespace" && c.source === "[");
@@ -2670,6 +2771,7 @@ function composeFlatBlockMap(
 	parentCst: CstNode,
 	state: ComposerState,
 	externalFirstKey: YamlNode,
+	meta?: NodeMeta,
 ): YamlMap {
 	// Collect the remaining children into semantic items
 	const remainingChildren = children.slice(startIdx);
@@ -2685,12 +2787,18 @@ function composeFlatBlockMap(
 	const offset = "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : parentCst.offset;
 	const end = parentCst.offset + parentCst.length;
 
-	return new YamlMap({
+	const map = new YamlMap({
 		items: pairs,
 		style: "block" as CollectionStyle,
 		offset,
 		length: end - offset,
+		...(meta?.tag !== undefined ? { tag: meta.tag } : {}),
+		...(meta?.anchor !== undefined ? { anchor: meta.anchor } : {}),
+		...(meta?.comment !== undefined ? { comment: meta.comment } : {}),
 	});
+
+	if (meta?.anchor) registerAnchor(map, meta.anchor, state, offset);
+	return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -2707,6 +2815,10 @@ function composeDocument(
 	const directives: YamlDirective[] = [];
 	let contents: YamlNode | null = null;
 	let documentComment: string | undefined;
+
+	// Whether this document has a `---` marker — used to determine if
+	// metadata (tag/anchor) applies to the root mapping or the first key.
+	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
 
 	let i = 0;
 	const meta: NodeMeta = {};
@@ -2796,19 +2908,33 @@ function composeDocument(
 			// Check if next meaningful child is a block-map (this scalar is a key)
 			const nextContent = findNextContentChild(children, i + 1);
 			if (nextContent && nextContent.type === "block-map") {
-				// This scalar is the first key of a block mapping
-				const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-				clearMeta(meta);
-				contents = composeBlockMap(nextContent, state, key);
+				// When metadata (tag/anchor) appears after a document-start marker (---),
+				// it applies to the root mapping node. Otherwise, it applies to the key.
+				if (hasDocStart && hasMeta(meta)) {
+					const mapMeta = { ...meta };
+					const key = makeScalar(child, state);
+					clearMeta(meta);
+					contents = composeBlockMap(nextContent, state, key, mapMeta);
+				} else {
+					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
+					clearMeta(meta);
+					contents = composeBlockMap(nextContent, state, key);
+				}
 				i = indexOfChild(children, nextContent) + 1;
 				continue;
 			}
 			// Check if followed by ":" (value-sep) — flat mapping without block-map wrapper
 			if (hasValueSepAfter(children, i + 1)) {
-				// Compose remaining document children as a flat block map
-				const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-				clearMeta(meta);
-				contents = composeFlatBlockMap(children, i + 1, cst, state, key);
+				if (hasDocStart && hasMeta(meta)) {
+					const mapMeta = { ...meta };
+					const key = makeScalar(child, state);
+					clearMeta(meta);
+					contents = composeFlatBlockMap(children, i + 1, cst, state, key, mapMeta);
+				} else {
+					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
+					clearMeta(meta);
+					contents = composeFlatBlockMap(children, i + 1, cst, state, key);
+				}
 				break; // consumed all remaining children
 			}
 			// Standalone scalar — try multi-line plain scalar merging
@@ -2918,8 +3044,6 @@ function composeDocument(
 	// Validate document marker same-line content
 	checkDocumentMarkerSameLine(children, state, nextDocCst?.children);
 
-	// Detect whether `---` document start marker was present in the CST
-	const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
 	// Detect whether `...` document end marker was present in the CST
 	const hasDocEnd = children.some((c) => c.type === "whitespace" && c.source === "...");
 

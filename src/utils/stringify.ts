@@ -92,13 +92,13 @@ function wouldBeResolved(s: string): boolean {
  * comment/mapping-value patterns (`: `, ` #`). This is the single gate that
  * decides whether a plain scalar is safe or must be wrapped in quotes.
  */
-function requiresQuoting(s: string): boolean {
+function requiresQuoting(s: string, ignoreType = false): boolean {
 	// Empty string must be quoted
 	if (s === "") return true;
 	// Contains newlines — use block literal instead
 	if (s.includes("\n")) return true;
-	// Would be resolved as a non-string type
-	if (wouldBeResolved(s)) return true;
+	// Would be resolved as a non-string type (skip when a tag overrides resolution)
+	if (!ignoreType && wouldBeResolved(s)) return true;
 	// Starts with whitespace (space/tab)
 	const first = s[0];
 	if (first === " " || first === "\t") return true;
@@ -176,11 +176,24 @@ function renderBlockLiteral(s: string, indent: string): string {
 	if (s.endsWith("\n")) {
 		lines.pop();
 	}
-	return `|${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
+	// Explicit indent indicator needed when first content line starts with
+	// space or tab — without it, the reader would include the leading
+	// whitespace in the auto-detected indentation level.
+	let indentIndicator = "";
+	const firstContent = lines.find((l) => l !== "");
+	if (firstContent?.startsWith(" ")) {
+		indentIndicator = String(indent.length);
+	}
+	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
 }
 
 /**
  * Renders a string scalar using block folded style (greater-than `>`).
+ *
+ * In folded block scalars, a single newline between content lines is folded
+ * into a space by the reader. To preserve a literal newline in the value,
+ * the output must contain an empty line (double newline). Each empty line
+ * in the value already produces the correct number of blank lines.
  */
 function renderBlockFolded(s: string, indent: string): string {
 	let chomp = "";
@@ -189,11 +202,80 @@ function renderBlockFolded(s: string, indent: string): string {
 	} else if (!s.endsWith("\n")) {
 		chomp = "-";
 	}
-	const lines = s.split("\n");
+
+	// Split the value into lines and build folded output.
+	// In folded scalars, the reader folds bare newlines between same-indent
+	// content lines into spaces. To preserve a literal \n in the value:
+	// - Between two "normal" (non-indented) lines → insert empty line
+	// - Before a "more-indented" line (starts with space/tab) → no extra line
+	//   needed, the reader preserves newlines before more-indented lines
+	// - Empty lines in the value → emit as-is (already preserved by reader)
+	const valueLines = s.split("\n");
 	if (s.endsWith("\n")) {
-		lines.pop();
+		valueLines.pop();
 	}
-	return `>${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
+
+	// Explicit indent indicator when first content line starts with space/tab
+	let indentIndicator = "";
+	const firstContent = valueLines.find((l) => l !== "");
+	if (firstContent?.startsWith(" ")) {
+		indentIndicator = String(indent.length);
+	}
+
+	// Build folded output from the resolved value lines.
+	//
+	// Folded scalar reading rules (YAML 1.2 §8.2.1):
+	// - Bare newline between same-indent content lines → folded to space
+	// - Empty line (blank line) → preserves the newline
+	// - The line break BEFORE an empty line or more-indented line is also
+	//   preserved (not folded)
+	//
+	// To reverse this for rendering:
+	// - Between consecutive non-empty, non-more-indented lines: insert an
+	//   empty line (prevents the reader from folding to space)
+	// - When a non-empty line is followed by empty line(s): the line break
+	//   after the content is preserved by the reader, so we need an extra
+	//   empty line in the output to account for it
+	const outputLines: string[] = [];
+	let prevNonEmpty = false;
+	let prevMoreIndented = false;
+	for (let i = 0; i < valueLines.length; i++) {
+		const line = valueLines[i];
+		if (line === "") {
+			// If the previous line was non-empty, non-more-indented content,
+			// the \n after it is preserved (not folded) because it's followed
+			// by an empty line. Emit an extra empty line for that preserved \n.
+			// Exception: if the next non-empty content is more-indented, the
+			// reader already preserves the linebreak, so skip the extra line.
+			if (prevNonEmpty && !prevMoreIndented) {
+				// Look ahead to find the next non-empty line
+				let nextContentMoreIndented = false;
+				for (let j = i + 1; j < valueLines.length; j++) {
+					if (valueLines[j] !== "") {
+						nextContentMoreIndented = valueLines[j].startsWith(" ") || valueLines[j].startsWith("\t");
+						break;
+					}
+				}
+				if (!nextContentMoreIndented) {
+					outputLines.push("");
+				}
+			}
+			outputLines.push("");
+			prevNonEmpty = false;
+			prevMoreIndented = false;
+		} else {
+			const isMoreIndented = line.startsWith(" ") || line.startsWith("\t");
+			if (prevNonEmpty && !isMoreIndented) {
+				// Fold break: insert empty line between consecutive content lines
+				outputLines.push("");
+			}
+			outputLines.push(`${indent}${line}`);
+			prevNonEmpty = true;
+			prevMoreIndented = isMoreIndented;
+		}
+	}
+
+	return `>${indentIndicator}${chomp}\n${outputLines.join("\n")}`;
 }
 
 /**
@@ -207,7 +289,7 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
-function renderString(s: string, style: ScalarStyle, indent: string): string {
+function renderString(s: string, style: ScalarStyle, indent: string, ignoreType = false): string {
 	if (s.includes("\n")) {
 		// Multi-line: prefer block styles
 		if (style === "block-literal") return renderBlockLiteral(s, indent);
@@ -218,7 +300,7 @@ function renderString(s: string, style: ScalarStyle, indent: string): string {
 	}
 	switch (style) {
 		case "plain":
-			if (requiresQuoting(s)) {
+			if (requiresQuoting(s, ignoreType)) {
 				// Prefer single-quoted when no escape sequences are needed.
 				// Only use double-quoted for chars that need YAML escapes
 				// (tab, CR, control chars). Backslashes are literal in
@@ -474,7 +556,7 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
  * Recursively strips all comment fields from AST nodes.
  * Used when forceDefaultStyles is true to produce canonical output.
  */
-function stripNodeComments(node: YamlNode): YamlNode {
+export function stripNodeComments(node: YamlNode): YamlNode {
 	if (node instanceof YamlScalar) {
 		return new YamlScalar({
 			value: node.value,
@@ -546,20 +628,13 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	// strings (block-literal vs block-folded vs double-quoted) since the canonical
 	// output retains scalar presentation style even in normalized form.
 	const nodeStyle = node.style ?? ctx.defaultScalarStyle;
-	// When forcing default styles, preserve block scalar sub-styles
-	// (block-literal, block-folded) since the canonical output retains
-	// scalar presentation style even in normalized form. Also preserve
-	// double-quoted style when the value contains characters that would
-	// render differently (newlines produce escape sequences in double-quoted).
-	const isBlockStyle = nodeStyle === "block-literal" || nodeStyle === "block-folded";
-	const isDoubleWithNewlines =
-		nodeStyle === "double-quoted" && typeof node.value === "string" && node.value.includes("\n");
-	const style: ScalarStyle =
-		ctx.forceDefaultStyles && typeof node.value === "string" && (isBlockStyle || isDoubleWithNewlines)
-			? nodeStyle
-			: ctx.forceDefaultStyles
-				? ctx.defaultScalarStyle
-				: nodeStyle;
+	// When forcing default styles (canonical output), use the node's own style
+	// but downgrade quoted styles to plain when the value is safe as a plain
+	// scalar. This matches canonical behavior: quoting is preserved only when
+	// removing it would change the resolved type or create ambiguity.
+	// Canonical output preserves the node's original scalar style.
+	// forceDefaultStyles only forces *collection* styles, not scalar styles.
+	const style: ScalarStyle = nodeStyle;
 	const val = node.value;
 
 	// Empty scalar (zero-length in source) with tag or anchor: render just tag/anchor
@@ -584,12 +659,13 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	} else if (typeof val === "number") {
 		lines = [renderNumber(val)];
 	} else if (typeof val === "string") {
-		const rendered = renderString(val, style, " ".repeat(ctx.indent));
+		// When a tag is present, type-conflict quoting is unnecessary
+		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
 	}
-	// Canonical ordering: &anchor !!tag value (anchor before tag)
+	// Prepend tag first, then anchor, so the final output reads &anchor !!tag value
 	if (node.tag) {
 		lines[0] = `${node.tag} ${lines[0]}`;
 	}
@@ -616,14 +692,10 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	}
 
 	if (items.length === 0) {
-		const emptyLines = ["{}"];
-		if (node.tag) {
-			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
-		}
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
-		return emptyLines;
+		let line = "{}";
+		const emptyPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (emptyPrefix) line = `${emptyPrefix} ${line}`;
+		return [line];
 	}
 
 	if (style === "flow") {
@@ -632,14 +704,10 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			const valStr = pair.value ? stringifyNodeLines(pair.value, ctx).join(" ") : "null";
 			return `${keyStr}: ${valStr}`;
 		});
-		const flowLines = [`{${pairs.join(", ")}}`];
-		if (node.tag) {
-			flowLines[0] = `${node.tag} ${flowLines[0]}`;
-		}
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
-		return flowLines;
+		let line = `{${pairs.join(", ")}}`;
+		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (flowPrefix) line = `${flowPrefix} ${line}`;
+		return [line];
 	}
 
 	// Block style
@@ -698,10 +766,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 						"block";
 				const mapMeta = isBlockMapValue ? buildMetadataPrefix(valNode.tag, valNode.anchor) : undefined;
 				if (mapMeta) {
-					// Place metadata on key line, content indented on next lines
-					const startIdx = 1; // skip metadata line
+					// Place metadata on key line, skip metadata line in valLines
 					lines.push(`${keyStr}${sep} ${mapMeta}`);
-					for (let i = startIdx; i < valLines.length; i++) {
+					for (let i = 1; i < valLines.length; i++) {
 						lines.push(`${pad}${valLines[i]}`);
 					}
 				} else {
@@ -744,26 +811,18 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	const items = [...node.items];
 
 	if (items.length === 0) {
-		const emptyLines = ["[]"];
-		if (node.tag) {
-			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
-		}
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
-		return emptyLines;
+		let line = "[]";
+		const emptyPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (emptyPrefix) line = `${emptyPrefix} ${line}`;
+		return [line];
 	}
 
 	if (style === "flow") {
 		const parts = items.map((item) => stringifyNodeLines(item, ctx).join(" "));
-		const flowLines = [`[${parts.join(", ")}]`];
-		if (node.tag) {
-			flowLines[0] = `${node.tag} ${flowLines[0]}`;
-		}
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
-		return flowLines;
+		let line = `[${parts.join(", ")}]`;
+		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (flowPrefix) line = `${flowPrefix} ${line}`;
+		return [line];
 	}
 
 	// Block style
@@ -935,8 +994,15 @@ export function stringifyDocument(
 			}
 
 			if (contents === null) {
-				// Empty document (no contents) — canonical output is empty string
-				if (ctx.forceDefaultStyles) return "";
+				if (ctx.forceDefaultStyles) {
+					// Empty document in canonical mode: emit --- for doc-start markers.
+					// Bare ... (no doc-start, no content) produces empty output.
+					if (doc.hasDocumentStart) {
+						const docEnd = doc.hasDocumentEnd ? "...\n" : "";
+						return `---\n${docEnd}`;
+					}
+					return "";
+				}
 				return opts.finalNewline ? "null\n" : "null";
 			}
 
@@ -977,7 +1043,7 @@ export function stringifyDocument(
 				}
 
 				// No tag/anchor — inline scalars after ---
-				if (isScalar && !isCollection) {
+				if (isScalar) {
 					return docComment ? `# ${docComment}\n--- ${body}${docEnd}` : `--- ${body}${docEnd}`;
 				}
 				return docComment ? `# ${docComment}\n---\n${body}${docEnd}` : `---\n${body}${docEnd}`;
