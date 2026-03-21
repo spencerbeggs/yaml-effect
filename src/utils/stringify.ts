@@ -203,7 +203,15 @@ function renderBlockLiteral(s: string, indent: string): string {
 	if (s.endsWith("\n")) {
 		lines.pop();
 	}
-	return `|${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
+	// Explicit indent indicator needed when first content line starts with
+	// space or tab — without it, the reader would include the leading
+	// whitespace in the auto-detected indentation level.
+	let indentIndicator = "";
+	const firstContent = lines.find((l) => l !== "");
+	if (firstContent?.startsWith(" ")) {
+		indentIndicator = String(indent.length);
+	}
+	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
 }
 
 /**
@@ -232,6 +240,13 @@ function renderBlockFolded(s: string, indent: string): string {
 	const valueLines = s.split("\n");
 	if (s.endsWith("\n")) {
 		valueLines.pop();
+	}
+
+	// Explicit indent indicator when first content line starts with space/tab
+	let indentIndicator = "";
+	const firstContent = valueLines.find((l) => l !== "");
+	if (firstContent?.startsWith(" ")) {
+		indentIndicator = String(indent.length);
 	}
 
 	// Build folded output from the resolved value lines.
@@ -287,7 +302,7 @@ function renderBlockFolded(s: string, indent: string): string {
 		}
 	}
 
-	return `>${chomp}\n${outputLines.join("\n")}`;
+	return `>${indentIndicator}${chomp}\n${outputLines.join("\n")}`;
 }
 
 /**
