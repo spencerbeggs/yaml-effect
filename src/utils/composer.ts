@@ -2670,6 +2670,7 @@ function composeFlatBlockMap(
 	parentCst: CstNode,
 	state: ComposerState,
 	externalFirstKey: YamlNode,
+	meta?: NodeMeta,
 ): YamlMap {
 	// Collect the remaining children into semantic items
 	const remainingChildren = children.slice(startIdx);
@@ -2685,12 +2686,18 @@ function composeFlatBlockMap(
 	const offset = "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : parentCst.offset;
 	const end = parentCst.offset + parentCst.length;
 
-	return new YamlMap({
+	const map = new YamlMap({
 		items: pairs,
 		style: "block" as CollectionStyle,
 		offset,
 		length: end - offset,
+		...(meta?.tag !== undefined ? { tag: meta.tag } : {}),
+		...(meta?.anchor !== undefined ? { anchor: meta.anchor } : {}),
+		...(meta?.comment !== undefined ? { comment: meta.comment } : {}),
 	});
+
+	if (meta?.anchor) registerAnchor(map, meta.anchor, state, offset);
+	return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -2796,19 +2803,35 @@ function composeDocument(
 			// Check if next meaningful child is a block-map (this scalar is a key)
 			const nextContent = findNextContentChild(children, i + 1);
 			if (nextContent && nextContent.type === "block-map") {
-				// This scalar is the first key of a block mapping
-				const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-				clearMeta(meta);
-				contents = composeBlockMap(nextContent, state, key);
+				// When metadata (tag/anchor) appears after a document-start marker (---),
+				// it applies to the root mapping node. Otherwise, it applies to the key.
+				const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+				if (hasDocStart && hasMeta(meta)) {
+					const mapMeta = { ...meta };
+					const key = makeScalar(child, state);
+					clearMeta(meta);
+					contents = composeBlockMap(nextContent, state, key, mapMeta);
+				} else {
+					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
+					clearMeta(meta);
+					contents = composeBlockMap(nextContent, state, key);
+				}
 				i = indexOfChild(children, nextContent) + 1;
 				continue;
 			}
 			// Check if followed by ":" (value-sep) — flat mapping without block-map wrapper
 			if (hasValueSepAfter(children, i + 1)) {
-				// Compose remaining document children as a flat block map
-				const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-				clearMeta(meta);
-				contents = composeFlatBlockMap(children, i + 1, cst, state, key);
+				const hasDocStart = children.some((c) => c.type === "whitespace" && c.source === "---");
+				if (hasDocStart && hasMeta(meta)) {
+					const mapMeta = { ...meta };
+					const key = makeScalar(child, state);
+					clearMeta(meta);
+					contents = composeFlatBlockMap(children, i + 1, cst, state, key, mapMeta);
+				} else {
+					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
+					clearMeta(meta);
+					contents = composeFlatBlockMap(children, i + 1, cst, state, key);
+				}
 				break; // consumed all remaining children
 			}
 			// Standalone scalar — try multi-line plain scalar merging

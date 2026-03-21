@@ -474,7 +474,7 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
  * Recursively strips all comment fields from AST nodes.
  * Used when forceDefaultStyles is true to produce canonical output.
  */
-function stripNodeComments(node: YamlNode): YamlNode {
+export function stripNodeComments(node: YamlNode): YamlNode {
 	if (node instanceof YamlScalar) {
 		return new YamlScalar({
 			value: node.value,
@@ -589,7 +589,7 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
 	}
-	// Canonical ordering: &anchor !!tag value (anchor before tag)
+	// Prepend tag first, then anchor, so the final output reads &anchor !!tag value
 	if (node.tag) {
 		lines[0] = `${node.tag} ${lines[0]}`;
 	}
@@ -616,14 +616,10 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	}
 
 	if (items.length === 0) {
-		const emptyLines = ["{}"];
-		if (node.tag) {
-			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
-		}
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
-		return emptyLines;
+		let line = "{}";
+		const emptyPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (emptyPrefix) line = `${emptyPrefix} ${line}`;
+		return [line];
 	}
 
 	if (style === "flow") {
@@ -632,14 +628,10 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			const valStr = pair.value ? stringifyNodeLines(pair.value, ctx).join(" ") : "null";
 			return `${keyStr}: ${valStr}`;
 		});
-		const flowLines = [`{${pairs.join(", ")}}`];
-		if (node.tag) {
-			flowLines[0] = `${node.tag} ${flowLines[0]}`;
-		}
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
-		return flowLines;
+		let line = `{${pairs.join(", ")}}`;
+		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (flowPrefix) line = `${flowPrefix} ${line}`;
+		return [line];
 	}
 
 	// Block style
@@ -698,10 +690,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 						"block";
 				const mapMeta = isBlockMapValue ? buildMetadataPrefix(valNode.tag, valNode.anchor) : undefined;
 				if (mapMeta) {
-					// Place metadata on key line, content indented on next lines
-					const startIdx = 1; // skip metadata line
+					// Place metadata on key line, skip metadata line in valLines
 					lines.push(`${keyStr}${sep} ${mapMeta}`);
-					for (let i = startIdx; i < valLines.length; i++) {
+					for (let i = 1; i < valLines.length; i++) {
 						lines.push(`${pad}${valLines[i]}`);
 					}
 				} else {
@@ -744,26 +735,18 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	const items = [...node.items];
 
 	if (items.length === 0) {
-		const emptyLines = ["[]"];
-		if (node.tag) {
-			emptyLines[0] = `${node.tag} ${emptyLines[0]}`;
-		}
-		if (node.anchor) {
-			emptyLines[0] = `&${node.anchor} ${emptyLines[0]}`;
-		}
-		return emptyLines;
+		let line = "[]";
+		const emptyPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (emptyPrefix) line = `${emptyPrefix} ${line}`;
+		return [line];
 	}
 
 	if (style === "flow") {
 		const parts = items.map((item) => stringifyNodeLines(item, ctx).join(" "));
-		const flowLines = [`[${parts.join(", ")}]`];
-		if (node.tag) {
-			flowLines[0] = `${node.tag} ${flowLines[0]}`;
-		}
-		if (node.anchor) {
-			flowLines[0] = `&${node.anchor} ${flowLines[0]}`;
-		}
-		return flowLines;
+		let line = `[${parts.join(", ")}]`;
+		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		if (flowPrefix) line = `${flowPrefix} ${line}`;
+		return [line];
 	}
 
 	// Block style
@@ -977,7 +960,7 @@ export function stringifyDocument(
 				}
 
 				// No tag/anchor — inline scalars after ---
-				if (isScalar && !isCollection) {
+				if (isScalar) {
 					return docComment ? `# ${docComment}\n--- ${body}${docEnd}` : `--- ${body}${docEnd}`;
 				}
 				return docComment ? `# ${docComment}\n---\n${body}${docEnd}` : `---\n${body}${docEnd}`;
