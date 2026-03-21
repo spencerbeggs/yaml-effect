@@ -611,21 +611,9 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	// but downgrade quoted styles to plain when the value is safe as a plain
 	// scalar. This matches canonical behavior: quoting is preserved only when
 	// removing it would change the resolved type or create ambiguity.
-	let style: ScalarStyle;
-	if (ctx.forceDefaultStyles && typeof node.value === "string") {
-		const isQuotedStyle = nodeStyle === "single-quoted" || nodeStyle === "double-quoted";
-		// Downgrade quoted to plain when the value is safe as plain.
-		// When a tag is present (e.g., `!` non-specific tag), type-conflict
-		// quoting is unnecessary since the tag overrides type resolution.
-		const needsQuotes = node.tag ? requiresQuotingIgnoringType(node.value) : requiresQuoting(node.value);
-		if (isQuotedStyle && !needsQuotes) {
-			style = "plain";
-		} else {
-			style = nodeStyle;
-		}
-	} else {
-		style = nodeStyle;
-	}
+	// Canonical output preserves the node's original scalar style.
+	// forceDefaultStyles only forces *collection* styles, not scalar styles.
+	const style: ScalarStyle = nodeStyle;
 	const val = node.value;
 
 	// Empty scalar (zero-length in source) with tag or anchor: render just tag/anchor
@@ -987,8 +975,15 @@ export function stringifyDocument(
 			}
 
 			if (contents === null) {
-				// Empty document (no contents) — canonical output is empty string
-				if (ctx.forceDefaultStyles) return "";
+				if (ctx.forceDefaultStyles) {
+					// Empty document in canonical mode: emit --- for doc-start markers.
+					// Bare ... (no doc-start, no content) produces empty output.
+					if (doc.hasDocumentStart) {
+						const docEnd = doc.hasDocumentEnd ? "...\n" : "";
+						return `---\n${docEnd}`;
+					}
+					return "";
+				}
 				return opts.finalNewline ? "null\n" : "null";
 			}
 
