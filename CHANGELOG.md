@@ -1,5 +1,11 @@
 # yaml-effect
 
+## 0.2.2
+
+### Bug Fixes
+
+* [`87b0494`](https://github.com/spencerbeggs/yaml-effect/commit/87b0494d68460edf07b920cb859ee42ffb8552a4) 1100 tests now passing
+
 ## 0.2.1
 
 ### Bug Fixes
