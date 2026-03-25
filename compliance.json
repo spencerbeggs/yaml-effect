@@ -1,0 +1,15 @@
+{
+  "parse": {
+    "passing": 377,
+    "total": 402,
+    "percentage": 94,
+    "color": "brightgreen"
+  },
+  "full": {
+    "passing": 1100,
+    "total": 1226,
+    "percentage": 90,
+    "color": "yellow"
+  },
+  "lastUpdated": "2026-03-25T07:07:13.056Z"
+}
