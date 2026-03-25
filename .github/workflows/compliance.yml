@@ -24,13 +24,25 @@ jobs:
       - name: Run compliance tests
         id: compliance
         run: |
-          RAW_COMPLIANCE=1 pnpm vitest run --project compliance-raw --reporter=json > /tmp/compliance-raw-results.json 2>/dev/null || true
+          RAW_COMPLIANCE=1 pnpm vitest run --project yaml-effect:e2e --reporter=json > /tmp/compliance-raw-results.json 2>/dev/null || true
 
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";
 
-          const raw = JSON.parse(readFileSync("/tmp/compliance-raw-results.json", "utf-8"));
-          const rawResults = raw.testResults[0].assertionResults;
+          // Extract JSON from output (agent reporter may append non-JSON text)
+          const rawText = readFileSync("/tmp/compliance-raw-results.json", "utf-8");
+          const jsonStart = rawText.indexOf("{");
+          let depth = 0;
+          let jsonEnd = jsonStart;
+          for (let i = jsonStart; i < rawText.length; i++) {
+            if (rawText[i] === "{") depth++;
+            else if (rawText[i] === "}") { depth--; if (depth === 0) { jsonEnd = i + 1; break; } }
+          }
+          const raw = JSON.parse(rawText.slice(jsonStart, jsonEnd));
+
+          // Find the raw (unfiltered) test results by filename
+          const rawFile = raw.testResults.find(r => r.name.includes("yaml-test-suite-raw"));
+          const rawResults = rawFile.assertionResults;
 
           // Parse-level: raw parse/reject assertions (no it.fails inflation)
           const parseTests = rawResults.filter(r =>

@@ -6,8 +6,8 @@
  * here are expected and informational, not CI blockers.
  *
  * Run with:
- *   pnpm vitest run --project compliance-raw
- *   pnpm vitest run --project compliance-raw -t "\[229Q\]"
+ *   pnpm run test:compliance-raw
+ *   RAW_COMPLIANCE=1 pnpm vitest run --project yaml-effect:e2e -t "\[229Q\]"
  *
  * @packageDocumentation
  */
