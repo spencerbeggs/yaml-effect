@@ -1,5 +1,17 @@
 # yaml-effect
 
+## 0.2.3
+
+### Tests
+
+* [`ca5be43`](https://github.com/spencerbeggs/yaml-effect/commit/ca5be436369d4c809e8376b3abcbb315b27780f2) Aligns with new test harness
+
+- [`b033f39`](https://github.com/spencerbeggs/yaml-effect/commit/b033f39df74b2d45f57338a3679521a048851cfa) Migrates compliance test harness to `@savvy-web/vitest` v1.0.0 auto-discovery API. Compliance tests now use the `.e2e.test.ts` suffix convention for automatic project classification, replacing manually configured custom projects.
+
+* Renames `yaml-test-suite.test.ts` and `yaml-test-suite-raw.test.ts` with `.e2e.test` suffix
+* Simplifies `vitest.config.ts` to use `VitestConfig.create()` with e2e kind override
+* Updates compliance badge workflow to match new project structure
+
 ## 0.2.2
 
 ### Bug Fixes
