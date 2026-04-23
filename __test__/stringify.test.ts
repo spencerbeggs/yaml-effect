@@ -974,17 +974,17 @@ describe("Control character handling", () => {
 
 	it("escapes NUL character", () => {
 		const result = str("a\x00b", { defaultScalarStyle: "double-quoted" });
-		expect(result.trim()).toContain("\\x00");
+		expect(result.trim()).toContain("\\0");
 	});
 
 	it("escapes form feed character", () => {
 		const result = str("a\x0cb", { defaultScalarStyle: "double-quoted" });
-		expect(result.trim()).toContain("\\x0c");
+		expect(result.trim()).toContain("\\f");
 	});
 
 	it("escapes vertical tab character", () => {
 		const result = str("a\x0bb", { defaultScalarStyle: "double-quoted" });
-		expect(result.trim()).toContain("\\x0b");
+		expect(result.trim()).toContain("\\v");
 	});
 
 	it("does not escape regular tab character", () => {

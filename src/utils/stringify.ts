@@ -59,6 +59,8 @@ const INDICATOR_CHARS = new Set([
 	"%",
 	"@",
 	"`",
+	'"',
+	"'",
 ]);
 
 /**
@@ -117,11 +119,24 @@ function requiresQuoting(s: string, ignoreType = false): boolean {
 	// Starts with document marker prefix (--- or ...) — ambiguous at line start
 	if (s.startsWith("---") || s.startsWith("...")) return true;
 	// Contains ': ' (mapping value indicator with space) or ' #' (comment indicator)
-	if (s.includes(": ") || s.endsWith(":")) return true;
-	if (s.includes(" #")) return true;
+	if (s.includes(": ") || s.includes(":\t") || s.endsWith(":")) return true;
+	if (s.includes(" #") || s.includes("\t#")) return true;
+	// Ends with whitespace (space/tab) — plain scalars lose trailing whitespace
+	const last = s[s.length - 1];
+	if (last === " " || last === "\t") return true;
 	// C0 control characters (except tab) require quoting
 	for (let i = 0; i < s.length; i++) {
 		if (isControlChar(s.charCodeAt(i))) return true;
+	}
+	return false;
+}
+
+/**
+ * Returns true if the string contains any non-ASCII character (code point > 0x7E).
+ */
+function hasNonAscii(s: string): boolean {
+	for (let i = 0; i < s.length; i++) {
+		if (s.charCodeAt(i) > 0x7e) return true;
 	}
 	return false;
 }
@@ -132,8 +147,12 @@ function requiresQuoting(s: string, ignoreType = false): boolean {
 
 /**
  * Renders a string scalar using double-quote style.
+ *
+ * When `canonical` is true, non-ASCII characters are escaped as `\uXXXX`
+ * (or `\UXXXXXXXX` for supplementary plane) and C0 control characters use
+ * named escapes where YAML 1.2 defines them (`\b`, `\0`, `\a`, `\v`, `\e`).
  */
-function renderDoubleQuoted(s: string): string {
+function renderDoubleQuoted(s: string, canonical = false): string {
 	let escaped = s
 		.replace(/\\/g, "\\\\")
 		.replace(/"/g, '\\"')
@@ -144,7 +163,35 @@ function renderDoubleQuoted(s: string): string {
 	for (let i = 0; i < escaped.length; i++) {
 		const code = escaped.charCodeAt(i);
 		if (isControlChar(code)) {
-			result += `\\x${code.toString(16).padStart(2, "0")}`;
+			// Use YAML 1.2 named escapes where available
+			if (code === 0x00) {
+				result += "\\0";
+			} else if (code === 0x07) {
+				result += "\\a";
+			} else if (code === 0x08) {
+				result += "\\b";
+			} else if (code === 0x0b) {
+				result += "\\v";
+			} else if (code === 0x0c) {
+				result += "\\f";
+			} else if (code === 0x1b) {
+				result += "\\e";
+			} else {
+				result += `\\x${code.toString(16).padStart(2, "0")}`;
+			}
+		} else if (canonical && code > 0x7e) {
+			// In canonical mode, escape non-ASCII characters
+			// Check for surrogate pairs (supplementary plane characters)
+			if (code >= 0xd800 && code <= 0xdbff && i + 1 < escaped.length) {
+				const low = escaped.charCodeAt(i + 1);
+				if (low >= 0xdc00 && low <= 0xdfff) {
+					const cp = (code - 0xd800) * 0x400 + (low - 0xdc00) + 0x10000;
+					result += `\\U${cp.toString(16).toUpperCase().padStart(8, "0")}`;
+					i++; // skip low surrogate
+					continue;
+				}
+			}
+			result += `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
 		} else {
 			result += escaped[i];
 		}
@@ -181,7 +228,7 @@ function renderBlockLiteral(s: string, indent: string): string {
 	// - Value starts with empty lines (reader can't auto-detect indent)
 	let indentIndicator = "";
 	const firstContent = lines.find((l) => l !== "");
-	if (firstContent?.startsWith(" ")) {
+	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "")) {
 		indentIndicator = String(indent.length);
 	}
 	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
@@ -291,14 +338,37 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
-function renderString(s: string, style: ScalarStyle, indent: string, ignoreType = false): string {
+function renderString(s: string, style: ScalarStyle, indent: string, ignoreType = false, canonical = false): string {
 	if (s.includes("\n")) {
+		// If the value contains C0 control chars (except tab) or carriage
+		// returns, block styles can't represent them — use double-quoted
+		let hasControl = false;
+		for (let i = 0; i < s.length; i++) {
+			const code = s.charCodeAt(i);
+			if (isControlChar(code) || code === 0x0d) {
+				hasControl = true;
+				break;
+			}
+		}
+		if (hasControl) return renderDoubleQuoted(s, canonical);
+		// If the value is only spaces and newlines (no text/tab content),
+		// block scalars can't represent it faithfully — use double-quoted
+		if (/^[\n\r ]*$/.test(s)) return renderDoubleQuoted(s, canonical);
 		// Multi-line: prefer block styles
 		if (style === "block-literal") return renderBlockLiteral(s, indent);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
 		// Fall back to block-literal for multiline with other styles
 		if (style === "plain" || style === "single-quoted") return renderBlockLiteral(s, indent);
-		return renderDoubleQuoted(s);
+		return renderDoubleQuoted(s, canonical);
+	}
+	// In canonical mode, force double-quoted when string has non-ASCII chars
+	// so they can be escaped as \uXXXX
+	if (canonical && hasNonAscii(s)) {
+		return renderDoubleQuoted(s, true);
+	}
+	// Empty strings in block styles should use quoted style instead
+	if (s === "" && (style === "block-literal" || style === "block-folded")) {
+		return renderDoubleQuoted(s, canonical);
 	}
 	switch (style) {
 		case "plain":
@@ -308,10 +378,10 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 				// (tab, CR, control chars). Backslashes are literal in
 				// single-quoted YAML and do NOT need double-quoting.
 				if (s.includes("\t") || s.includes("\r")) {
-					return renderDoubleQuoted(s);
+					return renderDoubleQuoted(s, canonical);
 				}
 				for (let i = 0; i < s.length; i++) {
-					if (isControlChar(s.charCodeAt(i))) return renderDoubleQuoted(s);
+					if (isControlChar(s.charCodeAt(i))) return renderDoubleQuoted(s, canonical);
 				}
 				return renderSingleQuoted(s);
 			}
@@ -319,7 +389,7 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 		case "single-quoted":
 			return renderSingleQuoted(s);
 		case "double-quoted":
-			return renderDoubleQuoted(s);
+			return renderDoubleQuoted(s, canonical);
 		case "block-literal":
 			return renderBlockLiteral(s, indent);
 		case "block-folded":
@@ -399,7 +469,7 @@ function stringifyLines(value: unknown, ctx: StringifyContext): string[] {
 	// string
 	if (typeof value === "string") {
 		// For block scalars the header line and body lines are already split
-		const rendered = renderString(value, ctx.defaultScalarStyle, " ".repeat(ctx.indent));
+		const rendered = renderString(value, ctx.defaultScalarStyle, " ".repeat(ctx.indent), false, ctx.forceDefaultStyles);
 		return rendered.split("\n");
 	}
 
@@ -513,11 +583,16 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 		return [`{${pairs.join(", ")}}`];
 	}
 
+	// Helper: render a mapping key — must be single-line for block mappings,
+	// so multiline keys use double-quoted style with \n escapes
+	const renderKey = (k: string): string =>
+		k.includes("\n") ? renderDoubleQuoted(k, ctx.forceDefaultStyles) : renderString(k, "plain", "");
+
 	// Block style
 	const pad = " ".repeat(ctx.indent);
 	const lines: string[] = [];
 	for (const k of keys) {
-		const keyStr = renderString(k, "plain", "");
+		const keyStr = renderKey(k);
 		const val = obj[k];
 		const valLines = stringifyLines(val, ctx);
 
@@ -548,6 +623,148 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 		}
 	}
 	return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Tag normalization (for canonical output)
+// ---------------------------------------------------------------------------
+
+/** Standard YAML 1.2 secondary tag prefix. */
+const YAML_TAG_PREFIX = "tag:yaml.org,2002:";
+
+/**
+ * Build a tag resolution map from document directives.
+ * Maps tag handles (e.g., "!!", "!e!") to their URI prefixes.
+ */
+function buildTagMap(
+	directives: ReadonlyArray<{ name: string; parameters: ReadonlyArray<string> }>,
+): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const d of directives) {
+		if (d.name === "TAG" && d.parameters.length >= 2) {
+			map.set(d.parameters[0], d.parameters[1]);
+		}
+	}
+	return map;
+}
+
+/**
+ * Normalize a tag for canonical output.
+ *
+ * - Resolves custom handles using the tag map from directives
+ * - Abbreviates `tag:yaml.org,2002:XXX` URIs to `!!XXX`
+ * - Simplifies verbatim `!<!XXX>` to `!XXX`
+ * - Expands non-standard `!!` redefinitions to verbatim form
+ */
+function normalizeTag(tag: string, tagMap: Map<string, string>): string {
+	// Verbatim tag: !<uri>
+	if (tag.startsWith("!<") && tag.endsWith(">")) {
+		const uri = tag.slice(2, -1);
+		// If it's a standard YAML tag, abbreviate to !!shorthand
+		if (uri.startsWith(YAML_TAG_PREFIX)) {
+			return `!!${uri.slice(YAML_TAG_PREFIX.length)}`;
+		}
+		// Local verbatim tag !<!foo> → !foo
+		if (uri.startsWith("!")) {
+			return uri;
+		}
+		// Non-standard URI — keep verbatim
+		return tag;
+	}
+
+	// Secondary handle: !!suffix
+	if (tag.startsWith("!!")) {
+		const customPrefix = tagMap.get("!!");
+		if (customPrefix && customPrefix !== YAML_TAG_PREFIX) {
+			// !! was redefined to non-standard prefix — expand to verbatim
+			return `!<${customPrefix}${tag.slice(2)}>`;
+		}
+		// Standard !! — already canonical
+		return tag;
+	}
+
+	// Named handle: !name!suffix
+	const namedMatch = tag.match(/^(![\w-]*!)(.*)$/);
+	if (namedMatch) {
+		const handle = namedMatch[1];
+		const suffix = namedMatch[2] ?? "";
+		const prefix = tagMap.get(handle);
+		if (prefix) {
+			const uri = prefix + suffix;
+			// Check if resolved URI is a standard YAML tag
+			if (uri.startsWith(YAML_TAG_PREFIX)) {
+				return `!!${uri.slice(YAML_TAG_PREFIX.length)}`;
+			}
+			// Non-standard — expand to verbatim
+			return `!<${uri}>`;
+		}
+	}
+
+	// Primary handle: !suffix (non-empty suffix)
+	if (tag.startsWith("!") && tag.length > 1 && !tag.startsWith("!!")) {
+		const prefix = tagMap.get("!");
+		if (prefix) {
+			const uri = prefix + tag.slice(1);
+			// Check if resolved URI is a standard YAML tag
+			if (uri.startsWith(YAML_TAG_PREFIX)) {
+				return `!!${uri.slice(YAML_TAG_PREFIX.length)}`;
+			}
+			// Non-standard — expand to verbatim
+			return `!<${uri}>`;
+		}
+	}
+
+	// Non-specific tag (! alone) or no matching handle
+	return tag;
+}
+
+/**
+ * Recursively normalizes tags on all AST nodes using document directives.
+ */
+function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNode {
+	const norm = (t: string | undefined) => (t ? normalizeTag(t, tagMap) : undefined);
+
+	if (node instanceof YamlScalar) {
+		return new YamlScalar({
+			value: node.value,
+			style: node.style,
+			tag: norm(node.tag),
+			anchor: node.anchor,
+			comment: node.comment,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlMap) {
+		return new YamlMap({
+			items: node.items.map(
+				(pair) =>
+					new YamlPair({
+						key: normalizeNodeTags(pair.key, tagMap),
+						value: pair.value ? normalizeNodeTags(pair.value, tagMap) : null,
+						comment: pair.comment,
+					}),
+			),
+			style: node.style,
+			tag: norm(node.tag),
+			anchor: node.anchor,
+			comment: node.comment,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlSeq) {
+		return new YamlSeq({
+			items: node.items.map((item) => normalizeNodeTags(item, tagMap)),
+			style: node.style,
+			tag: norm(node.tag),
+			anchor: node.anchor,
+			comment: node.comment,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	return node;
 }
 
 // ---------------------------------------------------------------------------
@@ -630,12 +847,6 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	// strings (block-literal vs block-folded vs double-quoted) since the canonical
 	// output retains scalar presentation style even in normalized form.
 	const nodeStyle = node.style ?? ctx.defaultScalarStyle;
-	// When forcing default styles (canonical output), use the node's own style
-	// but downgrade quoted styles to plain when the value is safe as a plain
-	// scalar. This matches canonical behavior: quoting is preserved only when
-	// removing it would change the resolved type or create ambiguity.
-	// Canonical output preserves the node's original scalar style.
-	// forceDefaultStyles only forces *collection* styles, not scalar styles.
 	const style: ScalarStyle = nodeStyle;
 	const val = node.value;
 
@@ -662,7 +873,7 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 		lines = [renderNumber(val)];
 	} else if (typeof val === "string") {
 		// When a tag is present, type-conflict quoting is unnecessary
-		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag);
+		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag, ctx.forceDefaultStyles);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
@@ -716,6 +927,49 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	const pad = " ".repeat(ctx.indent);
 	const lines: string[] = [];
 	for (const pair of items) {
+		// Non-scalar keys (sequences, mappings) use explicit key syntax: ? key\n: value
+		const isComplexKey = pair.key instanceof YamlMap || pair.key instanceof YamlSeq;
+		if (isComplexKey) {
+			const keyLines = stringifyNodeLines(pair.key, ctx);
+			// Emit "? " followed by the key
+			lines.push(`? ${keyLines[0]}`);
+			for (let k = 1; k < keyLines.length; k++) {
+				lines.push(`${pad}${keyLines[k]}`);
+			}
+			// Emit ": " followed by the value
+			const valNode = pair.value;
+			if (!valNode) {
+				lines.push(":");
+			} else {
+				const valLines = stringifyNodeLines(valNode, ctx);
+				if (valLines.length === 1) {
+					lines.push(`: ${valLines[0]}`);
+				} else {
+					const first = valLines[0];
+					// Detect block scalar headers (may be prefixed with tag/anchor)
+					const isBlockScalarHeader = first.startsWith("|") || first.startsWith(">") || /^[!&]\S*\s+[|>]/.test(first);
+					if (isBlockScalarHeader) {
+						lines.push(`: ${first}`);
+						for (let v = 1; v < valLines.length; v++) {
+							lines.push(valLines[v]);
+						}
+					} else if (first.startsWith("-")) {
+						// Block sequence value — compact notation
+						lines.push(":");
+						for (const vl of valLines) {
+							lines.push(vl);
+						}
+					} else {
+						lines.push(":");
+						for (const vl of valLines) {
+							lines.push(`${pad}${vl}`);
+						}
+					}
+				}
+			}
+			continue;
+		}
+
 		const keyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
 		// Alias keys need space before colon to avoid ambiguity (e.g., `*a :` not `*a:`)
 		const sep = pair.key instanceof YamlAlias ? " :" : ":";
@@ -755,7 +1009,9 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			lines.push(valLines[0] === "" ? `${keyStr}${sep}` : `${keyStr}${sep} ${valLines[0]}`);
 		} else {
 			const first = valLines[0];
-			if (first.startsWith("|") || first.startsWith(">")) {
+			// Detect block scalar headers — may be prefixed with tag/anchor
+			const isBlockScalarHeader = first.startsWith("|") || first.startsWith(">") || /^[!&]\S*\s+[|>]/.test(first);
+			if (isBlockScalarHeader) {
 				lines.push(`${keyStr}${sep} ${first}`);
 				for (let i = 1; i < valLines.length; i++) {
 					lines.push(valLines[i]);
@@ -988,11 +1244,13 @@ export function stringifyDocument(
 				seen: new Set(),
 			};
 
-			// Strip comments when producing canonical output
+			// Strip comments and normalize tags when producing canonical output
 			let contents = doc.contents;
 			const docComment = ctx.forceDefaultStyles ? undefined : doc.comment;
 			if (ctx.forceDefaultStyles && contents) {
 				contents = stripNodeComments(contents);
+				const tagMap = buildTagMap(doc.directives);
+				contents = normalizeNodeTags(contents, tagMap);
 			}
 
 			if (contents === null) {

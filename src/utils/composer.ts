@@ -1064,6 +1064,26 @@ function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSc
 	return scalar;
 }
 
+/**
+ * Check if a pending anchor is being applied to an alias node (invalid in YAML 1.2).
+ * Aliases represent references to existing anchored nodes and cannot have their own anchors.
+ */
+function checkAnchorOnAlias(pendingMeta: NodeMeta, cst: CstNode, state: ComposerState): void {
+	if (pendingMeta.anchor !== undefined) {
+		const lc = lineCol(state.text, cst.offset);
+		state.errors.push(
+			new YamlErrorDetail({
+				code: "DuplicateAnchor",
+				message: `Anchor &${pendingMeta.anchor} cannot be applied to alias *${getAliasName(cst, state.text)}`,
+				offset: cst.offset,
+				length: cst.length,
+				line: lc.line,
+				column: lc.column,
+			}),
+		);
+	}
+}
+
 function makeAlias(cst: CstNode, state: ComposerState): YamlAlias {
 	const name = getAliasName(cst, state.text);
 
@@ -1627,6 +1647,8 @@ function flattenBlockMapChildren(
 			// Check if alias is followed by block-map (alias as first key of implicit mapping)
 			const nextAlias = findNextContentInList(children, i + 1);
 			if (nextAlias?.node.type === "block-map") {
+				// Alias is a key of the implicit mapping; pendingMeta (anchor/tag)
+				// applies to the map, not the alias — no anchor-on-alias error.
 				const alias = makeAlias(child, state);
 				const map = composeBlockMap(nextAlias.node, state, alias, hasMeta(pendingMeta) ? pendingMeta : undefined);
 				pendingMeta = {};
@@ -1634,6 +1656,8 @@ function flattenBlockMapChildren(
 				i = nextAlias.idx;
 				continue;
 			}
+			// Standalone alias — check for invalid anchor on alias
+			checkAnchorOnAlias(pendingMeta, child, state);
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
 			pushNode(alias);
@@ -1738,8 +1762,16 @@ function buildPairs(items: SemanticItem[], pairs: YamlPair[], text: string): voi
 			continue;
 		}
 		if (item.kind === "node" || item.kind === "key") {
-			const keyNode = item.node;
+			let keyNode = item.node;
 			i++;
+			// For explicit key markers (? in flow), consume the next node as the key
+			if (item.kind === "key" && !keyNode) {
+				while (i < items.length && items[i]?.kind === "comment") i++;
+				if (i < items.length && items[i]?.kind === "node") {
+					keyNode = items[i]?.node;
+					i++;
+				}
+			}
 			// Skip comments between key and value-sep (e.g., ? key # comment\n: value)
 			while (i < items.length && items[i]?.kind === "comment") {
 				i++;
@@ -2301,6 +2333,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "alias") {
+			checkAnchorOnAlias(pendingMeta, child, state);
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
 			sawEntry = false;
@@ -2463,6 +2496,13 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 				}
 				items.push({ kind: "value-sep", offset: child.offset });
 			}
+			if (child.source === "?") {
+				// Explicit key indicator in flow context (YAML 1.2 §7.4).
+				// The ? marks the next content as an explicit key. If ? is
+				// followed by nothing before , or }, it creates a null key.
+				// We emit a "key" marker; buildPairs handles the pairing.
+				items.push({ kind: "key" });
+			}
 			continue;
 		}
 		if (child.type === "comment") {
@@ -2583,6 +2623,7 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 			continue;
 		}
 		if (child.type === "alias") {
+			checkAnchorOnAlias(pendingMeta, child, state);
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
 			items.push({ kind: "node", node: alias });
@@ -3006,30 +3047,46 @@ function composeDocument(
 		}
 
 		if (child.type === "flow-map") {
-			contents = composeFlowMap(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			const flowMap = composeFlowMap(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;
-			// Check for trailing content, but not if flow collection is a mapping key
+			// Check if flow collection is a mapping key (followed by block-map with ":")
 			const nextAfterFlowMap = findNextContentChild(children, i);
-			if (!nextAfterFlowMap || nextAfterFlowMap.type !== "block-map") {
+			if (nextAfterFlowMap && nextAfterFlowMap.type === "block-map") {
+				// Flow map is a key — compose the block-map with this as the first key
+				const map = composeBlockMap(nextAfterFlowMap, state, flowMap);
+				contents = map;
+				while (i < children.length && children[i] !== nextAfterFlowMap) i++;
+				i++;
+			} else {
+				contents = flowMap;
 				checkTrailingContentAfterDocValue(children, i, state);
 			}
 			continue;
 		}
 
 		if (child.type === "flow-seq") {
-			contents = composeFlowSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			const flowSeq = composeFlowSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
 			clearMeta(meta);
 			i++;
-			// Check for trailing content, but not if flow collection is a mapping key
+			// Check if flow collection is a mapping key (followed by block-map with ":")
 			const nextAfterFlowSeq = findNextContentChild(children, i);
-			if (!nextAfterFlowSeq || nextAfterFlowSeq.type !== "block-map") {
+			if (nextAfterFlowSeq && nextAfterFlowSeq.type === "block-map") {
+				// Flow seq is a key — compose the block-map with this as the first key
+				const map = composeBlockMap(nextAfterFlowSeq, state, flowSeq);
+				contents = map;
+				// Skip past the block-map node
+				while (i < children.length && children[i] !== nextAfterFlowSeq) i++;
+				i++;
+			} else {
+				contents = flowSeq;
 				checkTrailingContentAfterDocValue(children, i, state);
 			}
 			continue;
 		}
 
 		if (child.type === "alias") {
+			checkAnchorOnAlias(meta, child, state);
 			contents = makeAlias(child, state);
 			i++;
 			continue;
@@ -3490,6 +3547,7 @@ export function parseDocument(
 			const fatalErrors = state.errors.filter(
 				(e) =>
 					e.code === "UndefinedAlias" ||
+					e.code === "DuplicateAnchor" ||
 					e.code === "AliasCountExceeded" ||
 					e.code === "UnexpectedToken" ||
 					e.code === "InvalidDirective" ||
@@ -3564,6 +3622,7 @@ export function parseAllDocuments(
 				const fatal = state.errors.filter(
 					(e) =>
 						e.code === "UndefinedAlias" ||
+						e.code === "DuplicateAnchor" ||
 						e.code === "AliasCountExceeded" ||
 						e.code === "UnexpectedToken" ||
 						e.code === "InvalidDirective",
@@ -3673,6 +3732,7 @@ export function composeDocumentFromCst(
 	const fatalErrors = state.errors.filter(
 		(e) =>
 			e.code === "UndefinedAlias" ||
+			e.code === "DuplicateAnchor" ||
 			e.code === "AliasCountExceeded" ||
 			e.code === "UnexpectedToken" ||
 			e.code === "InvalidDirective" ||

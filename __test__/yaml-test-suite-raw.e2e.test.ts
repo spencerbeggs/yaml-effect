@@ -125,7 +125,9 @@ describe.skipIf(!suiteAvailable || !rawEnabled)("yaml-test-suite compliance (raw
 							}
 							const docs = Either.getOrThrow(docsResult);
 							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
-							const stringified = parts.join("---\n");
+							// Each part from stringifyDocument already includes its own ---
+							// prefix when hasDocumentStart is true, so just concatenate.
+							const stringified = parts.join("");
 							expect(stringified).toBe(tc.outYaml);
 						} else {
 							const docResult = Effect.runSync(Effect.either(parseDocument(tc.yaml, { uniqueKeys: false })));

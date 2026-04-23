@@ -399,6 +399,32 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		}
 
 		if (token.kind === "block-seq-entry") {
+			// Compact block sequence as mapping value: when a seq entry appears
+			// at the same indent as the mapping and the last non-trivia was a
+			// value separator ":", this sequence is the value of the current key.
+			// Build a synthetic block-seq container for these entries.
+			if (token.column === indent && lastNonTriviaIsValueSep(children)) {
+				const seqChildren: CstNode[] = [];
+				while (!atEnd(state)) {
+					const seqToken = peek(state);
+					if (!seqToken) break;
+					if (seqToken.kind === "block-seq-entry" && seqToken.column === indent) {
+						seqChildren.push(...consumeTrivia(state));
+						const entry = consumeLeafToken(state);
+						if (entry) seqChildren.push(entry);
+						// Consume content after the entry dash
+						seqChildren.push(...parseSequenceEntryContent(state, indent));
+					} else if (isTrivia(seqToken)) {
+						seqChildren.push(...consumeTrivia(state));
+					} else {
+						break;
+					}
+				}
+				if (seqChildren.length > 0) {
+					children.push(makeContainerNode("block-seq", seqChildren, state.text));
+				}
+				continue;
+			}
 			// This entry belongs to a parent sequence, stop
 			if (token.column <= indent) break;
 			const leaf = consumeLeafToken(state);
@@ -586,8 +612,15 @@ function hasImplicitMapAhead(state: ParserState, seqIndent: number): boolean {
 function parseSequenceEntryContent(state: ParserState, seqIndent: number): CstNode[] {
 	const nodes: CstNode[] = [];
 
-	// Check if this entry contains an implicit mapping (scalar followed by ":")
-	if (hasImplicitMapAhead(state, seqIndent)) {
+	// If the immediate next non-trivia token is a nested seq entry (deeper
+	// indent), parse it as a nested sequence first. This prevents the implicit
+	// mapping check from absorbing nested "- key: value" patterns that belong
+	// inside the nested sequence.
+	const nextToken = findNextNonTrivia(state);
+	if (nextToken && nextToken.kind === "block-seq-entry" && nextToken.column > seqIndent) {
+		// Fall through to the main loop which handles nested seq entries
+	} else if (hasImplicitMapAhead(state, seqIndent)) {
+		// Check if this entry contains an implicit mapping (scalar followed by ":")
 		// Wrap everything up to the next entry / doc boundary into a block-map
 		nodes.push(parseImplicitBlockMapping(state, seqIndent));
 		return nodes;
@@ -737,6 +770,9 @@ function parseImplicitBlockMapping(state: ParserState, seqIndent: number): CstNo
 			continue;
 		}
 		if (token.kind === "block-seq-start") {
+			// Stop if the block-seq-start is at the parent sequence indent —
+			// it belongs to the parent, not this implicit mapping's value.
+			if (token.column <= seqIndent && children.length > 0) break;
 			children.push(parseBlockSequence(state, token.column));
 			continue;
 		}

@@ -409,14 +409,14 @@ into per-category issues (#15, #16).
 | #8 | Fix block scalar content normalization | **Mostly resolved** (explicit indent fix) |
 | #9 | Fix double-quoted and plain scalar folding rules | **Resolved** |
 | #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
-| #11 | Fix canonical output and roundtrip stringifier compliance | Partial (compact notation, anchor/tag/document-start output, forceDefaultStyles) |
+| #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 83->59) |
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
-| #16 | Parser accepts invalid YAML | Open (29 XFAIL "accepts invalid") |
+| #16 | Parser accepts invalid YAML | Open (23 XFAIL "accepts invalid") |
 
-Current compliance: 1008/1226 raw assertions passing (82.2%), 29 XFAIL
-(all "accepts invalid"), 0 JSON comparison failures, ~82 SKIP_ASSERTIONS
-entries (output/roundtrip). Use `pnpm run test:compliance-raw` to see
-unfiltered results.
+Current compliance: 1144/1226 raw assertions passing (93.3%), 23 XFAIL
+(all "accepts invalid"), 0 JSON comparison failures, 0 roundtrip
+failures, ~59 SKIP_ASSERTIONS entries (output only). Use
+`pnpm run test:compliance-raw` to see unfiltered results.
 
 ### Key Compliance Improvements (feat/more-compliance)
 
@@ -436,6 +436,37 @@ of fixes:
   expansion throughout document composition
 - **Block scalar indentation**: `findParentIndent()` in composer
   correctly computes explicit indent relative to parent context
+
+### Key Compliance Improvements (feat/parser)
+
+The jump from 82.2% to 93.3% raw compliance came from fixes across all
+three pipeline layers:
+
+- **Stringifier escape sequences**: YAML 1.2 named escapes (`\b`, `\0`,
+  `\a`, `\v`, `\f`, `\e`), canonical unicode `\uXXXX` for non-ASCII
+- **Tag normalization**: `normalizeTag()` resolves custom handles via
+  `%TAG` directives to canonical shorthand (`!!str`) or verbatim form
+- **Explicit key syntax**: Non-scalar keys (YamlSeq, YamlMap) render
+  with `? key\n: value` syntax in block-style output
+- **Block scalar edge cases**: Whitespace-only strings, empty block
+  scalars, and leading empty lines handled with double-quoted fallback
+  or explicit indent indicators
+- **Multiline mapping keys**: Double-quoted with `\n` escapes
+- **Quoting improvements**: Trailing whitespace, `"` and `'` indicators,
+  `\t#` and `:\t` patterns, C0 control chars in multiline
+- **Parser compact block-seq**: Handles `key:\n- val` at same indent
+- **Parser nested seq-of-maps**: Checks for nested seq entry before
+  implicit mapping detection in `parseSequenceEntryContent`
+- **Parser implicit mapping indent**: `block-seq-start` at parent indent
+  breaks out of `parseImplicitBlockMapping`
+- **Composer flow collection keys**: `flow-seq` and `flow-map` at
+  document level become implicit mapping keys when followed by block-map
+- **Composer explicit `?` in flow**: `flattenFlowChildren` recognizes
+  `?` as explicit key indicator; `buildPairs` consumes next node as key
+- **Composer anchor-on-alias**: `checkAnchorOnAlias` validation produces
+  `DuplicateAnchor` fatal error (resolves SR86, SU74)
+- **All 18 roundtrip failures resolved** (0 remaining)
+- **Multi-doc join**: Raw test harness concatenates parts directly
 
 ### Dual Block Scalar Decoders
 
