@@ -122,7 +122,12 @@ with `tokens`, `text`, `pos`). Key functions:
   `block-seq-start`/`block-seq-entry` tokens after explicit keys (gated
   by `explicitKey` parameter)
 - `parseSequenceEntryContent()` -- content after `-` in a sequence, with
-  implicit mapping detection via `hasImplicitMapAhead()`
+  implicit mapping detection via `hasImplicitMapAhead()`. Checks for
+  nested `block-seq-entry` at deeper indent before implicit mapping to
+  prevent absorbing nested `- key: value` patterns
+- `parseBlockMapping()` -- handles compact block sequences as mapping
+  values when a `block-seq-entry` appears at the same indent and the
+  last non-trivia child was a value separator `:`
 - `parseImplicitBlockMapping()` -- handles `- key: value` patterns. Checks
   token column against parent sequence indent, breaking out when content
   returns to parent level
@@ -237,6 +242,24 @@ structured key/value sequence. Notable behaviors:
 - Alias resolution in `getNodeValue()` uses the anchor map to substitute
   aliased values
 - `maxAliasCount` option (default 100) prevents DoS via alias expansion
+- `checkAnchorOnAlias()` validates that anchors are not applied to alias
+  nodes (produces `DuplicateAnchor` fatal error). Aliases used as
+  implicit mapping keys (followed by block-map) skip this check since
+  the anchor applies to the map, not the alias.
+
+### Flow Collection as Document-Level Key
+
+When `composeDocument()` encounters a `flow-seq` or `flow-map` CST node
+followed by a `block-map` sibling, the flow collection becomes the first
+key of an implicit mapping via `composeBlockMap(blockMap, state, flowNode)`.
+
+### Explicit Key `?` in Flow Mappings
+
+`flattenFlowChildren()` recognizes `?` whitespace nodes as explicit key
+indicators, emitting `{ kind: "key" }` semantic items. `buildPairs()`
+handles key items without an attached node by consuming the next node
+item as the explicit key. Trailing `?` with no content creates a
+null-key entry.
 
 ### Error Handling
 
