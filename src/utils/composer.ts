@@ -1065,8 +1065,13 @@ function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSc
 }
 
 /**
- * Check if a pending anchor is being applied to an alias node (invalid in YAML 1.2).
+ * Check if a pending anchor is being applied to an alias node (invalid in YAML 1.2 §3.2.2).
  * Aliases represent references to existing anchored nodes and cannot have their own anchors.
+ *
+ * Uses `DuplicateAnchor` error code as a pragmatic reuse — semantically this is
+ * "anchor on alias" rather than "same anchor name defined twice", but adding a
+ * dedicated `AnchorOnAlias` code would be a public API change. The error message
+ * distinguishes the two cases for consumers inspecting the message text.
  */
 function checkAnchorOnAlias(pendingMeta: NodeMeta, cst: CstNode, state: ComposerState): void {
 	if (pendingMeta.anchor !== undefined) {
@@ -1644,11 +1649,15 @@ function flattenBlockMapChildren(
 			continue;
 		}
 		if (child.type === "alias") {
-			// Check if alias is followed by block-map (alias as first key of implicit mapping)
+			// Check if alias is followed by block-map (alias as first key of implicit mapping).
+			// This pattern occurs when an alias is the FIRST key of a new block mapping that
+			// appears as a sibling CST node (e.g., `*ref: value` where *ref is outside the
+			// block-map). The pendingMeta anchor applies to the map, not the alias.
+			// Note: `&b *alias : value` does NOT match this — the `:` is inside the same
+			// block-map, so findNextContentInList returns the `:` (whitespace), not a block-map.
+			// That case correctly falls through to checkAnchorOnAlias below.
 			const nextAlias = findNextContentInList(children, i + 1);
 			if (nextAlias?.node.type === "block-map") {
-				// Alias is a key of the implicit mapping; pendingMeta (anchor/tag)
-				// applies to the map, not the alias — no anchor-on-alias error.
 				const alias = makeAlias(child, state);
 				const map = composeBlockMap(nextAlias.node, state, alias, hasMeta(pendingMeta) ? pendingMeta : undefined);
 				pendingMeta = {};

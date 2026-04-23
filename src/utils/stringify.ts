@@ -353,7 +353,7 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 		if (hasControl) return renderDoubleQuoted(s, canonical);
 		// If the value is only spaces and newlines (no text/tab content),
 		// block scalars can't represent it faithfully — use double-quoted
-		if (/^[\n\r ]*$/.test(s)) return renderDoubleQuoted(s, canonical);
+		if (/^[\n ]*$/.test(s)) return renderDoubleQuoted(s, canonical);
 		// Multi-line: prefer block styles
 		if (style === "block-literal") return renderBlockLiteral(s, indent);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
