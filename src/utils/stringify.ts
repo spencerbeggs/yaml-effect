@@ -132,7 +132,7 @@ function requiresQuoting(s: string, ignoreType = false): boolean {
 }
 
 /**
- * Returns true if the string contains any non-ASCII character (code point > 0x7E).
+ * Returns true if the string contains any non-ASCII character (code point \> 0x7E).
  */
 function hasNonAscii(s: string): boolean {
 	for (let i = 0; i < s.length; i++) {
