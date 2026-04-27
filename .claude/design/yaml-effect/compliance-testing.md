@@ -413,10 +413,11 @@ into per-category issues (#15, #16).
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | Open (15 XFAIL "accepts invalid") |
 
-Current compliance: 2382/2424 raw assertions passing (98.27%), filtered
-assertions passing, 15 XFAIL (all "accepts invalid"), 0 JSON comparison
-failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries (output
-only). Use `pnpm run test:compliance-raw` to see unfiltered results.
+Current compliance: 2382/2424 raw assertions passing (98.27%), 1198
+filtered assertions passing, 15 XFAIL (all "accepts invalid"), 0 JSON
+comparison failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries
+(output only). Use `pnpm run test:compliance-raw` to see unfiltered
+results.
 
 Remaining canonical-output gaps cluster into a few categories:
 

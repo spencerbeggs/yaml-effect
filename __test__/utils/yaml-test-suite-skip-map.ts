@@ -26,7 +26,7 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser accepts invalid YAML (18)
+	// Parser accepts invalid YAML (15)
 	"4HVU": "Parser accepts invalid YAML: Wrong indendation in Sequence",
 	"4JVG": "Parser accepts invalid YAML: Scalar value with two anchors",
 	"5LLU": "Parser accepts invalid YAML: Block scalar with wrong indented line after spaces only",

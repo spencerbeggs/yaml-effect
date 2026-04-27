@@ -4160,7 +4160,8 @@ export function composeDocumentFromCst(
 			e.code === "AliasCountExceeded" ||
 			e.code === "UnexpectedToken" ||
 			e.code === "InvalidDirective" ||
-			e.code === "MalformedFlowCollection",
+			e.code === "MalformedFlowCollection" ||
+			e.code === "InvalidIndentation",
 	);
 	if (fatalErrors.length > 0) {
 		return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
