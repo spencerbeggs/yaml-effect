@@ -2,8 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![YAML 1.2 parse](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fparse-badge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
-[![YAML 1.2 full](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Ffull-badge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
+[![YAML 1.2 compliance](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fbadge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
 
 A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect — no wrappers, no ports, just a clean-room YAML 1.2 implementation designed for the Effect ecosystem.
 
@@ -25,7 +24,7 @@ This library is for Effect-based programs that need deeper introspection and man
 > 1.0.0 release. We are actively working toward full YAML 1.2 spec
 > compliance. The library is validated against the official
 > [yaml-test-suite](https://github.com/yaml/yaml-test-suite) — our current
-> compliance is tracked in the badges above. The parser handles common YAML
+> compliance is tracked in the badge above. The parser handles common YAML
 > well, but edge cases around tab handling, complex mapping keys, and strict
 > error rejection are still being addressed.
 

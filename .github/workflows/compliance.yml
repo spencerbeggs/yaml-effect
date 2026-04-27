@@ -40,22 +40,15 @@ jobs:
           }
           const raw = JSON.parse(rawText.slice(jsonStart, jsonEnd));
 
-          // Find the raw (unfiltered) test results by filename
+          // Full compliance: only the raw (unfiltered) test file. The
+          // filtered file uses it.fails for XFAIL entries, which vitest
+          // reports as "passed" when the assertion fails — including those
+          // would inflate the score, so we exclude them entirely.
           const rawFile = raw.testResults.find(r => r.name.includes("yaml-test-suite-raw"));
           const rawResults = rawFile.assertionResults;
-
-          // Parse-level: raw parse/reject assertions (no it.fails inflation)
-          const parseTests = rawResults.filter(r =>
-            r.title === "should parse successfully" || r.title === "should reject invalid YAML"
-          );
-          const parsePassing = parseTests.filter(r => r.status === "passed").length;
-          const parseTotal = parseTests.length;
-          const parsePercentage = Math.round((parsePassing / parseTotal) * 100);
-
-          // Full compliance: raw unfiltered results against all assertions
-          const rawPassing = rawResults.filter(r => r.status === "passed").length;
-          const rawTotal = rawResults.length;
-          const fullPercentage = Math.round((rawPassing / rawTotal) * 100);
+          const passing = rawResults.filter(r => r.status === "passed").length;
+          const total = rawResults.length;
+          const percentage = Math.floor((passing / total) * 100);
 
           function color(pct) {
             if (pct > 90) return "brightgreen";
@@ -64,42 +57,25 @@ jobs:
             return "red";
           }
 
-          const badge = {
-            parse: {
-              passing: parsePassing,
-              total: parseTotal,
-              percentage: parsePercentage,
-              color: color(parsePercentage),
-            },
-            full: {
-              passing: rawPassing,
-              total: rawTotal,
-              percentage: fullPercentage,
-              color: color(fullPercentage),
-            },
+          const data = {
+            passing,
+            total,
+            percentage,
+            color: color(percentage),
             lastUpdated: new Date().toISOString(),
           };
 
           // shields.io endpoint badge format
-          const parseBadge = {
+          const badge = {
             schemaVersion: 1,
-            label: "YAML 1.2 parse",
-            message: `${parsePercentage}%`,
-            color: color(parsePercentage),
+            label: "YAML 1.2 compliance",
+            message: `${percentage}%`,
+            color: color(percentage),
           };
 
-          const fullBadge = {
-            schemaVersion: 1,
-            label: "YAML 1.2 full",
-            message: `${fullPercentage}%`,
-            color: color(fullPercentage),
-          };
-
-          writeFileSync("/tmp/compliance.json", JSON.stringify(badge, null, 2) + "\n");
-          writeFileSync("/tmp/parse-badge.json", JSON.stringify(parseBadge, null, 2) + "\n");
-          writeFileSync("/tmp/full-badge.json", JSON.stringify(fullBadge, null, 2) + "\n");
-          console.log(`Parse: ${parsePassing}/${parseTotal} (${parsePercentage}%)`);
-          console.log(`Full:  ${rawPassing}/${rawTotal} (${fullPercentage}%)`);
+          writeFileSync("/tmp/compliance.json", JSON.stringify(data, null, 2) + "\n");
+          writeFileSync("/tmp/badge.json", JSON.stringify(badge, null, 2) + "\n");
+          console.log(`Compliance: ${passing}/${total} (${percentage}%)`);
           SCRIPT
 
       - name: Update badges branch
@@ -115,8 +91,7 @@ jobs:
           git rm -rf . 2>/dev/null || true
           git checkout HEAD -- .gitignore 2>/dev/null || true
           cp /tmp/compliance.json compliance.json
-          cp /tmp/parse-badge.json parse-badge.json
-          cp /tmp/full-badge.json full-badge.json
-          git add compliance.json parse-badge.json full-badge.json
+          cp /tmp/badge.json badge.json
+          git add compliance.json badge.json
           git commit -m "chore: update compliance badge data"
           git push origin badges --force
