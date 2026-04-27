@@ -81,6 +81,9 @@ information.
 | `UnresolvedTag` | Explicit tag cannot be resolved |
 | `InvalidTagValue` | Value does not match its explicit tag |
 | `AliasCountExceeded` | Alias count exceeds `maxAliasCount` |
+| `InvalidIndentation` | Key column or block-seq position violates indentation rules |
+| `TabIndentation` | Tab used for indentation (YAML 1.2 forbids this) |
+| `UnexpectedToken` | Mapping starts on the document-start (`---`) line, or other structural violation |
 
 ## Handling Errors with `Effect.catchTag`
 
@@ -173,7 +176,9 @@ malformed flow collections).
 ### `YamlComposerError`
 
 Raised when AST composition encounters semantic errors (undefined aliases,
-duplicate anchors, alias count exceeded).
+duplicate anchors, alias count exceeded) or structural-validation errors
+detected during composition (key-column indentation mismatches, block-seq
+in key position, mapping content on the document-start line).
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |

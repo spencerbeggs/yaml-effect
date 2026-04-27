@@ -286,6 +286,9 @@ Effect.runSync(program);
 | `UnresolvedTag` | Explicit tag cannot be resolved |
 | `InvalidTagValue` | Value does not match its explicit tag |
 | `AliasCountExceeded` | Too many aliases (exceeds `maxAliasCount`) |
+| `InvalidIndentation` | Key column or block-seq position violates indentation rules |
+| `TabIndentation` | Tab character used where indentation must use spaces |
+| `UnexpectedToken` | Mapping starts on the document-start (`---`) line, or other structural violation |
 
 When `uniqueKeys` is `true` (the default), duplicate key warnings are promoted
 to errors via `YamlComposerError`.

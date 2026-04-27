@@ -178,21 +178,21 @@ all test cases are relevant.
 ### XFAIL -- Expected Parse-Level Failures
 
 ```typescript
-export const XFAIL: Record<string, string> = { ... };
+export const XFAIL: Record<string, string> = {};
 ```
 
-Tests that run with `it.fails` -- the test is expected to fail. One
-remaining category of XFAIL entries:
+The XFAIL map is now empty. Both historical XFAIL categories --
+"Parser accepts invalid YAML" and "Parser rejects valid YAML" -- have
+been fully resolved.
 
-1. **Parser accepts invalid YAML** (15 tests) -- our parser succeeds on
-   input the spec says should be rejected. Missing validation for various
-   structural constraints (indentation, anchors, flow collection syntax).
-
-Previously there were also "parser rejects valid YAML" entries, but
-all 16 have been resolved through lexer, parser, and composer fixes
-(block scalar indentation, quoted scalar flow context, multi-line
-plain scalars, implicit block mapping indent tracking, explicit key
-handling).
+- "Parser rejects valid YAML" was cleared via lexer, parser, and
+  composer fixes (block scalar indentation, quoted scalar flow context,
+  multi-line plain scalars, implicit block mapping indent tracking,
+  explicit key handling).
+- "Parser accepts invalid YAML" was cleared in two passes of
+  composer-side structural-validation work (see "Key Compliance
+  Improvements (parser leniency)" and "Key Compliance Improvements
+  (parser leniency, second pass)" below).
 
 When an XFAIL test is marked with `it.fails`, Vitest expects the
 assertion to fail. If a code fix causes the test to start passing,
@@ -411,13 +411,13 @@ into per-category issues (#15, #16).
 | #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
 | #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 59->38) |
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
-| #16 | Parser accepts invalid YAML | Open (15 XFAIL "accepts invalid") |
+| #16 | Parser accepts invalid YAML | **Resolved** (0 remaining XFAIL "accepts invalid") |
 
-Current compliance: 2382/2424 raw assertions passing (98.27%), 1198
-filtered assertions passing, 15 XFAIL (all "accepts invalid"), 0 JSON
-comparison failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries
-(output only). Use `pnpm run test:compliance-raw` to see unfiltered
-results.
+Current compliance: 2397/2424 raw assertions passing (98.89%),
+filtered compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison
+failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries (all
+canonical-output mismatches). Use `pnpm run test:compliance-raw` to
+see unfiltered results.
 
 Remaining canonical-output gaps cluster into a few categories:
 
@@ -712,6 +712,114 @@ Categories of fixes:
   `parseAllDocuments`, `composeDocumentFromCst`) so the new
   validation errors fail the parse Effect rather than being absorbed
   as warnings.
+
+### Key Compliance Improvements (parser leniency, second pass)
+
+The jump from 98.27% to 98.89% raw compliance (2397/2424 assertions,
++15 assertions) cleared the 15 remaining "parser accepts invalid
+YAML" XFAIL entries, bringing the XFAIL count to 0. All fixes are in
+`src/utils/composer.ts` (one shared helper plus eleven new
+validation paths). The skip map's `XFAIL` is now `{}`. Cleared
+fixtures: SY6V, G9HC, H7J7, 4HVU, 9C9N, VJP3/00, QB6E, C2SP, BS4K,
+4JVG, Y79Y/009, 5LLU, S98Z, W9L4, QLJ7. See
+[parsing.md](./parsing.md) "Structural Validation in
+`flattenBlockMapChildren`" plus the companion subsections (Composer
+Flow-Content Indent Validation, Anchor Before Sequence Dash on Same
+Line, Block Scalar Leading-Empty Validation, Multi-Line Implicit Keys
+(Flow Collections), Cross-Document Tag-Handle Validation) for the
+full helper-by-helper mechanics; this subsection is a fixture-by-
+fixture index.
+
+Categories of fixes (each item links a fixture to its
+parsing.md-documented helper):
+
+- **SY6V "Anchor before sequence entry on same line"** --
+  `validateAnchorTagNotFollowedBySeqDashOnSameLine` called from
+  `composeDocument`'s anchor/tag handlers. Skips empty `block-seq`
+  placeholders (length 0) when scanning forward.
+- **G9HC, H7J7 "Anchor/tag at parent column under map value"** --
+  `validatePropertyContinuationColumn` called from
+  `flattenBlockMapChildren` when handling anchor/tag children in
+  value position. The "parent key column" is computed via the new
+  shared helper `lineIndentColumn(text, offset)` (line's
+  leading-content column) rather than `lineCol(text, key.offset).column`,
+  which matters when a key has metadata before the scalar (e.g.
+  `!<tag> foo:` has line indent 0 but scalar offset col 25).
+- **4HVU "Wrong indentation in Sequence"** -- new detection in the
+  `-` whitespace handler of `flattenBlockMapChildren`: a stray `-`
+  outside any block-seq, on a continuation line, with no `?`
+  explicit-key context, is invalid. New helper
+  `precededByExplicitKeyMarker` allows the KK5P shape (`? - a`)
+  where the parser may include an empty block-seq placeholder or a
+  `?`-only block-map sentinel before the dash.
+- **9C9N, VJP3/00 "Flow content indentation"** -- `composeFlowMap`
+  and `composeFlowSeq` accept `parentBlockColumn?: number`, and the
+  new helper `validateFlowContentIndent` walks the source between
+  opener and end and rejects any continuation line whose first
+  non-whitespace column `<= parentBlockColumn`. Callers pass
+  `lastKeyColumn` (from `flattenBlockMapChildren`), `seqIndent`
+  (computed via `lineIndentColumn` from `composeBlockSeq`), or
+  `undefined` (`composeDocument` root, check skipped).
+- **QB6E "Wrong indented multiline quoted scalar"** --
+  `validateQuotedScalarContinuationIndent` called from
+  `flattenBlockMapChildren`'s flow-scalar branch when the style is
+  single-quoted or double-quoted and the scalar is in value
+  position. Continuation lines at column `<= parentKeyColumn` are
+  rejected.
+- **C2SP "Flow Mapping Key on two lines"** -- `checkMultilineImplicitKeys`
+  extended from scalar-only to flag `YamlMap` and `YamlSeq` keys
+  with `style === "flow"` whose source spans multiple lines.
+- **BS4K "Comment between plain scalar lines"** -- the
+  standalone-scalar branch of `composeDocument` now invokes
+  `checkTrailingContentAfterDocValue` even when `partsCount === 1`
+  (the multi-line merge stopped at a comment, leaving a single
+  line), so a subsequent flow-scalar across the comment is flagged
+  as trailing.
+- **4JVG "Scalar value with two anchors"** --
+  `validateNoDoubleAnchorOnScalar` called from
+  `flattenBlockMapChildren`'s flow-scalar / block-scalar branch.
+  When both `outerMeta.anchor` and `pendingMeta.anchor` are set AND
+  the scalar is not a key (no `:` after, no block-map sibling), the
+  helper emits `UnexpectedToken`.
+- **Y79Y/009 "Tab as block indentation after value indicator"** --
+  `validateNoTabAfterContinuationValueSep` called from the `:`
+  branch of `flattenBlockMapChildren`. When the `:` is at start of
+  line (col 0) AND followed by tab + same-line content, emits a
+  `TabIndentation` error. The fatal-error filter in `parseDocument`
+  was extended to include `TabIndentation`.
+- **5LLU, S98Z, W9L4 "Block scalar leading empties more indented than
+  first content line"** -- `validateBlockScalarLeadingEmpties` called
+  from `makeScalar` for block-literal / block-folded scalars.
+  Walks the raw source after the header; tracks indent of leading
+  whitespace-only lines; when the first non-empty content line is
+  found, rejects any preceding empty whose indent exceeds the
+  content indent. Per YAML 1.2 §8.1.1, `l-empty(n,c)` requires
+  `<= n` spaces.
+- **QLJ7 "Tag shorthand used in documents but only defined in the
+  first"** -- `validateCrossDocumentDirectives` extended: for every
+  doc index `>= 1` (regardless of directive presence),
+  `validateTagHandlesInDocument` builds the per-document handle set
+  from `%TAG` directives and walks all `tag` CST nodes, emitting
+  `UnresolvedTag` for any `!handle!suffix` whose handle is not
+  declared in the same document. Verbatim tags (`!<...>`),
+  `!!`-prefixed shorthands, and bare `!` are always valid.
+  `UnresolvedTag` was added to both `parseDocument` and
+  `parseAllDocuments` fatal-error filters.
+
+Shared helper introduced in this pass:
+
+- **`lineIndentColumn(text, offset)`** -- returns the column of the
+  first non-whitespace character on the line containing `offset`.
+  Used by `composeBlockMap` to compute `extKeyCol` from the
+  externally-passed first key (replacing the previous direct
+  `lineCol` call) and by `composeBlockSeq` to compute `seqIndent`
+  for passing to the flow composers. Necessary because a key with
+  metadata before the scalar (e.g. `!<tag> foo:`) has scalar offset
+  col != line indent col, and the relevant column for indentation
+  comparison is the line indent.
+
+Files changed in this pass: `src/utils/composer.ts` (+543 / -45)
+and `__test__/utils/yaml-test-suite-skip-map.ts` (XFAIL is now `{}`).
 
 ### Dual Block Scalar Decoders
 

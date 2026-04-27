@@ -21,12 +21,11 @@ If you just need to parse YAML into a JavaScript object, use [yaml](https://www.
 This library is for Effect-based programs that need deeper introspection and manipulation of YAML documents: typed parse errors you can `catchTag`, Schema pipelines that validate YAML strings into domain types, AST and CST access, non-destructive formatting and path-based modification, semantic equality comparisons, and SAX-style visitor streams that are composable in Effect pipelines.
 
 > **Note:** yaml-effect is new and may introduce breaking changes before a
-> 1.0.0 release. We are actively working toward full YAML 1.2 spec
-> compliance. The library is validated against the official
-> [yaml-test-suite](https://github.com/yaml/yaml-test-suite) — our current
-> compliance is tracked in the badge above. The parser handles common YAML
-> well, but edge cases around tab handling, complex mapping keys, and strict
-> error rejection are still being addressed.
+> 1.0.0 release. The library is validated against the official
+> [yaml-test-suite](https://github.com/yaml/yaml-test-suite) — current
+> compliance is tracked in the badge above. A small number of canonical
+> stringifier output cases (explicit `?` syntax for complex keys, multi-doc
+> `...` end markers) are still being addressed.
 
 ## Installation
 

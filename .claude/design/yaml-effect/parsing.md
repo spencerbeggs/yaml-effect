@@ -299,8 +299,22 @@ structure. State and helpers:
   `hasExternalKeyColumn` is true.
 - `pushNode` -- before tracking `lastKeyColumn`, resolves the entry
   indent from `pendingExplicitKeyCol` if a `?` was just consumed.
+- `precededByExplicitKeyMarker(children, idx)` -- returns true if any
+  of the immediately preceding non-trivia siblings is a `?` indicator
+  or an empty block-seq placeholder (length 0) or a `?`-only block-map
+  sentinel. Used by the stray-dash check to allow KK5P-style explicit
+  keys (`? - a`) where the parser shape includes such placeholders.
+- `lineIndentColumn(text, offset)` (shared helper) -- returns the
+  column of the first non-whitespace character on the line containing
+  `offset`. Used in place of `lineCol(text, offset).column` whenever
+  the relevant column is the line's leading-content column rather than
+  the offset's own column. This matters when a key has metadata
+  before the scalar (e.g. `!<tag> foo:` has line-indent 0 but the
+  scalar's offset column is 25); the key's effective indent is the
+  metadata column, not the scalar column. `composeBlockMap` uses this
+  helper to compute `extKeyCol` from the externally-passed first key.
 
-Validation is applied at three points:
+Validation is applied at the following points:
 
 1. **Scalar+block-map first-key path** -- when a scalar is in key
    position and is followed by a block-map sibling (the implicit
@@ -316,6 +330,40 @@ Validation is applied at three points:
    `hasDocumentStart` is true **and** the scalar is on the same line
    as `---`, the composer emits `UnexpectedToken` "Mapping cannot
    start on document-start (---) line". Catches 9KBC and CXX2.
+4. **Property continuation column** -- `validatePropertyContinuationColumn`
+   is called from the anchor/tag handler when a property (anchor or
+   tag) appears in value position. If the property is on a continuation
+   line (not the same line as the introducing `:`), its column must
+   be strictly greater than `parentKeyColumn` (computed via
+   `lineIndentColumn` so it accounts for metadata-before-scalar
+   keys). Catches G9HC and H7J7 (anchor/tag at parent column under
+   a map value).
+5. **Stray block-seq entry on continuation line** -- in the `-`
+   whitespace handler, a stray `-` outside any block-seq, on a
+   continuation line, with no `?`-explicit-key context (checked via
+   `precededByExplicitKeyMarker`), emits `InvalidIndentation`.
+   Catches 4HVU ("Wrong indentation in Sequence").
+6. **Quoted scalar continuation indent** --
+   `validateQuotedScalarContinuationIndent` runs from the flow-scalar
+   branch when the scalar's style is `single-quoted` or `double-quoted`
+   and the scalar is in value position. Continuation lines whose first
+   non-whitespace column is `<= parentKeyColumn` produce
+   `InvalidIndentation`. Catches QB6E (multi-line quoted value indented
+   at or below the key column).
+7. **No tab after continuation value-sep** --
+   `validateNoTabAfterContinuationValueSep` runs from the `:` branch.
+   When the `:` is at column 0 (start of a continuation line) AND
+   followed by a tab plus same-line content, the helper emits a
+   `TabIndentation` error. The fatal-error filter in `parseDocument`
+   was extended to include `TabIndentation` so this fails the parse.
+   Catches Y79Y/009 (tab as block indentation after a value indicator).
+8. **No double anchor on a non-key scalar** --
+   `validateNoDoubleAnchorOnScalar` runs from the flow-scalar /
+   block-scalar branch. When both `outerMeta.anchor` and
+   `pendingMeta.anchor` are set AND the scalar is not a key (no
+   following `:` value-sep, no following block-map sibling), the
+   helper emits `UnexpectedToken`. Catches 4JVG (a single scalar
+   value carrying two anchors).
 
 ### Trailing-Content Detection in Scalar Root
 
@@ -326,10 +374,91 @@ sibling patterns (using `hasBlockMapAfterInList`), preserving the 2CMS
 rejection that previously relied on the multi-line merge consuming
 the "invalid" continuation.
 
+The standalone-scalar branch of `composeDocument` extends this check
+to the `partsCount === 1` case as well: when
+`collectMultilinePlainScalar` stops because of an intervening comment
+(leaving a single line in `parts`), `checkTrailingContentAfterDocValue`
+is still invoked so a subsequent flow-scalar across the comment is
+flagged as trailing. Catches BS4K (comment between plain scalar lines
+that would otherwise look like a single value).
+
 `InvalidIndentation` is included in all three fatal-error filters
 (`parseDocument`, `parseAllDocuments`, `composeDocumentFromCst`) so
 that these structural-validation errors fail the parse Effect rather
-than being absorbed as warnings.
+than being absorbed as warnings. `TabIndentation` and `UnresolvedTag`
+were added to both the `parseDocument` and `parseAllDocuments` filters
+so that a tab used as block indent after a continuation-line value
+indicator (Y79Y/009) and a `!handle!suffix` whose handle is not
+declared in the same document (QLJ7) are fatal at either entry point.
+`composeDocumentFromCst` keeps the narrower filter
+(`InvalidIndentation` only) because it is the low-level entry point
+used by visitors and other consumers that should not fail on these
+higher-level structural rejections.
+
+### Composer Flow-Content Indent Validation
+
+`composeFlowMap` and `composeFlowSeq` accept an optional
+`parentBlockColumn?: number` parameter. When set, the new helper
+`validateFlowContentIndent` walks the source text between the flow
+opener (`{` or `[`) and the closing bracket and rejects any
+continuation line whose first non-whitespace column is
+`<= parentBlockColumn`. Per YAML 1.2 §7.4, flow content nested under
+a block context must be more indented than its parent block.
+
+Callers pass:
+
+- `lastKeyColumn` from `flattenBlockMapChildren` (when a flow
+  collection appears in value position under a block mapping)
+- `seqIndent` (computed via `lineIndentColumn`) from `composeBlockSeq`
+  (when a flow collection appears as a block-seq entry)
+- `undefined` from `composeDocument` at root level (no parent block,
+  so the check is skipped)
+
+Catches 9C9N and VJP3/00 ("Flow content indentation").
+
+### Anchor Before Sequence Dash on Same Line
+
+`composeDocument`'s anchor/tag handlers call
+`validateAnchorTagNotFollowedBySeqDashOnSameLine`. The helper scans
+forward through the children looking for a `block-seq` whose first
+entry begins on the same source line as the just-seen anchor or tag.
+Empty `block-seq` placeholders (length 0) are skipped during the
+forward scan because they do not represent actual content. When a
+real same-line `-` is found, the composer emits `UnexpectedToken`.
+Catches SY6V ("Anchor before sequence entry on same line").
+
+### Block Scalar Leading-Empty Validation
+
+`makeScalar()` calls `validateBlockScalarLeadingEmpties` for
+block-literal and block-folded scalars. The helper walks the raw
+source after the header line, tracks the indent of leading
+whitespace-only lines, then -- when the first non-empty content line
+is found -- rejects any preceding empty whose indent exceeds the
+content indent. Per YAML 1.2 §8.1.1, `l-empty(n,c)` requires `<= n`
+spaces, so a leading blank line that is more indented than the
+first real content line is invalid. Catches 5LLU, S98Z, and W9L4.
+
+### Multi-Line Implicit Keys (Flow Collections)
+
+The existing `checkMultilineImplicitKeys` helper -- which previously
+only flagged scalar keys whose source spans multiple lines -- was
+extended to cover `YamlMap` and `YamlSeq` keys with `style === "flow"`
+whose source spans multiple lines. A flow collection used as an
+implicit mapping key must fit on a single line. Catches C2SP ("Flow
+mapping key on two lines").
+
+### Cross-Document Tag-Handle Validation
+
+`validateCrossDocumentDirectives` was extended: for every document
+index `>= 1` (regardless of whether that document declares its own
+directives), the new `validateTagHandlesInDocument` helper walks
+the document's CST. It builds the per-document handle set from
+`%TAG` directives, then walks all `tag` CST nodes and emits
+`UnresolvedTag` for any `!handle!suffix` whose handle is not declared
+in this same document. Verbatim tags (`!<...>`), `!!`-prefixed
+shorthands, and bare `!` are always considered valid. Catches QLJ7
+("Tag shorthand used in documents but only defined in the first
+document").
 
 ### Anchor/Alias Handling
 
@@ -435,11 +564,16 @@ Composition errors produce `YamlComposerError` containing:
 
 Error codes: `UndefinedAlias`, `DuplicateAnchor`, `CircularAlias`,
 `UnresolvedTag`, `InvalidTagValue`, `AliasCountExceeded`,
-`InvalidIndentation`, `UnexpectedToken`. The latter two are produced
-by the structural-validation paths in `flattenBlockMapChildren` and
+`InvalidIndentation`, `UnexpectedToken`, `TabIndentation`. The
+indentation, token, and tab-indentation codes are produced by the
+structural-validation paths in `flattenBlockMapChildren` and
 `composeDocument` (see "Structural Validation in
 `flattenBlockMapChildren`" above) and are reported on the
 `YamlComposerError` channel rather than `YamlParseError`.
+`UnresolvedTag` is also produced by the cross-document tag-handle
+check (`validateTagHandlesInDocument`) when a `!handle!suffix` tag
+references a `%TAG` handle that was only declared in a different
+document of the same stream.
 
 ### Block Scalar Decoding
 

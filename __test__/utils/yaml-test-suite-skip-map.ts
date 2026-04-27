@@ -25,24 +25,7 @@
 export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
-export const XFAIL: Record<string, string> = {
-	// Parser accepts invalid YAML (15)
-	"4HVU": "Parser accepts invalid YAML: Wrong indendation in Sequence",
-	"4JVG": "Parser accepts invalid YAML: Scalar value with two anchors",
-	"5LLU": "Parser accepts invalid YAML: Block scalar with wrong indented line after spaces only",
-	"9C9N": "Parser accepts invalid YAML: Wrong indented flow sequence",
-	BS4K: "Parser accepts invalid YAML: Comment between plain scalar lines",
-	C2SP: "Parser accepts invalid YAML: Flow Mapping Key on two lines",
-	G9HC: "Parser accepts invalid YAML: Invalid anchor in zero indented sequence",
-	H7J7: "Parser accepts invalid YAML: Node anchor not indented",
-	QB6E: "Parser accepts invalid YAML: Wrong indented multiline quoted scalar",
-	QLJ7: "Parser accepts invalid YAML: Tag shorthand used in documents but only defined in the first",
-	S98Z: "Parser accepts invalid YAML: Block scalar with more spaces than first content line",
-	SY6V: "Parser accepts invalid YAML: Anchor before sequence entry on same line",
-	"VJP3/00": "Parser accepts invalid YAML: Flow collections over many lines",
-	W9L4: "Parser accepts invalid YAML: Literal block scalar with more spaces in first line",
-	"Y79Y/009": "Parser accepts invalid YAML: Tab as block indentation after value indicator",
-};
+export const XFAIL: Record<string, string> = {};
 
 /**
  * Tests to skip specific assertions for.
