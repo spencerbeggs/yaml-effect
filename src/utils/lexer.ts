@@ -92,6 +92,7 @@ export function createScanner(text: string): YamlScanner {
 	let afterEmptyBlockScalar = false;
 	/** Set when the previous token was a quoted scalar (single or double quoted). */
 	let afterQuotedScalar = false;
+	let afterFlowCollectionEnd = false;
 	/** Buffer of tokens to emit before scanning the next real token. */
 	const pending: YamlToken[] = [];
 	/** Mutable holder for the most recently produced token, set by the public {@link scan} method. */
@@ -1089,6 +1090,10 @@ export function createScanner(text: string): YamlScanner {
 		// after a quoted key is still recognized as a value indicator
 		// (e.g., { "foo"\n  :bar } or { "foo" # comment\n  :bar }).
 		const prevWasQuoted = afterQuotedScalar;
+		// Save and reset the flow-collection-end flag. The `:` handler reads
+		// `prevWasFlowEnd` to allow adjacent value indicators after a flow
+		// collection used as an implicit-mapping key (e.g. `[ {JSON: like}:v ]`).
+		const prevWasFlowEnd = afterFlowCollectionEnd;
 		if (flowDepth > 0) {
 			const ch0 = peek();
 			// Only reset when we encounter a content-bearing character that is
@@ -1103,9 +1108,11 @@ export function createScanner(text: string): YamlScanner {
 					text[pos - 1] === "\r");
 			if (!isWhitespace(ch0) && !isNewline(ch0) && !isComment) {
 				afterQuotedScalar = false;
+				afterFlowCollectionEnd = false;
 			}
 		} else {
 			afterQuotedScalar = false;
+			afterFlowCollectionEnd = false;
 		}
 
 		const ch = peek();
@@ -1205,6 +1212,7 @@ export function createScanner(text: string): YamlScanner {
 			const sCol = col;
 			advance();
 			if (flowDepth > 0) flowDepth--;
+			afterFlowCollectionEnd = true;
 			return makeToken("flow-map-end", "}", start, sLine, sCol);
 		}
 		if (ch === "[") {
@@ -1223,6 +1231,7 @@ export function createScanner(text: string): YamlScanner {
 			const sCol = col;
 			advance();
 			if (flowDepth > 0) flowDepth--;
+			afterFlowCollectionEnd = true;
 			return makeToken("flow-seq-end", "]", start, sLine, sCol);
 		}
 		if (ch === ",") {
@@ -1370,7 +1379,8 @@ export function createScanner(text: string): YamlScanner {
 				isNewline(peek(1)) ||
 				peek(1) === "" ||
 				(flowDepth > 0 && isFlowIndicator(peek(1))) ||
-				(flowDepth > 0 && prevWasQuoted))
+				(flowDepth > 0 && prevWasQuoted) ||
+				(flowDepth > 0 && prevWasFlowEnd))
 		) {
 			lockLineIndent();
 			const indent = lineIndent;

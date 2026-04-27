@@ -1615,7 +1615,14 @@ function flattenBlockMapChildren(
 			// pending meta from a previous VALUE position, flush it as a null value.
 			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
 			// Includes any anchor that was committed to outerMeta across a newline.
-			if (afterValueSep && hasValueSepAfterInList(children, i + 1)) {
+			//
+			// Restrict to same-line `:` so we don't fire on patterns like
+			// `? a\n: &b b\n: *a` where the next `:` belongs to a SUBSEQUENT
+			// pair (different line) and `b` is the value of the current pair.
+			const valueSepOffset = findValueSepOffset(children, i + 1);
+			const sepOnSameLine =
+				valueSepOffset >= 0 && lineCol(state.text, child.offset).line === lineCol(state.text, valueSepOffset).line;
+			if (afterValueSep && sepOnSameLine) {
 				const flushMeta = combinedPending();
 				if (hasMeta(flushMeta)) {
 					const value = resolveScalar("", "plain", flushMeta.tag, state);
@@ -3206,8 +3213,27 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 		if (!child) continue;
 		if (child.type === "newline") continue;
 		if (child.type === "whitespace") {
-			// Skip commas (kept in content for multi-line key boundary detection)
-			if (child.source === ",") continue;
+			// Comma separates flow-map / flow-seq items. If a tag/anchor is
+			// pending here (e.g. `foo: !!str, !!str: bar` — the trailing
+			// `!!str` belongs to the value of `foo`), flush it as an empty
+			// scalar so it doesn't bleed into the next item.
+			if (child.source === ",") {
+				if (hasMeta(pendingMeta)) {
+					const value = resolveScalar("", "plain", pendingMeta.tag, state);
+					const scalar = new YamlScalar({
+						value,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: 0,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					items.push({ kind: "node", node: scalar });
+				}
+				continue;
+			}
 			if (child.source === ":") {
 				// Flush pending tag/anchor as empty scalar before value-sep
 				if (hasMeta(pendingMeta)) {

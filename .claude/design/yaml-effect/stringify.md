@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-19
-last-synced: 2026-03-19
-completeness: 85
+updated: 2026-04-27
+last-synced: 2026-04-27
+completeness: 87
 related:
   - architecture.md
   - schemas.md
@@ -94,7 +94,16 @@ style over double-quoted to produce cleaner output.
   entire body and the reader has no other way to detect block
   indentation.
 - `renderBlockFolded(s, indent)` -- `>` with the same value-driven
-  chomp detection (no `explicitChomp` parameter currently).
+  chomp detection (no `explicitChomp` parameter currently). The
+  explicit indent indicator (`>2`, etc.) is emitted both when the
+  first content line starts with a space AND when the value begins
+  with two or more empty lines followed by actual content. This
+  differs from `renderBlockLiteral`'s rule, which fires on a single
+  leading empty line: folded scalars have stricter auto-detect
+  semantics, so a single leading blank still parses unambiguously
+  via the next non-empty content line, but two or more leading
+  blanks introduce enough ambiguity that libyaml's canonical form
+  requires the indicator.
 - `renderString(s, style, indent, ignoreType?, canonical?, explicitChomp?)`
   -- dispatches to the appropriate renderer, falling back to
   double-quoted for unsafe styles. Threads `explicitChomp` through to
@@ -199,20 +208,71 @@ reads style metadata from each AST node:
 so neither comment-stripping nor tag normalization loses round-trip
 metadata.
 
+### Explicit `? key\n: value` Syntax
+
+`stringifyMapNodeLines()` emits explicit-key block syntax (`? key\n: value`
+rather than implicit `key: value`) when the key cannot be expressed on a
+single line in front of the colon. The trigger is the `isComplexKey`
+predicate, computed via the new `keyIsScalarWithNewline` helper:
+
+- Key is a `YamlMap` or `YamlSeq` (existing trigger -- non-scalar keys must
+  be hoisted onto a `?` line).
+- Key is a `YamlScalar` whose value is a `string` containing `\n` (new) --
+  multi-line scalar values cannot be inlined as `key:` because the colon
+  would land mid-content.
+- Key is a `YamlScalar` whose `style` is `block-literal` or `block-folded`
+  (new) -- the rendered key always begins with a `|` / `>` header line, so
+  the implicit form would emit `|...:` and corrupt the header.
+
+When `isComplexKey` is true the renderer emits `? <first-line>` for the
+key, then the continuation lines, then a `: <value>` line.
+
 ### Complex-Key Continuation Indent
 
-`stringifyMapNodeLines()` emits `? key` when a key requires explicit
-syntax (multi-line, non-scalar, etc.). Continuation lines after the
-first are normally indented by `pad` (matching the `?` column). When
-the first line of the key contains only metadata tokens (`&anchor`
-and/or `!tag`, with no value text), the continuation lines are the
-actual collection body and are emitted with **no extra padding** -- they
-sit at the same column as `?`. This produces the compact canonical
-form for keys like `? &a !!map\nkey: value`, where `key: value` is the
-map body, not an indented continuation of the key.
+Continuation lines after the first key line are indented by `pad`
+(matching the `?` column) by default. Two exceptions suppress the pad:
 
-The metadata-only test splits the first line on whitespace and checks
-that every non-empty token starts with `&` or `!`.
+- **Metadata-only first line**: when the first line contains only metadata
+  tokens (`&anchor` and/or `!tag`, with no value text), the continuation
+  lines are the actual collection body and are emitted with **no extra
+  padding** -- they sit at the same column as `?`. This produces the
+  compact canonical form for keys like `? &a !!map\nkey: value`, where
+  `key: value` is the map body, not an indented continuation of the key.
+  The metadata-only test (`firstIsMetaOnly`) splits the first line on
+  whitespace and checks that every non-empty token starts with `&` or
+  `!`.
+- **Block-style scalar key** (new): when the key is a `YamlScalar` with
+  style `block-literal` or `block-folded` (`keyIsBlockScalar`), the
+  continuation lines are already indented by `renderBlockLiteral` /
+  `renderBlockFolded` themselves -- the renderer bakes the block-scalar
+  body indent into each line it produces. Adding another `pad` here would
+  double-indent the body. So `contPad = ""` for block-scalar keys.
+
+For all other complex keys, `contPad = pad`.
+
+### Compact Value Placement Under Explicit Keys
+
+When the explicit-key path emits the `:` line, the renderer uses compact
+notation (matching libyaml canonical output) for non-empty block
+collection values:
+
+- **Block-sequence value** (first item starts with `-`): the first item
+  appears on the colon line as `: <first-item>`, and remaining items are
+  indented by `pad` to align under the first item. Previously the
+  renderer fell through to `:\n<items>`, leaving the colon on its own
+  line.
+- **Block-mapping value**: detected via `valNode instanceof YamlMap` with
+  non-empty items and resolved style `"block"`. The first pair appears on
+  the colon line as `: <first-pair>`, and remaining pairs are indented by
+  `pad`. This is a new branch -- previously block-mapping values fell
+  through to the indented `:\n<pairs>` form.
+- **Block-scalar header / inline-quoted value** (existing): first line on
+  the colon line, continuation lines emitted as-is (the renderer already
+  baked in the necessary indentation).
+- **Single-line value**: on the colon line as `: <value>`.
+
+This compact placement resolved several yaml-test-suite canonical-output
+mismatches (5WE3, 6SLA, Q9WF cleared from `SKIP_ASSERTIONS`).
 
 ### forceDefaultStyles Option
 

@@ -19,6 +19,17 @@
  * Updated: parser leniency fixes — block-mapping indent validation (DMG6, EW3V, N4JP, U44R),
  *          block-seq in key position (ZVH3), comma-in-tag rejection (U99R), mapping on
  *          document-start line (9KBC, CXX2).
+ * Updated: explicit-key syntax for non-scalar/multi-line/block-style scalar keys, compact
+ *          inline first-pair for block-map and block-seq values under explicit `?` keys
+ *          (5WE3, 6SLA, Q9WF, X38W now pass canonical output).
+ * Updated: libyaml conventions — block-folded indent indicator for 2+ leading blank lines
+ *          (R4YG), block scalar at root with newline+tab content rendered as DQ via
+ *          applySingleDocCanonical (T5N4).
+ * Updated: parser/composer fixes — lexer recognises `:` after flow-collection-end as
+ *          adjacent value indicator (9MMW), flow-children flatten flushes pending
+ *          tag/anchor on `,` separator so it doesn't bleed into the next item (WZ62),
+ *          composer flush-to-null only fires when the trailing `:` is on the same
+ *          line as the scalar (6M2F).
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -38,12 +49,8 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"4ABK": ["output"],
 	"4WA9": ["output"],
 	"5T43": ["output"],
-	"5WE3": ["output"],
 	"652Z": ["output"],
-	"6M2F": ["output"],
-	"6SLA": ["output"],
 	"6WLZ": ["output"],
-	"9MMW": ["output"],
 	"9MQT/00": ["output"],
 	B3HG: ["output"],
 	EXG3: ["output"],
@@ -55,11 +62,6 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"M2N8/01": ["output"],
 	M5DY: ["output"],
 	PUW8: ["output"],
-	Q9WF: ["output"],
-	R4YG: ["output"],
-	T5N4: ["output"],
 	"VJP3/01": ["output"],
-	WZ62: ["output"],
-	X38W: ["output"],
 	XLQ9: ["output"],
 };
