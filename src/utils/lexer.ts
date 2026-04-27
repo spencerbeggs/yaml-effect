@@ -1500,6 +1500,8 @@ export function createScanner(text: string): YamlScanner {
 			blockStarted.clear();
 			pending.length = 0;
 			afterEmptyBlockScalar = false;
+			afterQuotedScalar = false;
+			afterFlowCollectionEnd = false;
 			state.currentToken = null;
 		},
 	};
