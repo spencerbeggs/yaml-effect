@@ -89,6 +89,17 @@ The scanner handles all YAML 1.2 constructs:
 - **Flow context quoted scalar handling** -- the `afterQuotedScalar` flag
   persists across whitespace, newlines, and comments so that `:` on the
   next line after a quoted key is recognized as a value indicator
+- **Flow context flow-collection-end adjacent value** -- the
+  `afterFlowCollectionEnd` flag mirrors `afterQuotedScalar`. It is set
+  when a `flow-map-end` (`}`) or `flow-seq-end` (`]`) token is emitted,
+  preserved across whitespace, newlines, and comments in flow context,
+  and reset on the next content character. Read in the `:`
+  value-indicator branch as `prevWasFlowEnd` and combined with the
+  existing `flowDepth > 0` guard so that a `:` immediately after a
+  flow-collection-end is recognized as a value indicator (YAML 1.2
+  §7.18 flow-map adjacent value). Allows `[ {JSON: like}:adjacent ]`
+  to parse as a flow-seq containing a single implicit-map pair where
+  the flow-map is the key.
 
 ### Stream API (`lex`)
 
@@ -279,6 +290,19 @@ structured key/value sequence. Notable behaviors:
   ordinary `key: value` shapes. Used both by the leniency-validation
   branch (below) and by `collectMultilinePlainScalar` to terminate
   merges when a scalar-then-block-map sibling pattern is detected.
+- **Same-line guard on null-value flush** -- the flush-to-null
+  heuristic at the scalar branch (around the
+  `afterValueSep && hasValueSepAfterInList(children, i + 1)` guard)
+  used to fire whenever any future `:` existed in the children
+  list, even one belonging to a different pair on a later line. The
+  guard now also requires the trailing `:` to be on the **same
+  line** as the scalar, comparing line numbers via `lineCol`. This
+  preserves the original target case `a: &anchor\nb:` (where
+  `&anchor` legitimately attaches to `a`'s null value because `b`
+  is a new key on its own line followed by `:` on that same line)
+  while suppressing the misfire for shapes like
+  `? a\n: &b b\n: *a` (where `b` is the current pair's value and
+  the second `:` belongs to a NEW pair on a different line).
 
 ### Structural Validation in `flattenBlockMapChildren`
 
@@ -553,6 +577,21 @@ indicators, emitting `{ kind: "key" }` semantic items. `buildPairs()`
 handles key items without an attached node by consuming the next node
 item as the explicit key. Trailing `?` with no content creates a
 null-key entry.
+
+### Pending Tag/Anchor Flush at Flow Comma
+
+`flattenFlowChildren()` previously skipped the `,` separator silently
+via `if (child.source === ",") continue;`, which let any
+`pendingMeta` (tag/anchor) accumulated for one item leak into the
+next item's slot. The flatten now checks `pendingMeta` at every
+comma boundary: if a tag or anchor is pending when the comma
+arrives, the meta is flushed as an empty scalar **before** the
+comma is consumed. This prevents tag/anchor bleed-over across
+flow items. For example, in `{foo: !!str, !!str: bar}` the first
+`!!str` is the (empty) value of `foo` and the second `!!str` is
+the (empty) key of the second pair; without the flush the second
+tag overwrote the first in `pendingMeta` and one of the two
+tagged nodes was lost.
 
 ### Error Handling
 

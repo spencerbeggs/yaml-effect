@@ -373,11 +373,17 @@ function renderBlockFolded(s: string, indent: string): string {
 	}
 
 	// Explicit indent indicator needed when first content line starts with
-	// space — without it, the reader would include the leading whitespace
-	// in the auto-detected indentation level.
+	// space, or when the value starts with two-or-more empty lines and has
+	// actual content. A single leading blank line is fine without the
+	// indicator because the next non-empty content line still establishes
+	// the indent, but multiple leading blanks introduce enough ambiguity
+	// that libyaml's canonical form emits the explicit indicator.
 	let indentIndicator = "";
 	const firstContent = valueLines.find((l) => l !== "");
-	if (firstContent?.startsWith(" ")) {
+	if (
+		firstContent?.startsWith(" ") ||
+		(valueLines.length >= 2 && valueLines[0] === "" && valueLines[1] === "" && firstContent !== undefined)
+	) {
 		indentIndicator = String(indent.length);
 	}
 
@@ -1095,8 +1101,18 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	const pad = " ".repeat(ctx.indent);
 	const lines: string[] = [];
 	for (const pair of items) {
-		// Non-scalar keys (sequences, mappings) use explicit key syntax: ? key\n: value
-		const isComplexKey = pair.key instanceof YamlMap || pair.key instanceof YamlSeq;
+		// Explicit `? key\n: value` syntax is required when:
+		// - Key is a non-scalar (sequence/mapping)
+		// - Key is a scalar whose value contains a newline (cannot be expressed
+		//   as an implicit `key: value` line in block form)
+		// - Key is a block-style scalar (block-literal/block-folded) whose
+		//   header introduces a multi-line scalar
+		const keyIsScalarWithNewline =
+			pair.key instanceof YamlScalar &&
+			((typeof pair.key.value === "string" && pair.key.value.includes("\n")) ||
+				pair.key.style === "block-literal" ||
+				pair.key.style === "block-folded");
+		const isComplexKey = pair.key instanceof YamlMap || pair.key instanceof YamlSeq || keyIsScalarWithNewline;
 		if (isComplexKey) {
 			const keyLines = stringifyNodeLines(pair.key, ctx);
 			// Emit "? " followed by the key
@@ -1104,11 +1120,15 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			// When the first key line is just metadata (`&anchor` and/or `!tag`),
 			// the continuation lines are the actual collection content and should
 			// be emitted without an extra indent — they sit at the same level as
-			// `?` (compact form). Otherwise, indent continuation lines normally.
+			// `?` (compact form). Block-style scalar keys (`|`/`>`) already bake
+			// their own indent into the rendered continuation lines, so no extra
+			// pad is needed. Otherwise, indent continuation lines normally.
 			const firstTokens = keyLines[0].trim().split(/\s+/).filter(Boolean);
 			const firstIsMetaOnly =
 				firstTokens.length > 0 && firstTokens.every((t) => t.startsWith("&") || t.startsWith("!"));
-			const contPad = firstIsMetaOnly ? "" : pad;
+			const keyIsBlockScalar =
+				pair.key instanceof YamlScalar && (pair.key.style === "block-literal" || pair.key.style === "block-folded");
+			const contPad = firstIsMetaOnly || keyIsBlockScalar ? "" : pad;
 			for (let k = 1; k < keyLines.length; k++) {
 				lines.push(`${contPad}${keyLines[k]}`);
 			}
@@ -1134,15 +1154,30 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 							lines.push(valLines[v]);
 						}
 					} else if (first.startsWith("-")) {
-						// Block sequence value — compact notation
-						lines.push(":");
-						for (const vl of valLines) {
-							lines.push(vl);
+						// Block sequence value — compact notation: first item on the
+						// colon line, remaining items indented to align with it.
+						lines.push(`: ${first}`);
+						for (let v = 1; v < valLines.length; v++) {
+							lines.push(`${pad}${valLines[v]}`);
 						}
 					} else {
-						lines.push(":");
-						for (const vl of valLines) {
-							lines.push(`${pad}${vl}`);
+						const valIsBlockMap =
+							valNode instanceof YamlMap &&
+							valNode.items.length > 0 &&
+							(ctx.forceDefaultStyles ? ctx.defaultCollectionStyle : (valNode.style ?? ctx.defaultCollectionStyle)) ===
+								"block";
+						if (valIsBlockMap) {
+							// Block mapping value — compact notation: first pair on the
+							// colon line, remaining pairs indented to align with it.
+							lines.push(`: ${first}`);
+							for (let v = 1; v < valLines.length; v++) {
+								lines.push(`${pad}${valLines[v]}`);
+							}
+						} else {
+							lines.push(":");
+							for (const vl of valLines) {
+								lines.push(`${pad}${vl}`);
+							}
 						}
 					}
 				}

@@ -413,17 +413,27 @@ into per-category issues (#15, #16).
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | **Resolved** (0 remaining XFAIL "accepts invalid") |
 
-Current compliance: 2397/2424 raw assertions passing (98.89%),
-filtered compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison
-failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries (all
-canonical-output mismatches). Use `pnpm run test:compliance-raw` to
-see unfiltered results.
+Current compliance: 19 failing canonical-output tests of 1226 raw
+assertions (98.45%, up from 98.20% earlier on this branch). Filtered
+compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison failures,
+0 roundtrip failures, 19 SKIP_ASSERTIONS entries (all canonical-output
+mismatches). Use `pnpm run test:compliance-raw` to see unfiltered
+results.
 
 Remaining canonical-output gaps cluster into a few categories:
 
-- **Explicit `?` syntax for complex keys** (5WE3, 6SLA, M5DY, Q9WF, X38W) --
-  emitting `? key\n: value` for non-scalar or multi-line keys in canonical
-  block form.
+- **Explicit `?` syntax for complex keys** (M5DY, KK5P, M2N8) --
+  emitting `? key\n: value` for the remaining non-scalar or
+  multi-line key shapes in canonical block form. (5WE3, 6SLA, Q9WF,
+  X38W cleared earlier on this branch -- see "Key Compliance
+  Improvements (explicit-key syntax for non-collection keys)"
+  below.) **Note:** A parser fix for the M5DY/KK5P/M2N8 group was
+  attempted and reverted on this branch -- correctly handling these
+  shapes requires explicit-key subtree grouping in
+  `parseBlockMapping` (so `?` and its associated key/value siblings
+  are collected into a structured pair before the composer sees
+  them) rather than the current flat-children approach. Deferred
+  pending that parser refactor.
 - **Multi-document `...` end marker** (KSS4, PUW8) -- emitting the explicit
   document-end marker between or after documents when the source contained
   one.
@@ -820,6 +830,176 @@ Shared helper introduced in this pass:
 
 Files changed in this pass: `src/utils/composer.ts` (+543 / -45)
 and `__test__/utils/yaml-test-suite-skip-map.ts` (XFAIL is now `{}`).
+
+### Key Compliance Improvements (explicit-key syntax for non-collection keys)
+
+The jump from 97.79% to 98.04% raw compliance (+3 newly-passing
+canonical-output tests, plus one stale skip-map entry cleaned up)
+came from extending the canonical stringifier's explicit-key (`? key
+\n: value`) emission to scalar keys whose rendering necessarily spans
+multiple lines, and from switching the value branch under explicit
+keys to compact "first item on the colon line" form.
+
+Cleared canonical-output tests, removed from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **5WE3** (Spec Example 8.17. Explicit Block Mapping Entries) --
+  block-literal scalar key (`|` style) requires `? ...\n: ...`
+  syntax because the key body itself spans multiple lines.
+- **6SLA** (Allowed characters in quoted mapping key) --
+  multi-line double-quoted key value requires explicit-key syntax
+  for the same reason.
+- **Q9WF** (Spec Example 6.12. Separation Spaces) -- flow-map key
+  with a block-map value, where the canonical form requires
+  emitting the first inner pair inline on the `:` line.
+- **X38W** -- already passing in production but still listed in
+  `SKIP_ASSERTIONS`; the entry was removed as cleanup.
+
+Categories of fixes (all in `src/utils/stringify.ts`,
+`stringifyMapNodeLines`):
+
+- **Explicit-key trigger extended to multi-line scalar keys** -- the
+  `? key\n: value` syntax previously fired only when the key was a
+  `YamlMap` or `YamlSeq` (non-scalar collection key). It now also
+  fires when the key is a `YamlScalar` whose rendering spans multiple
+  lines, detected via the new `keyIsScalarWithNewline` predicate
+  (`YamlScalar` whose `value` contains `\n`, OR whose `style` is
+  `block-literal` / `block-folded`). Resolves 5WE3 (block-literal
+  scalar key) and 6SLA (multi-line double-quoted key value).
+- **No continuation pad for block-style scalar keys** -- new
+  `keyIsBlockScalar` check suppresses the continuation-line `pad`
+  (the spaces that normally indent continuation lines under `?`)
+  for keys whose style is `block-literal` or `block-folded`. The
+  block-scalar renderer already bakes its own indent into the
+  rendered continuation lines (e.g. `|\n  block key`), so adding
+  `pad` would double-indent them.
+- **Compact value placement under explicit keys** -- the explicit-key
+  value branch now emits compact "first item on the colon line"
+  notation (`: <first>\n  <continuation>`) when the value is a
+  non-empty block sequence or block mapping, matching the libyaml
+  canonical form. Previously emitted `:\n  <items...>`. The
+  block-map-value compact form is new (no equivalent existed in
+  the simple-key branch); the block-seq compact handling already
+  existed for non-explicit-key cases and is now mirrored in the
+  explicit-key branch. Resolves the block-map-value compact form
+  needed by Q9WF.
+
+The skip-map header comment in
+`__test__/utils/yaml-test-suite-skip-map.ts` was updated to record
+this pass.
+
+### Key Compliance Improvements (libyaml block-folded indent + root block-scalar tab)
+
+The jump from 98.04% to 98.20% raw compliance (22 failing
+canonical-output tests of 1226 assertions, down from 24) came from
+two narrowly-scoped fixes that align our canonical output with
+libyaml's emitter behavior. Cleared canonical-output tests, removed
+from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **R4YG** (Spec Example 8.2. Block Indentation Indicator)
+- **T5N4**
+
+Categories of fixes:
+
+- **Explicit indent indicator for block-folded with multiple leading
+  empties** (`src/utils/stringify.ts`, `renderBlockFolded`). The
+  `>` renderer now emits an explicit indent indicator (`>2`, etc.)
+  when the value starts with two or more empty lines and has actual
+  content, mirroring the existing rule in `renderBlockLiteral`. A
+  single leading blank line still parses unambiguously via the next
+  non-empty content line, but two or more leading blanks introduce
+  enough ambiguity that libyaml's canonical form requires the
+  indicator. The threshold is intentionally 2+ rather than 1+
+  because folded scalars have stricter auto-detect semantics than
+  literal scalars. Resolves R4YG ("Spec Example 8.2. Block
+  Indentation Indicator"). Companion fixture 7T8X (single leading
+  blank) was unaffected because the rule fires only at 2+.
+- **Root block-scalar with `\n\t` body re-rendered as double-quoted**
+  (`__test__/utils/canonical.ts`, `applySingleDocCanonical`). The
+  post-processor now detects a multi-line block-scalar root whose
+  content contains `\n\t` (newline immediately followed by tab)
+  and re-renders it as a single-line double-quoted scalar with no
+  `---` prefix. libyaml's canonical emitter conservatively avoids
+  block form here because the tab-versus-indent visual is ambiguous
+  when the body would have to render the tab on a continuation
+  line. The companion fixture M9B4 has the SAME value
+  (`"literal\n\ttext\n"`) but no document-start marker in the
+  source -- its expected output keeps the block-literal form, so
+  the rule is specific to the document-start position. Resolves
+  T5N4. The post-processor is the right place because it is a
+  libyaml-specific stylistic preference, not a correctness rule,
+  and it should not leak into the library proper.
+
+### Key Compliance Improvements (lexer flow-collection-end, flow-comma flush, same-line null-value guard)
+
+The jump from 98.20% to 98.45% raw compliance (19 failing
+canonical-output tests of 1226 assertions, down from 22) came from
+three narrowly-scoped fixes -- one in the lexer, two in the composer
+-- that resolved long-standing parse-correctness gaps without
+disturbing any other test. Cleared canonical-output tests, removed
+from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **9MMW** -- adjacent-value indicator after a flow collection end
+  (`{...}:`, `[...]:`).
+- **WZ62** -- tag/anchor on a flow-mapping value followed by a
+  comma followed by a tag/anchor on the next key.
+- **6M2F** -- pending tag/anchor attaching to the wrong null value
+  when the trailing `:` is on a different line than the scalar.
+
+Categories of fixes:
+
+- **9MMW: lexer flow-collection-end as adjacent-value position**
+  (`src/utils/lexer.ts`). Added a new `afterFlowCollectionEnd` flag
+  mirroring the existing `afterQuotedScalar` flag. The flag is set
+  when a `flow-map-end` (`}`) or `flow-seq-end` (`]`) token is
+  emitted, preserved across whitespace / newlines / comments in
+  flow context, and reset on the next content character. In the
+  `:` value-indicator branch, the flag is read as `prevWasFlowEnd`
+  and combined with the existing `flowDepth > 0` guard so that a
+  `:` immediately after a flow-collection-end is recognized as a
+  value indicator. This matches YAML 1.2 §7.18 (flow-map adjacent
+  value), allowing `[ {JSON: like}:adjacent ]` to parse as a
+  flow-seq containing a single implicit-map pair where the flow-map
+  is the key. Without the flag, the `:` was lexed as part of the
+  next plain scalar and the construct was rejected.
+- **WZ62: composer flow-comma flush of pending tag/anchor**
+  (`src/utils/composer.ts`, `flattenFlowChildren`). The `,`
+  separator in flow content was previously skipped via a silent
+  `if (child.source === ",") continue;` early-out. The flatten
+  loop now checks `pendingMeta` at comma boundaries and, if a tag
+  or anchor is pending, flushes it as an empty scalar **before**
+  consuming the comma. This prevents tag/anchor bleed-over across
+  flow items: in `{foo: !!str, !!str: bar}`, the first `!!str`
+  is the value of `foo` and the second `!!str` is the (empty) key
+  of the second pair. Previously, the second tag overwrote the
+  first in `pendingMeta` (since the comma did not consume it), and
+  one of the two tagged nodes lost its meta entirely.
+- **6M2F: composer same-line guard on null-value flush**
+  (`src/utils/composer.ts`, `flattenBlockMapChildren`). The
+  flush-to-null heuristic at the scalar branch (around the
+  `afterValueSep && hasValueSepAfterInList(children, i + 1)`
+  guard) was firing whenever any future `:` existed in the
+  children list, even one belonging to a different pair on a
+  later line. The guard now also requires the trailing `:` to
+  be on the **same line** as the scalar, using `lineCol` to
+  compare line numbers. This preserves the original target case
+  `a: &anchor\nb:` (where `&anchor` legitimately attaches to
+  `a`'s null value because `b` is a new key on its own line and
+  the `:` after `b` is on the same line as `b`) while suppressing
+  the misfire for shapes like `? a\n: &b b\n: *a` (where `b` is
+  the current pair's value and the second `:` belongs to a NEW
+  pair on a different line).
+
+In addition, an attempted parser fix for the M5DY/KK5P/M2N8 group
+("explicit `?` keys with collection bodies") was investigated on
+this branch and reverted -- the shape requires explicit-key
+subtree grouping in `parseBlockMapping` (so the parser collects
+`?`, key, `:`, value into a structured pair before the composer
+sees them) rather than the current flat-children traversal. That
+group is deferred to a future parser refactor pass; see "Open
+Compliance Gaps" above.
 
 ### Dual Block Scalar Decoders
 
