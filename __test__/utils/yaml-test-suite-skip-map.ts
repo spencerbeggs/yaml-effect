@@ -30,6 +30,13 @@
  *          tag/anchor on `,` separator so it doesn't bleed into the next item (WZ62),
  *          composer flush-to-null only fires when the trailing `:` is on the same
  *          line as the scalar (6M2F).
+ * Updated: stringifier canonical-mode fixes — applySingleDocCanonical drops `--- `
+ *          for single-line single-quoted scalar root whose content starts with
+ *          `---` (EXG3); stringifyDocument emits `...` terminator after an anchored
+ *          plain scalar root with explicit `---` so the anchor binds to a definite
+ *          node identity (KSS4 doc 2). Remaining 17 canonical-output gaps need
+ *          AST source-text capture or a libyaml-faithful canonical emitter — see
+ *          .claude/design/yaml-effect/canonical-output-gaps.md.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -53,11 +60,9 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"6WLZ": ["output"],
 	"9MQT/00": ["output"],
 	B3HG: ["output"],
-	EXG3: ["output"],
 	K54U: ["output"],
 	K858: ["output"],
 	KK5P: ["output"],
-	KSS4: ["output"],
 	"M2N8/00": ["output"],
 	"M2N8/01": ["output"],
 	M5DY: ["output"],

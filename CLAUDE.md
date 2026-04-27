@@ -40,6 +40,11 @@ that area.
 - @.claude/design/yaml-effect/compliance-testing.md — yaml-test-suite
   integration, skip maps, badge pipeline. Load when working on compliance
   tests or fixing spec conformance issues.
+- @.claude/design/yaml-effect/canonical-output-gaps.md — remaining 17
+  canonical-output failures, parser refactor scope, and the structural
+  choice between AST source-text capture and a libyaml-faithful
+  canonical emitter. Load before attempting further canonical-output
+  fixes — explains why piecemeal rules don't generalise.
 
 ## Build Pipeline
 

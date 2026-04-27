@@ -191,11 +191,20 @@ reads style metadata from each AST node:
   used instead
 - **Document end**: `...\n` is emitted when `doc.hasDocumentEnd` is
   true. In canonical mode (`forceDefaultStyles`), the terminator is
-  also emitted automatically when `endsWithKeepChomp(result)` reports
-  that the rendered body ends with an open-ended block scalar (`|+` or
-  `>+`). Without the explicit `...`, the reader has no way to know
-  where the open-ended scalar ends, since keep-chomp consumes any
-  trailing blank lines up to the next document marker.
+  also emitted automatically in two additional cases:
+  - When `endsWithKeepChomp(result)` reports that the rendered body
+    ends with an open-ended block scalar (`|+` or `>+`). Without the
+    explicit `...`, the reader has no way to know where the open-ended
+    scalar ends, since keep-chomp consumes any trailing blank lines up
+    to the next document marker.
+  - When the root is an anchored plain scalar with explicit `---` --
+    detected via `doc.hasDocumentStart`, `contents instanceof
+    YamlScalar`, `style === "plain"`, `anchor !== undefined`, and no
+    `tag`. The `...` binds the anchor to a definite node identity so
+    trailing content cannot be absorbed into the scalar value.
+    Resolves KSS4 doc 2 on `feat/final-issues`. See
+    [canonical-output-gaps.md](./canonical-output-gaps.md) for the
+    structural reasons broader rules in this area do not generalise.
 - **Chomp**: `node.chomp` is threaded through `renderString` to
   `renderBlockLiteral` so that `|+` / `|-` headers round-trip
   correctly even when the resolved value alone cannot disambiguate

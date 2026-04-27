@@ -1525,11 +1525,22 @@ export function stringifyDocument(
 			const result = stringifyNodeLines(contents, ctx).join("\n");
 			const body = opts.finalNewline ? `${result}\n` : result;
 
-			// In canonical mode, an explicit `...` end marker is required when the
-			// final emitted scalar uses keep-chomp (`|+` or `>+`) — without it the
-			// reader cannot tell where the open-ended block scalar ends.
+			// In canonical mode, an explicit `...` end marker is required when:
+			// - The final emitted scalar uses keep-chomp (`|+` or `>+`) — without it
+			//   the reader cannot tell where the open-ended block scalar ends.
+			// - The root is an anchored plain scalar with explicit `---` — `...`
+			//   binds the anchor to a definite node identity so trailing content
+			//   isn't absorbed into the scalar value.
 			const needsTerminatorForKeepChomp = ctx.forceDefaultStyles && endsWithKeepChomp(result);
-			const docEnd = doc.hasDocumentEnd || needsTerminatorForKeepChomp ? "...\n" : "";
+			const needsTerminatorForAnchoredPlainScalar =
+				ctx.forceDefaultStyles &&
+				doc.hasDocumentStart &&
+				contents instanceof YamlScalar &&
+				contents.style === "plain" &&
+				contents.anchor !== undefined &&
+				!contents.tag;
+			const docEnd =
+				doc.hasDocumentEnd || needsTerminatorForKeepChomp || needsTerminatorForAnchoredPlainScalar ? "...\n" : "";
 
 			if (doc.hasDocumentStart) {
 				const rootTag = contents && "tag" in contents ? contents.tag : undefined;
