@@ -135,6 +135,21 @@ function getScalarStyle(node: CstNode): ScalarStyle {
 	return "plain";
 }
 
+/**
+ * Extracts the chomp indicator from a block scalar's header.
+ * Returns "strip" for `-`, "keep" for `+`, "clip" otherwise (default).
+ * Returns undefined for non-block scalars.
+ */
+function getBlockChomp(node: CstNode): "strip" | "clip" | "keep" | undefined {
+	if (node.type !== "block-scalar") return undefined;
+	const src = node.source.trimStart();
+	const headerEnd = src.indexOf("\n");
+	const header = headerEnd === -1 ? src : src.slice(0, headerEnd);
+	if (header.includes("+")) return "keep";
+	if (header.includes("-")) return "strip";
+	return "clip";
+}
+
 function getScalarValue(node: CstNode, fullText?: string): string {
 	if (node.type === "block-scalar") return decodeBlockScalar(node.source, fullText, node.offset);
 	const style = getScalarStyle(node);
@@ -1071,6 +1086,13 @@ function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSc
 	const style = getScalarStyle(cst);
 	const rawValue = getScalarValue(cst, state.text);
 	const value = resolveScalar(rawValue, style, meta?.tag, state);
+	const chomp = getBlockChomp(cst);
+	// Preserve the source representation when the resolved value is non-string
+	// (number/bool/null) and the source form is not the canonical JS output —
+	// e.g. `0xFFEEBB` resolves to 16772795 but should round-trip as hex,
+	// `450.00` resolves to 450 but should keep the trailing zeros.
+	const needsRaw =
+		style === "plain" && typeof value !== "string" && value !== undefined && shouldPreserveRaw(rawValue, value);
 	const scalar = new YamlScalar({
 		value,
 		style,
@@ -1079,9 +1101,29 @@ function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSc
 		...(meta?.tag !== undefined ? { tag: meta.tag } : {}),
 		...(meta?.anchor !== undefined ? { anchor: meta.anchor } : {}),
 		...(meta?.comment !== undefined ? { comment: meta.comment } : {}),
+		...(chomp !== undefined ? { chomp } : {}),
+		...(needsRaw ? { raw: rawValue } : {}),
 	});
 	if (meta?.anchor) registerAnchor(scalar, meta.anchor, state, cst.offset);
 	return scalar;
+}
+
+/**
+ * Returns true when the scalar's source representation should be preserved
+ * for canonical round-trip — i.e. the source form differs from `String(value)`
+ * but resolves to the same value.
+ *
+ * Special-float values (NaN, +/-Infinity) are excluded: their canonical YAML
+ * spelling is the lowercase `.inf` / `.nan` form per spec §10.3, so source
+ * variants like `.INF` or `.NaN` should normalize on round-trip rather than
+ * preserve.
+ */
+function shouldPreserveRaw(rawValue: string, value: unknown): boolean {
+	if (typeof value === "number") {
+		if (Number.isNaN(value) || !Number.isFinite(value)) return false;
+		return rawValue !== String(value);
+	}
+	return false;
 }
 
 /**
@@ -1660,6 +1702,7 @@ function flattenBlockMapChildren(
 				);
 				const plainMeta = combinedPending();
 				const resolved = resolveScalar(value, "plain", plainMeta.tag, state);
+				const needsRaw = typeof resolved !== "string" && resolved !== undefined && shouldPreserveRaw(value, resolved);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
@@ -1667,6 +1710,7 @@ function flattenBlockMapChildren(
 					length: child.length,
 					...(plainMeta.tag !== undefined ? { tag: plainMeta.tag } : {}),
 					...(plainMeta.anchor !== undefined ? { anchor: plainMeta.anchor } : {}),
+					...(needsRaw ? { raw: value } : {}),
 				});
 				if (plainMeta.anchor) registerAnchor(scalar, plainMeta.anchor, state, child.offset);
 				resetAllMeta();
@@ -2364,11 +2408,20 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	const items: YamlNode[] = [];
 	let pendingMeta: NodeMeta = {};
 	let sawEntry = false;
+	// Track whether a newline appeared between the most-recent pending tag/anchor
+	// and the upcoming content. When true, the meta belongs to the resulting
+	// collection (outer scope), not to the first key/scalar within it. This
+	// mirrors the outer/inner meta split in flattenBlockMapChildren.
+	let sawNewlineSincePending = false;
 
 	for (let ci = 0; ci < children.length; ci++) {
 		const child = children[ci];
 		if (!child) continue;
-		if (child.type === "newline" || child.type === "comment") continue;
+		if (child.type === "newline") {
+			if (hasMeta(pendingMeta)) sawNewlineSincePending = true;
+			continue;
+		}
+		if (child.type === "comment") continue;
 		if (child.type === "whitespace") {
 			// "-" is the sequence entry indicator
 			if (child.source.trim() === "-") {
@@ -2420,9 +2473,20 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			const nextSig = findNextSignificantChild(children, ci + 1, true);
 			const nextSigChild = nextSig !== null ? children[nextSig] : undefined;
 			if (nextSig !== null && nextSigChild && nextSigChild.type === "block-map") {
-				const keyScalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-				const map = composeBlockMap(nextSigChild, state, keyScalar, undefined);
+				// When pending meta is separated from the implicit-map's first key
+				// by a newline, the meta applies to the OUTER collection (the map),
+				// not to the inner key. Example: `- !!map\n  key: value` — `!!map`
+				// tags the map, while `key` keeps no meta.
+				let keyMeta: NodeMeta | undefined = hasMeta(pendingMeta) ? pendingMeta : undefined;
+				let mapMeta: NodeMeta | undefined;
+				if (sawNewlineSincePending && hasMeta(pendingMeta)) {
+					mapMeta = pendingMeta;
+					keyMeta = undefined;
+				}
+				const keyScalar = makeScalar(child, state, keyMeta);
+				const map = composeBlockMap(nextSigChild, state, keyScalar, mapMeta);
 				pendingMeta = {};
+				sawNewlineSincePending = false;
 				sawEntry = false;
 				items.push(map);
 				ci = nextSig;
@@ -2457,6 +2521,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			}
 			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawNewlineSincePending = false;
 			sawEntry = false;
 			items.push(scalar);
 			continue;
@@ -2465,6 +2530,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			checkAnchorOnAlias(pendingMeta, child, state);
 			const alias = makeAlias(child, state);
 			pendingMeta = {};
+			sawNewlineSincePending = false;
 			sawEntry = false;
 			items.push(alias);
 			continue;
@@ -2484,6 +2550,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 				});
 				if (pendingMeta.anchor) registerAnchor(emptyKey, pendingMeta.anchor, state, child.offset);
 				pendingMeta = {};
+				sawNewlineSincePending = false;
 				const map = composeBlockMap(child, state, emptyKey, undefined);
 				sawEntry = false;
 				items.push(map);
@@ -2491,6 +2558,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			}
 			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawNewlineSincePending = false;
 			sawEntry = false;
 			items.push(map);
 			continue;
@@ -2498,6 +2566,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 		if (child.type === "block-seq") {
 			const seq = composeBlockSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
+			sawNewlineSincePending = false;
 			sawEntry = false;
 			items.push(seq);
 			continue;
@@ -3011,6 +3080,21 @@ function composeDocument(
 
 	let i = 0;
 	const meta: NodeMeta = {};
+	// Track meta carried across a newline. When the doc-level processor sees
+	// `&a !!t1\n&b !!t2 key: ...`, the first meta belongs to the outer container
+	// (root map) and the second to the inner first key. Without this split, the
+	// later meta would silently overwrite the earlier one.
+	const outerMeta: NodeMeta = {};
+	let sawNewlineSinceMeta = false;
+	const commitMetaAcrossNewline = () => {
+		if (sawNewlineSinceMeta && hasMeta(meta)) {
+			if (meta.tag !== undefined) outerMeta.tag = meta.tag;
+			if (meta.anchor !== undefined) outerMeta.anchor = meta.anchor;
+			if (meta.comment !== undefined) outerMeta.comment = meta.comment;
+			clearMeta(meta);
+		}
+		sawNewlineSinceMeta = false;
+	};
 
 	while (i < children.length) {
 		const child = children[i];
@@ -3038,6 +3122,9 @@ function composeDocument(
 		}
 
 		// Trivia
+		if (child.type === "newline" && hasMeta(meta)) {
+			sawNewlineSinceMeta = true;
+		}
 		if (child.type === "whitespace" || child.type === "newline") {
 			// Detect stray flow-closing brackets at document level
 			if (child.type === "whitespace" && (child.source === "]" || child.source === "}")) {
@@ -3081,13 +3168,16 @@ function composeDocument(
 			continue;
 		}
 
-		// Anchor/tag metadata
+		// Anchor/tag metadata. When a newline preceded the new meta and meta was
+		// already set, the existing meta belongs to the outer container.
 		if (child.type === "anchor") {
+			commitMetaAcrossNewline();
 			meta.anchor = getAnchorName(child, state.text);
 			i++;
 			continue;
 		}
 		if (child.type === "tag") {
+			commitMetaAcrossNewline();
 			meta.tag = child.source;
 			i++;
 			continue;
@@ -3097,49 +3187,71 @@ function composeDocument(
 			// Check if next meaningful child is a block-map (this scalar is a key)
 			const nextContent = findNextContentChild(children, i + 1);
 			if (nextContent && nextContent.type === "block-map") {
-				// When metadata (tag/anchor) appears after a document-start marker (---),
-				// it applies to the root mapping node. Otherwise, it applies to the key.
-				if (hasDocStart && hasMeta(meta)) {
-					const mapMeta = { ...meta };
-					const key = makeScalar(child, state);
-					clearMeta(meta);
-					contents = composeBlockMap(nextContent, state, key, mapMeta);
+				// Resolve which meta attaches to the root map vs. the first key.
+				// - If outer meta exists (collected across a newline), it belongs to
+				//   the map. The current `meta` belongs to the key.
+				// - Otherwise, with `hasDocStart`, the current meta is map-level
+				//   (preserves prior behavior — no key-level metadata possible).
+				// - Otherwise, the current meta belongs to the key.
+				let mapMeta: NodeMeta | undefined;
+				let keyMeta: NodeMeta | undefined;
+				if (hasMeta(outerMeta)) {
+					mapMeta = { ...outerMeta };
+					keyMeta = hasMeta(meta) ? { ...meta } : undefined;
+				} else if (hasDocStart && hasMeta(meta)) {
+					mapMeta = { ...meta };
+					keyMeta = undefined;
 				} else {
-					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-					clearMeta(meta);
-					contents = composeBlockMap(nextContent, state, key);
+					keyMeta = hasMeta(meta) ? { ...meta } : undefined;
 				}
+				const key = makeScalar(child, state, keyMeta);
+				clearMeta(meta);
+				clearMeta(outerMeta);
+				sawNewlineSinceMeta = false;
+				contents = composeBlockMap(nextContent, state, key, mapMeta);
 				i = indexOfChild(children, nextContent) + 1;
 				continue;
 			}
 			// Check if followed by ":" (value-sep) — flat mapping without block-map wrapper
 			if (hasValueSepAfter(children, i + 1)) {
-				if (hasDocStart && hasMeta(meta)) {
-					const mapMeta = { ...meta };
-					const key = makeScalar(child, state);
-					clearMeta(meta);
-					contents = composeFlatBlockMap(children, i + 1, cst, state, key, mapMeta);
+				let mapMeta: NodeMeta | undefined;
+				let keyMeta: NodeMeta | undefined;
+				if (hasMeta(outerMeta)) {
+					mapMeta = { ...outerMeta };
+					keyMeta = hasMeta(meta) ? { ...meta } : undefined;
+				} else if (hasDocStart && hasMeta(meta)) {
+					mapMeta = { ...meta };
+					keyMeta = undefined;
 				} else {
-					const key = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
-					clearMeta(meta);
-					contents = composeFlatBlockMap(children, i + 1, cst, state, key);
+					keyMeta = hasMeta(meta) ? { ...meta } : undefined;
 				}
+				const key = makeScalar(child, state, keyMeta);
+				clearMeta(meta);
+				clearMeta(outerMeta);
+				sawNewlineSinceMeta = false;
+				contents = composeFlatBlockMap(children, i + 1, cst, state, key, mapMeta);
 				break; // consumed all remaining children
 			}
 			// Standalone scalar — try multi-line plain scalar merging
 			if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 				const { value, nextIdx, partsCount } = collectMultilinePlainScalar(children, i, undefined, state.text);
-				const resolved = resolveScalar(value, "plain", meta.tag, state);
+				// Combine outer + inner meta — for a scalar root, both apply to it.
+				const combined: NodeMeta = { ...outerMeta };
+				if (meta.tag !== undefined) combined.tag = meta.tag;
+				if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+				const resolved = resolveScalar(value, "plain", combined.tag, state);
 				contents = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
 					offset: child.offset,
 					length: child.length,
-					...(meta.tag !== undefined ? { tag: meta.tag } : {}),
-					...(meta.anchor !== undefined ? { anchor: meta.anchor } : {}),
+					...(combined.tag !== undefined ? { tag: combined.tag } : {}),
+					...(combined.anchor !== undefined ? { anchor: combined.anchor } : {}),
 				});
-				if (meta.anchor) registerAnchor(contents, meta.anchor, state, child.offset);
+				if (combined.anchor) registerAnchor(contents, combined.anchor, state, child.offset);
 				clearMeta(meta);
+				clearMeta(outerMeta);
+				sawNewlineSinceMeta = false;
 				// If the multiline scalar merged multiple parts and the remaining
 				// content forms a mapping, that mapping is trailing garbage (2CMS).
 				if (partsCount > 1) {
@@ -3167,23 +3279,41 @@ function composeDocument(
 				i = nextIdx;
 				continue;
 			}
-			contents = makeScalar(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			// Combine outer + inner meta for scalar root.
+			const combined: NodeMeta = { ...outerMeta };
+			if (meta.tag !== undefined) combined.tag = meta.tag;
+			if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+			contents = makeScalar(child, state, hasMeta(combined) ? combined : undefined);
 			clearMeta(meta);
+			clearMeta(outerMeta);
+			sawNewlineSinceMeta = false;
 			i++;
 			continue;
 		}
 
 		if (child.type === "block-map") {
-			contents = composeBlockMap(child, state, undefined, hasMeta(meta) ? { ...meta } : undefined);
+			// Outer meta belongs to the map; remaining `meta` would belong to the
+			// first key inside, but block-map's own children carry that context.
+			const combined: NodeMeta = { ...outerMeta };
+			if (meta.tag !== undefined) combined.tag = meta.tag;
+			if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+			contents = composeBlockMap(child, state, undefined, hasMeta(combined) ? combined : undefined);
 			clearMeta(meta);
+			clearMeta(outerMeta);
+			sawNewlineSinceMeta = false;
 			i++;
 			continue;
 		}
 
 		if (child.type === "block-seq") {
 			const isRootSeq = contents === null;
-			contents = composeBlockSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			const combined: NodeMeta = { ...outerMeta };
+			if (meta.tag !== undefined) combined.tag = meta.tag;
+			if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+			contents = composeBlockSeq(child, state, hasMeta(combined) ? combined : undefined);
 			clearMeta(meta);
+			clearMeta(outerMeta);
+			sawNewlineSinceMeta = false;
 			i++;
 			// Only check for trailing content when the block-seq is the root document
 			// value (BD7L, TD5N). When it's a value inside a mapping (57H4), the
@@ -3195,16 +3325,28 @@ function composeDocument(
 		}
 
 		if (child.type === "flow-map") {
-			const flowMap = composeFlowMap(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			const nextAfterFlowMap0 = findNextContentChild(children, i + 1);
+			const flowIsKey = !!nextAfterFlowMap0 && nextAfterFlowMap0.type === "block-map";
+			let flowMeta: NodeMeta | undefined;
+			let mapMeta: NodeMeta | undefined;
+			if (flowIsKey && hasMeta(outerMeta)) {
+				mapMeta = { ...outerMeta };
+				flowMeta = hasMeta(meta) ? { ...meta } : undefined;
+			} else {
+				const combined: NodeMeta = { ...outerMeta };
+				if (meta.tag !== undefined) combined.tag = meta.tag;
+				if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+				flowMeta = hasMeta(combined) ? combined : undefined;
+			}
+			const flowMap = composeFlowMap(child, state, flowMeta);
 			clearMeta(meta);
+			clearMeta(outerMeta);
+			sawNewlineSinceMeta = false;
 			i++;
-			// Check if flow collection is a mapping key (followed by block-map with ":")
-			const nextAfterFlowMap = findNextContentChild(children, i);
-			if (nextAfterFlowMap && nextAfterFlowMap.type === "block-map") {
-				// Flow map is a key — compose the block-map with this as the first key
-				const map = composeBlockMap(nextAfterFlowMap, state, flowMap);
+			if (flowIsKey && nextAfterFlowMap0) {
+				const map = composeBlockMap(nextAfterFlowMap0, state, flowMap, mapMeta);
 				contents = map;
-				while (i < children.length && children[i] !== nextAfterFlowMap) i++;
+				while (i < children.length && children[i] !== nextAfterFlowMap0) i++;
 				i++;
 			} else {
 				contents = flowMap;
@@ -3214,14 +3356,29 @@ function composeDocument(
 		}
 
 		if (child.type === "flow-seq") {
-			const flowSeq = composeFlowSeq(child, state, hasMeta(meta) ? { ...meta } : undefined);
+			const nextAfterFlowSeq0 = findNextContentChild(children, i + 1);
+			const flowIsKey = !!nextAfterFlowSeq0 && nextAfterFlowSeq0.type === "block-map";
+			let flowMeta: NodeMeta | undefined;
+			let mapMeta: NodeMeta | undefined;
+			if (flowIsKey && hasMeta(outerMeta)) {
+				mapMeta = { ...outerMeta };
+				flowMeta = hasMeta(meta) ? { ...meta } : undefined;
+			} else {
+				const combined: NodeMeta = { ...outerMeta };
+				if (meta.tag !== undefined) combined.tag = meta.tag;
+				if (meta.anchor !== undefined) combined.anchor = meta.anchor;
+				flowMeta = hasMeta(combined) ? combined : undefined;
+			}
+			const flowSeq = composeFlowSeq(child, state, flowMeta);
 			clearMeta(meta);
+			clearMeta(outerMeta);
+			sawNewlineSinceMeta = false;
 			i++;
 			// Check if flow collection is a mapping key (followed by block-map with ":")
 			const nextAfterFlowSeq = findNextContentChild(children, i);
 			if (nextAfterFlowSeq && nextAfterFlowSeq.type === "block-map") {
 				// Flow seq is a key — compose the block-map with this as the first key
-				const map = composeBlockMap(nextAfterFlowSeq, state, flowSeq);
+				const map = composeBlockMap(nextAfterFlowSeq, state, flowSeq, mapMeta);
 				contents = map;
 				// Skip past the block-map node
 				while (i < children.length && children[i] !== nextAfterFlowSeq) i++;

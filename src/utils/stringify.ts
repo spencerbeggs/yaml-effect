@@ -305,11 +305,21 @@ function renderSingleQuotedMultiline(s: string, indent: string): string | null {
 
 /**
  * Renders a string scalar using block literal style (pipe `|`).
+ *
+ * @param explicitChomp - Original chomp indicator from the AST, when known.
+ * `keep` (`+`) and `strip` (`-`) preserve trailing-newline semantics that
+ * cannot be inferred from the resolved value alone.
  */
-function renderBlockLiteral(s: string, indent: string): string {
-	// Determine chomp indicator
+function renderBlockLiteral(s: string, indent: string, explicitChomp?: "strip" | "clip" | "keep"): string {
+	// Compute chomp indicator from the value's trailing-newline structure.
+	// `+` (keep) is required when the value retains more than one trailing
+	// newline OR when the value consists solely of newlines (otherwise `|`
+	// with empty content would parse as the empty string, losing the trailing
+	// newline). `-` (strip) is required when the value has no trailing
+	// newline. Default (clip `|`) preserves exactly one trailing newline.
 	let chomp = "";
-	if (s.endsWith("\n\n")) {
+	const onlyNewlines = s.length > 0 && /^\n+$/.test(s);
+	if (s.endsWith("\n\n") || (onlyNewlines && explicitChomp === "keep")) {
 		chomp = "+";
 	} else if (!s.endsWith("\n")) {
 		chomp = "-";
@@ -321,10 +331,14 @@ function renderBlockLiteral(s: string, indent: string): string {
 	}
 	// Explicit indent indicator needed when:
 	// - First content line starts with space (reader would misdetect indent)
-	// - Value starts with empty lines (reader can't auto-detect indent)
+	// - Value starts with empty lines AND has actual content (reader can't
+	//   auto-detect indent from leading blanks).
+	// When there is no content at all (only newlines), the indicator is needed
+	// only for keep-chomp (`|+`) since the trailing blanks form the value and
+	// the reader otherwise has no way to detect block indentation.
 	let indentIndicator = "";
 	const firstContent = lines.find((l) => l !== "");
-	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "")) {
+	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "" && firstContent !== undefined)) {
 		indentIndicator = String(indent.length);
 	}
 	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
@@ -434,7 +448,14 @@ function renderBlockFolded(s: string, indent: string): string {
  * would be ambiguous. Block literal and block folded styles are always
  * accepted for single-line strings even though the output is unusual.
  */
-function renderString(s: string, style: ScalarStyle, indent: string, ignoreType = false, canonical = false): string {
+function renderString(
+	s: string,
+	style: ScalarStyle,
+	indent: string,
+	ignoreType = false,
+	canonical = false,
+	explicitChomp?: "strip" | "clip" | "keep",
+): string {
 	if (s.includes("\n")) {
 		// If the value contains C0 control chars (except tab) or carriage
 		// returns, block styles can't represent them — use double-quoted
@@ -448,8 +469,12 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 		}
 		if (hasControl) return renderDoubleQuoted(s, canonical);
 		// If the value is only spaces and newlines (no text/tab content),
-		// block scalars can't represent it faithfully — use double-quoted
-		if (/^[\n ]*$/.test(s)) return renderDoubleQuoted(s, canonical);
+		// block scalars can't represent it faithfully — use double-quoted.
+		// Exception: when the original style is block-literal with keep-chomp
+		// content (newline-only is a valid `|+` body), preserve block style.
+		if (/^[\n ]*$/.test(s) && style !== "block-literal" && style !== "block-folded") {
+			return renderDoubleQuoted(s, canonical);
+		}
 		// In canonical mode, multi-line block content with trailing whitespace
 		// on an interior line cannot round-trip cleanly — block scalars normalise
 		// such whitespace. Single-line content with only trailing whitespace
@@ -467,7 +492,7 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 			}
 		}
 		// Multi-line: prefer block styles
-		if (style === "block-literal") return renderBlockLiteral(s, indent);
+		if (style === "block-literal") return renderBlockLiteral(s, indent, explicitChomp);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
 		// In canonical mode, prefer single-quoted with fold encoding for plain
 		// and single-quoted multi-line scalars — matches libyaml canonical form.
@@ -476,7 +501,7 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 				const sq = renderSingleQuotedMultiline(s, indent);
 				if (sq !== null) return sq;
 			}
-			return renderBlockLiteral(s, indent);
+			return renderBlockLiteral(s, indent, explicitChomp);
 		}
 		return renderDoubleQuoted(s, canonical);
 	}
@@ -510,10 +535,27 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 		case "double-quoted":
 			return renderDoubleQuoted(s, canonical);
 		case "block-literal":
-			return renderBlockLiteral(s, indent);
+			return renderBlockLiteral(s, indent, explicitChomp);
 		case "block-folded":
 			return renderBlockFolded(s, indent);
 	}
+}
+
+/**
+ * Returns true if the rendered text ends with an open-ended block scalar
+ * (`|+` or `>+` keep-chomp). Such scalars consume any trailing blank lines
+ * up to the next document marker, so an explicit `...` is required for the
+ * reader to know where the value ends.
+ *
+ * Detects the most recent `|` or `>` indicator on a header line (matching
+ * the form `|<digits>?<chomp>?$` after optional indent and node prefixes)
+ * and returns true when the chomp indicator is `+`.
+ */
+function endsWithKeepChomp(rendered: string): boolean {
+	const match = rendered.match(/[|>][1-9]?[+-]?$|[|>][1-9]?[+-]?(?=\n)/g);
+	if (!match) return false;
+	const last = match[match.length - 1];
+	return last.includes("+");
 }
 
 // ---------------------------------------------------------------------------
@@ -850,6 +892,8 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			tag: norm(node.tag),
 			anchor: node.anchor,
 			comment: node.comment,
+			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
+			...(node.raw !== undefined ? { raw: node.raw } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -901,6 +945,8 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			style: node.style,
 			tag: node.tag,
 			anchor: node.anchor,
+			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
+			...(node.raw !== undefined ? { raw: node.raw } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -989,10 +1035,13 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 	} else if (typeof val === "boolean") {
 		lines = [val ? "true" : "false"];
 	} else if (typeof val === "number") {
-		lines = [renderNumber(val)];
+		// Prefer the source representation when available so non-canonical
+		// numeric formats (hex `0xFFEEBB`, trailing zeros `450.00`) survive
+		// the round-trip.
+		lines = [node.raw !== undefined ? node.raw : renderNumber(val)];
 	} else if (typeof val === "string") {
 		// When a tag is present, type-conflict quoting is unnecessary
-		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag, ctx.forceDefaultStyles);
+		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag, ctx.forceDefaultStyles, node.chomp);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
@@ -1052,8 +1101,16 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			const keyLines = stringifyNodeLines(pair.key, ctx);
 			// Emit "? " followed by the key
 			lines.push(`? ${keyLines[0]}`);
+			// When the first key line is just metadata (`&anchor` and/or `!tag`),
+			// the continuation lines are the actual collection content and should
+			// be emitted without an extra indent — they sit at the same level as
+			// `?` (compact form). Otherwise, indent continuation lines normally.
+			const firstTokens = keyLines[0].trim().split(/\s+/).filter(Boolean);
+			const firstIsMetaOnly =
+				firstTokens.length > 0 && firstTokens.every((t) => t.startsWith("&") || t.startsWith("!"));
+			const contPad = firstIsMetaOnly ? "" : pad;
 			for (let k = 1; k < keyLines.length; k++) {
-				lines.push(`${pad}${keyLines[k]}`);
+				lines.push(`${contPad}${keyLines[k]}`);
 			}
 			// Emit ": " followed by the value
 			const valNode = pair.value;
@@ -1433,7 +1490,11 @@ export function stringifyDocument(
 			const result = stringifyNodeLines(contents, ctx).join("\n");
 			const body = opts.finalNewline ? `${result}\n` : result;
 
-			const docEnd = doc.hasDocumentEnd ? "...\n" : "";
+			// In canonical mode, an explicit `...` end marker is required when the
+			// final emitted scalar uses keep-chomp (`|+` or `>+`) — without it the
+			// reader cannot tell where the open-ended block scalar ends.
+			const needsTerminatorForKeepChomp = ctx.forceDefaultStyles && endsWithKeepChomp(result);
+			const docEnd = doc.hasDocumentEnd || needsTerminatorForKeepChomp ? "...\n" : "";
 
 			if (doc.hasDocumentStart) {
 				const rootTag = contents && "tag" in contents ? contents.tag : undefined;
