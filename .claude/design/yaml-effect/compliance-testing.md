@@ -413,32 +413,43 @@ into per-category issues (#15, #16).
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | **Resolved** (0 remaining XFAIL "accepts invalid") |
 
-Current compliance: 19 failing canonical-output tests of 1226 raw
-assertions (98.45%, up from 98.20% earlier on this branch). Filtered
-compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison failures,
-0 roundtrip failures, 19 SKIP_ASSERTIONS entries (all canonical-output
-mismatches). Use `pnpm run test:compliance-raw` to see unfiltered
-results.
+Current compliance: 17 failing canonical-output tests of 1226 raw
+assertions (98.62%, up from 98.45% earlier on this branch and 98.20%
+before that). Filtered compliance has 0 XFAIL and 0 SKIP entries, 0
+JSON comparison failures, 0 roundtrip failures, 17 SKIP_ASSERTIONS
+entries (all canonical-output mismatches). Use
+`pnpm run test:compliance-raw` to see unfiltered results.
 
-Remaining canonical-output gaps cluster into a few categories:
+The remaining 17 canonical-output failures and the structural reasons
+they have not been closed piecemeal are catalogued in
+[canonical-output-gaps.md](./canonical-output-gaps.md). At a high
+level they cluster into:
 
-- **Explicit `?` syntax for complex keys** (M5DY, KK5P, M2N8) --
-  emitting `? key\n: value` for the remaining non-scalar or
-  multi-line key shapes in canonical block form. (5WE3, 6SLA, Q9WF,
-  X38W cleared earlier on this branch -- see "Key Compliance
-  Improvements (explicit-key syntax for non-collection keys)"
-  below.) **Note:** A parser fix for the M5DY/KK5P/M2N8 group was
-  attempted and reverted on this branch -- correctly handling these
-  shapes requires explicit-key subtree grouping in
-  `parseBlockMapping` (so `?` and its associated key/value siblings
-  are collected into a structured pair before the composer sees
-  them) rather than the current flat-children approach. Deferred
-  pending that parser refactor.
-- **Multi-document `...` end marker** (KSS4, PUW8) -- emitting the explicit
-  document-end marker between or after documents when the source contained
-  one.
-- **Empty-value canonical `null` rendering** (4ABK) -- explicit `null`
-  output for absent mapping values in canonical form.
+- **Class A -- Parser shape (4 failures)**: KK5P, M2N8/00, M2N8/01,
+  M5DY. Explicit `?` keys whose key OR value is a block collection.
+  Requires explicit-key subtree grouping in `parseBlockMapping` (the
+  parser collects `?`, key, `:`, value into a structured pair before
+  the composer sees them) rather than the current flat-children
+  approach. A piecemeal fix was attempted on `feat/parser` and
+  reverted; the full refactor scope is documented in
+  canonical-output-gaps.md.
+- **Class B -- Multi-document tag scoping (1 failure)**: 6WLZ.
+  Stringifier needs to expand `!handle!suffix` to verbatim
+  `!<full-tag>` form when the canonical emitter is dropping the
+  per-document `%TAG` directive line (which it does in canonical
+  mode). Estimated 50-100 LoC in `normalizeNodeTags` and
+  `stringifyDocument`.
+- **Class C -- Stringifier canonical quirks (12 failures)**: 2LFX,
+  4ABK, 4WA9, 5T43, 652Z, 9MQT/00, B3HG, K54U, K858, PUW8, VJP3/01,
+  XLQ9. Each looks like it should have a clean rule, but the
+  discriminators libyaml's emitter uses are not visible in our AST
+  (whether the source flow collection spanned multiple lines,
+  whether explicit `:,` vs implicit `,` was used for omitted flow
+  values, whether `---<TAB>scalar` is the source shape, etc.). Every
+  broader rule attempted on `feat/final-issues` fixed 1-2 fixtures
+  and broke 5-15 others. Two structural paths to close these are
+  proposed in canonical-output-gaps.md (capture source-text shape on
+  the AST vs. a libyaml-faithful canonical emitter).
 
 ### Key Compliance Improvements (feat/more-compliance)
 
@@ -1000,6 +1011,52 @@ subtree grouping in `parseBlockMapping` (so the parser collects
 sees them) rather than the current flat-children traversal. That
 group is deferred to a future parser refactor pass; see "Open
 Compliance Gaps" above.
+
+### Key Compliance Improvements (anchored plain scalar terminator + DQ-prefix dropping)
+
+The jump from 98.45% to 98.62% raw compliance (17 failing
+canonical-output tests of 1226 assertions, down from 19) came from
+two narrowly-scoped fixes that survived the "doesn't break other
+tests" threshold by checking explicit AST shape rather than trying
+to generalise. Cleared canonical-output tests, removed from
+`SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **EXG3** -- single-line single-quoted scalar root whose content
+  begins with `---`. Without dropping the leading `---` prefix the
+  canonical reader would parse the literal `---` as a document-start
+  marker.
+- **KSS4** -- anchored plain scalar root with explicit `---`. Without
+  the trailing `...\n` terminator, trailing content can be absorbed
+  into the scalar value and the anchor binds to an indeterminate node
+  identity.
+
+Categories of fixes:
+
+- **EXG3: `applySingleDocCanonical` drops `---` prefix for `---`-
+  starting single-quoted single-line scalar root**
+  (`__test__/utils/canonical.ts`). The post-processor is the right
+  place because this is a libyaml-specific canonical preference (the
+  YAML on the wire is unambiguous either way), not a correctness rule
+  the library proper should enforce.
+- **KSS4: `stringifyDocument` emits `...\n` after anchored plain
+  scalar root with explicit `---`** (`src/utils/stringify.ts`). New
+  branch in the canonical-mode terminator selection: the
+  `needsTerminatorForAnchoredPlainScalar` predicate fires when
+  `forceDefaultStyles && hasDocumentStart && contents instanceof
+  YamlScalar && style === "plain" && anchor !== undefined && !tag`.
+  See [stringify.md](./stringify.md) "AST Metadata Preservation"
+  for the full terminator-emission rules.
+
+Both rules are narrow enough to fire on a tiny pattern, which is why
+they survived where broader candidate rules (force `---` for non-
+scalar root, drop `---` for block-folded with single-line content,
+drop quotes from plain-safe flow keys) each fixed 1-2 fixtures and
+broke 5-15 others. The remaining 17 canonical-output gaps are
+documented as a single design doc rather than additional piecemeal
+rules; see [canonical-output-gaps.md](./canonical-output-gaps.md)
+for the full enumeration and the two proposed structural paths
+(AST source-shape capture vs. libyaml-faithful canonical emitter).
 
 ### Dual Block Scalar Decoders
 

@@ -29,12 +29,14 @@ function renderDoubleQuoted(s: string): string {
 
 /**
  * Apply canonical single-doc conventions: libyaml's canonical emitter
- * differs from a direct `stringifyDocument` in two cases:
+ * differs from a direct `stringifyDocument` in several cases:
  *
  * - The leading `---` is omitted for a single-document stream rooted in a
- *   multi-line quoted scalar (single- or double-quoted). Block scalars and
- *   single-line values retain `---` because the marker is needed for
- *   unambiguous parsing.
+ *   multi-line quoted scalar (single- or double-quoted). Single-line scalars
+ *   keep `---` for unambiguous parsing.
+ * - The leading `---` is also omitted for a single-quoted scalar at root
+ *   whose content begins with `---` (e.g. `'---word1 word2'`); the quoted
+ *   form fully self-delimits, and libyaml does not redundantly emit `---`.
  * - A multi-line block scalar (`|`/`>`) at root whose content contains a
  *   newline followed directly by a tab is re-rendered as a single-line
  *   double-quoted scalar (no `---`). libyaml conservatively avoids block
@@ -47,6 +49,7 @@ export function applySingleDocCanonical(output: string, root: unknown): string {
 	if (!output.startsWith("--- ")) return output;
 	const firstAfter = output[4];
 	const val = root.value;
+
 	// Block scalar at root with `\n\t` content → libyaml emits DQ instead.
 	if (
 		(firstAfter === "|" || firstAfter === ">") &&
@@ -56,6 +59,15 @@ export function applySingleDocCanonical(output: string, root: unknown): string {
 	) {
 		return `${renderDoubleQuoted(val)}\n`;
 	}
+
+	// Single-quoted scalar at root whose content begins with `---`: the quoted
+	// form is unambiguous on its own line, so libyaml drops the redundant
+	// document-start marker. Limited to single-line content because multi-line
+	// quoted scalars are handled by the general multi-line drop below.
+	if (firstAfter === "'" && typeof val === "string" && !val.includes("\n") && val.startsWith("---")) {
+		return output.slice(4);
+	}
+
 	if (typeof val !== "string" || !val.includes("\n")) return output;
 	if (firstAfter !== "'" && firstAfter !== '"') return output;
 	return output.slice(4);
