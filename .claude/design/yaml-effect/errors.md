@@ -172,16 +172,28 @@ class YamlErrorDetail extends Schema.Class("YamlErrorDetail")({
 
 `UndefinedAlias`, `DuplicateAnchor`, `CircularAlias`, `UnresolvedTag`,
 `InvalidTagValue`, `AliasCountExceeded`, `InvalidIndentation`,
-`UnexpectedToken`.
+`UnexpectedToken`, `TabIndentation`.
 
-The composer reuses the `InvalidIndentation` and `UnexpectedToken` codes
-from the parser-error vocabulary for structural-validation errors raised
-during composition (key-column mismatches, block-seq in key position,
-mapping starting on the document-start line). These errors are produced
-by the composer's leniency-validation helpers (see
-[parsing.md](./parsing.md) "Structural Validation in `flattenBlockMapChildren`")
-but are reported on the `YamlComposerError` channel because the composer
-is the layer that detects them.
+The composer reuses `InvalidIndentation`, `UnexpectedToken`, and
+`TabIndentation` from the parser-error vocabulary for
+structural-validation errors raised during composition (key-column
+mismatches, block-seq in key position, mapping starting on the
+document-start line, anchor/tag at parent column under a map value,
+stray block-seq entry on a continuation line, multi-line flow keys,
+quoted-scalar continuation indent below the parent key, double anchors
+on a non-key scalar, anchor before a sequence dash on the same line,
+block-scalar leading empties more indented than the first content
+line, comment between plain scalar lines, and tab after a
+continuation-line value indicator). `UnresolvedTag` is also raised
+by the cross-document tag-handle check when a `!handle!suffix`
+references a `%TAG` directive declared only in a different document
+of the same stream. These errors are produced by the composer's
+leniency-validation helpers (see [parsing.md](./parsing.md)
+"Structural Validation in `flattenBlockMapChildren`" plus the
+companion subsections for flow-content indent, block-scalar
+leading-empties, multi-line implicit keys, and cross-document
+tag-handle validation) but are reported on the `YamlComposerError`
+channel because the composer is the layer that detects them.
 
 ## Error-to-Function Mapping
 

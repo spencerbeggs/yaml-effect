@@ -1116,6 +1116,11 @@ interface NodeMeta {
 
 function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlScalar {
 	const style = getScalarStyle(cst);
+	if (style === "block-literal" || style === "block-folded") {
+		// 5LLU, S98Z, W9L4: leading empty lines in a block scalar must not be
+		// indented beyond the first content line's indent.
+		validateBlockScalarLeadingEmpties(cst, state);
+	}
 	const rawValue = getScalarValue(cst, state.text);
 	const value = resolveScalar(rawValue, style, meta?.tag, state);
 	const chomp = getBlockChomp(cst);
@@ -1310,10 +1315,15 @@ function composeBlockMap(
 	const children = blockMapCst.children ?? [];
 	const pairs: YamlPair[] = [];
 
-	// Phase 1: parse children into a flat stream of semantic items
+	// Phase 1: parse children into a flat stream of semantic items.
+	// The key's "effective column" for indentation purposes is the leftmost
+	// non-whitespace column on the line containing the key — properties (tags,
+	// anchors) before the scalar can shift the actual scalar offset to a
+	// larger column, but the property column is what matters for validating
+	// continuation-line indentation.
 	const extKeyOffset =
 		externalFirstKey && "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : undefined;
-	const extKeyCol = extKeyOffset !== undefined ? lineCol(state.text, extKeyOffset).column : undefined;
+	const extKeyCol = extKeyOffset !== undefined ? lineIndentColumn(state.text, extKeyOffset) : undefined;
 	const items = flattenBlockMapChildren(children, state, extKeyCol, extKeyOffset);
 
 	// If there's an external first key, prepend it
@@ -1493,6 +1503,10 @@ function flattenBlockMapChildren(
 				continue;
 			}
 			if (child.source === ":") {
+				// Y79Y/009: a value-sep `:` on a continuation line followed by a
+				// tab and same-line content is invalid — tabs cannot serve as the
+				// indent for the upcoming key/value content (YAML 1.2 §6.1).
+				validateNoTabAfterContinuationValueSep(child, children, i, state);
 				// Flush pending tag/anchor as empty scalar before value-sep.
 				// Combine outer+pending so any anchors before a newline are also
 				// represented (otherwise outer-context anchors would be lost).
@@ -1535,6 +1549,31 @@ function flattenBlockMapChildren(
 						column: lc.column,
 					}),
 				);
+			} else if (
+				// 4HVU: a stray block-seq entry indicator "-" outside any block-seq
+				// (e.g. after a sibling block-seq value at a different indent) is
+				// malformed. Legitimate "-" indicators are consumed by composeBlockSeq.
+				// Allow "-" after a `?` explicit-key indicator (KK5P: `? - a`),
+				// detected via either pendingExplicitKeyCol being set OR the
+				// preceding non-trivia child being an empty block-seq placeholder
+				// or a `?`-marker block-map (KK5P parser shape for `? - a`).
+				child.source === "-" &&
+				lastValueSepOffset >= 0 &&
+				!sameLine(state.text, lastValueSepOffset, child.offset) &&
+				pendingExplicitKeyCol < 0 &&
+				!precededByExplicitKeyMarker(children, i)
+			) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidIndentation",
+						message: "Block sequence entry indicator outside any sequence",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
 			}
 			continue;
 		}
@@ -1544,6 +1583,11 @@ function flattenBlockMapChildren(
 			continue;
 		}
 		if (child.type === "anchor") {
+			// G9HC, H7J7: anchor/tag in value position on a continuation line
+			// (different line from the `:` indicator) must be at a column
+			// strictly greater than the parent key's column. Per YAML 1.2 §8.1.2,
+			// properties before a block collection must be at indent n+1.
+			validatePropertyContinuationColumn(child, state, afterValueSep, lastValueSepOffset, lastKeyColumn);
 			// If we already have pending meta and a newline was seen since, the
 			// existing pending meta belongs to the outer container (it was on the
 			// same line as the value indicator). Move it to outerMeta so the new
@@ -1553,6 +1597,7 @@ function flattenBlockMapChildren(
 			continue;
 		}
 		if (child.type === "tag") {
+			validatePropertyContinuationColumn(child, state, afterValueSep, lastValueSepOffset, lastKeyColumn);
 			commitOuterIfNewlineSeen();
 			pendingMeta.tag = child.source;
 			continue;
@@ -1561,6 +1606,11 @@ function flattenBlockMapChildren(
 			// Reaching content: if pending meta predates a newline, it belongs to
 			// the outer container, not the upcoming inner content.
 			commitOuterIfNewlineSeen();
+			// 4JVG: a single scalar cannot have two anchor declarations. When
+			// outerMeta and pendingMeta both have anchors AND the scalar is
+			// neither a key nor produces a nested map (no block-map sibling and
+			// no following `:`), both anchors collapse onto the scalar — invalid.
+			validateNoDoubleAnchorOnScalar(child, children, i, outerMeta, pendingMeta, state);
 			// If this scalar is a key (followed by `:` at this level) and there's
 			// pending meta from a previous VALUE position, flush it as a null value.
 			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
@@ -1845,6 +1895,9 @@ function flattenBlockMapChildren(
 
 			if (isValuePosition && (style === "single-quoted" || style === "double-quoted")) {
 				checkTrailingContentOnSameLine(children, i + 1, child, state);
+				// QB6E: multi-line quoted scalar continuation must be indented past
+				// the parent key column.
+				validateQuotedScalarContinuationIndent(child, state, lastKeyColumn);
 			}
 			continue;
 		}
@@ -1934,7 +1987,7 @@ function flattenBlockMapChildren(
 			commitOuterIfNewlineSeen();
 			const isValue = afterValueSep;
 			const flowMapMeta = combinedPending();
-			const map = composeFlowMap(child, state, hasMeta(flowMapMeta) ? flowMapMeta : undefined);
+			const map = composeFlowMap(child, state, hasMeta(flowMapMeta) ? flowMapMeta : undefined, lastKeyColumn);
 			resetAllMeta();
 			pushNode(map);
 			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
@@ -1944,7 +1997,7 @@ function flattenBlockMapChildren(
 			commitOuterIfNewlineSeen();
 			const isValue = afterValueSep;
 			const flowSeqMeta = combinedPending();
-			const seq = composeFlowSeq(child, state, hasMeta(flowSeqMeta) ? flowSeqMeta : undefined);
+			const seq = composeFlowSeq(child, state, hasMeta(flowSeqMeta) ? flowSeqMeta : undefined, lastKeyColumn);
 			resetAllMeta();
 			pushNode(seq);
 			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
@@ -2240,23 +2293,45 @@ function checkMultilineImplicitKeys(
 	// CST spans and explicit keys (?) are allowed to be multiline.
 	for (const pair of pairs) {
 		const key = pair.key;
-		if (key._tag !== "YamlScalar") continue;
 		if (key.length === 0) continue; // synthetic null key
-		const s = key.style;
-		if (s !== "single-quoted" && s !== "double-quoted") continue;
-		const keySource = state.text.slice(key.offset, key.offset + key.length);
-		if (keySource.includes("\n") || keySource.includes("\r")) {
-			const lc = lineCol(state.text, key.offset);
-			state.errors.push(
-				new YamlErrorDetail({
-					code: "UnexpectedToken",
-					message: "Implicit mapping key must not span multiple lines",
-					offset: key.offset,
-					length: key.length,
-					line: lc.line,
-					column: lc.column,
-				}),
-			);
+		// Quoted scalars: check the source span for newlines.
+		if (key._tag === "YamlScalar") {
+			const s = key.style;
+			if (s !== "single-quoted" && s !== "double-quoted") continue;
+			const keySource = state.text.slice(key.offset, key.offset + key.length);
+			if (keySource.includes("\n") || keySource.includes("\r")) {
+				const lc = lineCol(state.text, key.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Implicit mapping key must not span multiple lines",
+						offset: key.offset,
+						length: key.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
+			continue;
+		}
+		// Flow collections (YamlMap/YamlSeq with style=flow) cannot be used as
+		// implicit keys when their source spans multiple lines (C2SP).
+		if (key._tag === "YamlMap" || key._tag === "YamlSeq") {
+			if (key.style !== "flow") continue;
+			const keySource = state.text.slice(key.offset, key.offset + key.length);
+			if (keySource.includes("\n") || keySource.includes("\r")) {
+				const lc = lineCol(state.text, key.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Implicit mapping key must not span multiple lines",
+						offset: key.offset,
+						length: key.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 		}
 	}
 
@@ -2419,6 +2494,347 @@ function sameLine(text: string, offsetA: number, offsetB: number): boolean {
 }
 
 /**
+ * Returns the column of the first non-whitespace character on the line
+ * containing the given offset. Used to compute the "effective" indent of a
+ * line when properties (tag/anchor) precede the actual content scalar —
+ * the indent is the leftmost column on the line, not the scalar's column.
+ */
+function lineIndentColumn(text: string, offset: number): number {
+	let lineStart = offset;
+	while (lineStart > 0 && text[lineStart - 1] !== "\n") lineStart--;
+	let i = lineStart;
+	while (i < text.length && (text[i] === " " || text[i] === "\t")) i++;
+	return i - lineStart;
+}
+
+/**
+ * 5LLU, S98Z, W9L4: per YAML 1.2 §8.1.1, leading empty lines preceding the
+ * first content line in a block scalar must satisfy l-empty(n,c) — at most
+ * n leading spaces, where n is the content indent. When the indent indicator
+ * is auto-detected from the first non-empty line, that line establishes n;
+ * any preceding empty line with more than n spaces is malformed.
+ */
+function validateBlockScalarLeadingEmpties(cst: CstNode, state: ComposerState): void {
+	const raw = cst.source;
+	let i = 0;
+	// Skip header line (e.g. ">", "|", "|+2", etc.)
+	while (i < raw.length && raw[i] !== "\n" && raw[i] !== "\r") i++;
+	if (i < raw.length) {
+		if (raw[i] === "\r" && raw[i + 1] === "\n") i += 2;
+		else i++;
+	}
+	// Walk lines, tracking offsets of leading-empty lines and their indent.
+	const emptyIndents: { indent: number; offsetInRaw: number }[] = [];
+	while (i < raw.length) {
+		const lineStart = i;
+		let spaces = 0;
+		while (i < raw.length && raw[i] === " ") {
+			spaces++;
+			i++;
+		}
+		if (i >= raw.length || raw[i] === "\n" || raw[i] === "\r") {
+			// Empty (whitespace-only) line.
+			emptyIndents.push({ indent: spaces, offsetInRaw: lineStart });
+			if (i < raw.length) {
+				if (raw[i] === "\r" && raw[i + 1] === "\n") i += 2;
+				else i++;
+			}
+			continue;
+		}
+		// First non-empty line found.
+		const contentIndent = spaces;
+		for (const empty of emptyIndents) {
+			if (empty.indent > contentIndent) {
+				const offset = cst.offset + empty.offsetInRaw;
+				const lc = lineCol(state.text, offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidIndentation",
+						message: "Block scalar leading empty line cannot be more indented than the first content line",
+						offset,
+						length: empty.indent,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				return;
+			}
+		}
+		return;
+	}
+}
+
+/**
+ * QB6E: continuation lines of a multi-line quoted scalar in value position
+ * must be indented past the parent key column.
+ */
+function validateQuotedScalarContinuationIndent(scalar: CstNode, state: ComposerState, parentKeyColumn: number): void {
+	if (parentKeyColumn < 0) return;
+	const text = state.text;
+	const start = scalar.offset;
+	const end = scalar.offset + scalar.length;
+	let i = start;
+	let inLineStart = false;
+	let lineStart = -1;
+	while (i < end && i < text.length) {
+		const ch = text[i];
+		if (ch === "\n") {
+			inLineStart = true;
+			lineStart = i + 1;
+			i++;
+			continue;
+		}
+		if (inLineStart) {
+			if (ch === " " || ch === "\t") {
+				i++;
+				continue;
+			}
+			const col = i - lineStart;
+			if (col <= parentKeyColumn) {
+				const lc = lineCol(text, i);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidIndentation",
+						message: "Multi-line quoted scalar continuation must be indented past the parent key",
+						offset: i,
+						length: 1,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				return;
+			}
+			inLineStart = false;
+		}
+		i++;
+	}
+}
+
+/**
+ * 9C9N, VJP3/00: continuation lines of multi-line flow content must be
+ * indented past the parent block context. Caller passes the parent block
+ * column; for document-root flow content (no parent block) the caller
+ * omits it and the check is skipped.
+ */
+function validateFlowContentIndent(cst: CstNode, state: ComposerState, parentBlockColumn?: number): void {
+	if (parentBlockColumn === undefined || parentBlockColumn < 0) return;
+	const text = state.text;
+	const start = cst.offset;
+	const end = cst.offset + cst.length;
+	let i = start;
+	let inLineStart = false;
+	let lineStart = -1;
+	while (i < end && i < text.length) {
+		const ch = text[i];
+		if (ch === "\n") {
+			inLineStart = true;
+			lineStart = i + 1;
+			i++;
+			continue;
+		}
+		if (inLineStart) {
+			if (ch === " " || ch === "\t") {
+				i++;
+				continue;
+			}
+			const col = i - lineStart;
+			if (col <= parentBlockColumn) {
+				const lc = lineCol(text, i);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidIndentation",
+						message: "Flow content continuation line must be indented past the parent block",
+						offset: i,
+						length: 1,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				return;
+			}
+			inLineStart = false;
+		}
+		i++;
+	}
+}
+
+/**
+ * 4JVG: a single scalar cannot have two anchor declarations. When the
+ * outer-meta slot and the pending-meta slot both carry an anchor, AND the
+ * scalar is being consumed as a plain value (not as a key for a nested
+ * block-map, not followed by `:`), both anchors would collapse onto the
+ * scalar — that's invalid YAML.
+ */
+function validateNoDoubleAnchorOnScalar(
+	scalar: CstNode,
+	children: readonly CstNode[],
+	idx: number,
+	outerMeta: NodeMeta,
+	pendingMeta: NodeMeta,
+	state: ComposerState,
+): void {
+	if (outerMeta.anchor === undefined || pendingMeta.anchor === undefined) return;
+	// Skip when the scalar is a key (followed by `:` or by a block-map sibling).
+	if (hasValueSepAfterInList(children, idx + 1)) return;
+	const nextContent = findNextContentInList(children, idx + 1);
+	if (nextContent?.node.type === "block-map" && !hasValueSepBetween(children, idx + 1, nextContent.idx)) {
+		return;
+	}
+	const lc = lineCol(state.text, scalar.offset);
+	state.errors.push(
+		new YamlErrorDetail({
+			code: "UnexpectedToken",
+			message: "Scalar cannot have two anchor declarations",
+			offset: scalar.offset,
+			length: scalar.length,
+			line: lc.line,
+			column: lc.column,
+		}),
+	);
+}
+
+/**
+ * Y79Y/009: when a `:` value-sep is at the start of a line (continuation
+ * line, not on the same line as a key) and is immediately followed by a
+ * tab and same-line content, the tab is being used as block indentation
+ * for the upcoming content — invalid per YAML 1.2 §6.1.
+ */
+function validateNoTabAfterContinuationValueSep(
+	colonChild: CstNode,
+	children: readonly CstNode[],
+	idx: number,
+	state: ComposerState,
+): void {
+	// Only when `:` is the first non-whitespace on its line — this covers
+	// both column 0 (Y79Y/009) and nested mappings where the value indicator
+	// sits at the start of a continuation line at any indent.
+	const col = lineCol(state.text, colonChild.offset).column;
+	if (col !== lineIndentColumn(state.text, colonChild.offset)) return;
+	// Find the next non-whitespace child on the same line.
+	let sawTab = false;
+	for (let j = idx + 1; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline") return;
+		if (c.type === "whitespace") {
+			if (c.source.includes("\t")) sawTab = true;
+			continue;
+		}
+		// Found a non-whitespace child — only flag if a tab was seen between.
+		if (sawTab && sameLine(state.text, colonChild.offset, c.offset)) {
+			const lc = lineCol(state.text, colonChild.offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "TabIndentation",
+					message: "Tab character cannot be used as indentation after a value indicator",
+					offset: colonChild.offset,
+					length: colonChild.length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+		return;
+	}
+}
+
+/**
+ * Returns true when the upcoming "-" indicator is preceded (after only
+ * whitespace/newlines) by either an empty block-seq placeholder or a
+ * `?`-only block-map. The parser uses both shapes to mark "explicit key
+ * with a sequence as the key" (KK5P fixture).
+ */
+function precededByExplicitKeyMarker(children: readonly CstNode[], idx: number): boolean {
+	for (let j = idx - 1; j >= 0; j--) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "whitespace" || c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "block-seq" && c.length === 0) return true;
+		if (c.type === "block-map" && c.source.trimEnd() === "?") return true;
+		return false;
+	}
+	return false;
+}
+
+/**
+ * G9HC, H7J7: anchor/tag in value position on a continuation line (not on
+ * the same line as `:`) must be at a column strictly greater than the
+ * parent key's column. Per YAML 1.2 §8.1.2, properties before a block
+ * collection must be at indent n+1, where n is the parent key column.
+ */
+function validatePropertyContinuationColumn(
+	property: CstNode,
+	state: ComposerState,
+	afterValueSep: boolean,
+	lastValueSepOffset: number,
+	parentKeyColumn: number,
+): void {
+	if (!afterValueSep) return;
+	if (parentKeyColumn < 0) return;
+	// On the same line as `:` is always OK.
+	if (lastValueSepOffset >= 0 && sameLine(state.text, lastValueSepOffset, property.offset)) {
+		return;
+	}
+	const col = lineCol(state.text, property.offset).column;
+	if (col <= parentKeyColumn) {
+		const lc = lineCol(state.text, property.offset);
+		state.errors.push(
+			new YamlErrorDetail({
+				code: "InvalidIndentation",
+				message: "Property (anchor or tag) must be indented past the parent key",
+				offset: property.offset,
+				length: property.length,
+				line: lc.line,
+				column: lc.column,
+			}),
+		);
+	}
+}
+
+/**
+ * SY6V: at document level, an anchor or tag must not be followed by a
+ * block-sequence entry indicator "-" on the same line. The anchor/tag
+ * applies to the next node, but a "-" on the same line means the parser
+ * is interpreting it as a sequence start without proper structure.
+ */
+function validateAnchorTagNotFollowedBySeqDashOnSameLine(
+	meta: CstNode,
+	children: readonly CstNode[],
+	idx: number,
+	state: ComposerState,
+): void {
+	for (let j = idx + 1; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline") return; // ok — anchor on its own line
+		if (c.type === "whitespace") {
+			// Structural indicators ("-", ":", "?", "---", "...") are typed as
+			// `whitespace` CST nodes at the document/block level — see also
+			// `checkDocumentMarkerSameLine` which tests the same shape for
+			// `---`/`...`. We're looking for a "-" on the same line as the meta.
+			if (c.source === "-" && sameLine(state.text, meta.offset, c.offset)) {
+				const lc = lineCol(state.text, c.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "UnexpectedToken",
+						message: "Block sequence entry indicator '-' cannot follow an anchor or tag on the same line",
+						offset: c.offset,
+						length: c.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+				return;
+			}
+			continue;
+		}
+		// Empty placeholder block-seq with length 0 — keep scanning past it.
+		if (c.type === "block-seq" && c.length === 0) continue;
+		return;
+	}
+}
+
+/**
  * Validate that document markers (--- and ...) are not followed by content
  * on the same line. YAML 1.2 §9.1.4/§9.2 require these markers to be on
  * their own line (followed only by whitespace/comments).
@@ -2500,6 +2916,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 	const items: YamlNode[] = [];
 	let pendingMeta: NodeMeta = {};
 	let sawEntry = false;
+	const seqIndent = lineIndentColumn(state.text, cst.offset);
 	// Track whether a newline appeared between the most-recent pending tag/anchor
 	// and the upcoming content. When true, the meta belongs to the resulting
 	// collection (outer scope), not to the first key/scalar within it. This
@@ -2664,7 +3081,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "flow-map") {
-			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
+			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined, seqIndent);
 			pendingMeta = {};
 			sawEntry = false;
 			items.push(map);
@@ -2673,7 +3090,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "flow-seq") {
-			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
+			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined, seqIndent);
 			pendingMeta = {};
 			sawEntry = false;
 			items.push(seq);
@@ -2725,7 +3142,7 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 // Compose flow map
 // ---------------------------------------------------------------------------
 
-function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlMap {
+function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta, parentBlockColumn?: number): YamlMap {
 	const children = cst.children ?? [];
 	const pairs: YamlPair[] = [];
 
@@ -2745,6 +3162,10 @@ function composeFlowMap(cst: CstNode, state: ComposerState, meta?: NodeMeta): Ya
 			}),
 		);
 	}
+
+	// 9C9N, VJP3/00: continuation lines of multi-line flow content must be
+	// indented past the parent block context.
+	validateFlowContentIndent(cst, state, parentBlockColumn);
 
 	// Validate that flow mapping entries are separated by commas.
 	// Between consecutive content tokens (scalars, nested collections),
@@ -2971,9 +3392,13 @@ function flattenFlowChildren(children: readonly CstNode[], state: ComposerState)
 // Compose flow seq
 // ---------------------------------------------------------------------------
 
-function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSeq {
+function composeFlowSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta, parentBlockColumn?: number): YamlSeq {
 	const children = cst.children ?? [];
 	const items: YamlNode[] = [];
+
+	// 9C9N, VJP3/00: continuation lines of multi-line flow content must be
+	// indented past the parent block context.
+	validateFlowContentIndent(cst, state, parentBlockColumn);
 
 	// Validate flow separators (commas between entries)
 	validateFlowSeparators(children, state, "[", "]");
@@ -3263,12 +3688,17 @@ function composeDocument(
 		// Anchor/tag metadata. When a newline preceded the new meta and meta was
 		// already set, the existing meta belongs to the outer container.
 		if (child.type === "anchor") {
+			// SY6V: anchor followed by a block-seq entry indicator "-" on the
+			// SAME line is invalid. Anchors must be followed by a node, not a
+			// new block-seq indicator on the same line.
+			validateAnchorTagNotFollowedBySeqDashOnSameLine(child, children, i, state);
 			commitMetaAcrossNewline();
 			meta.anchor = getAnchorName(child, state.text);
 			i++;
 			continue;
 		}
 		if (child.type === "tag") {
+			validateAnchorTagNotFollowedBySeqDashOnSameLine(child, children, i, state);
 			commitMetaAcrossNewline();
 			meta.tag = child.source;
 			i++;
@@ -3392,6 +3822,11 @@ function composeDocument(
 							);
 						}
 					}
+				} else {
+					// BS4K: a single-line plain scalar followed by another plain
+					// scalar (with a comment in between, breaking multi-line merge)
+					// is invalid trailing content.
+					checkTrailingContentAfterDocValue(children, nextIdx, state, false);
 				}
 				i = nextIdx;
 				continue;
@@ -3779,6 +4214,13 @@ function validateCrossDocumentDirectives(cstNodes: readonly CstNode[], state: Co
 		if (!cst) continue;
 		const children = cst.children ?? [];
 
+		// QLJ7: directives are local to a single document. Subsequent
+		// documents do not inherit %TAG handles from earlier documents,
+		// so a `!handle!` reference here without a local %TAG is unresolved.
+		// Run this for every doc >= 1 — even docs that DO declare directives
+		// can reference handles those directives didn't define.
+		validateTagHandlesInDocument(cst, state);
+
 		// Check if this document has directives
 		const hasDirectives = children.some((c) => c.type === "directive");
 		if (!hasDirectives) continue;
@@ -3818,6 +4260,58 @@ function validateCrossDocumentDirectives(cstNodes: readonly CstNode[], state: Co
 					break;
 				}
 			}
+		}
+	}
+}
+
+/**
+ * QLJ7: validate that any `!handle!suffix` tag reference in this document
+ * is declared by a `%TAG` directive in the SAME document. %TAG directives
+ * are local to a single document and do not leak across `---` boundaries.
+ * The `!!` shorthand and the primary `!` handle are always available.
+ */
+function validateTagHandlesInDocument(docCst: CstNode, state: ComposerState): void {
+	const children = docCst.children ?? [];
+	// Build local tagMap from %TAG directives in this doc.
+	const localHandles = new Set<string>();
+	for (const child of children) {
+		if (child.type !== "directive") continue;
+		const directive = parseDirective(child.source);
+		if (directive && directive.name === "TAG" && directive.parameters.length >= 2) {
+			const handle = directive.parameters[0];
+			if (handle) localHandles.add(handle);
+		}
+	}
+	// Walk the doc's CST nodes for `tag` children and validate references.
+	const stack: CstNode[] = [docCst];
+	while (stack.length > 0) {
+		const node = stack.pop();
+		if (!node) continue;
+		if (node.type === "tag") {
+			const src = node.source;
+			// Verbatim tags `!<...>` and `!!`-prefixed (default secondary handle)
+			// and bare `!` are always valid.
+			if (src.startsWith("!<") || src.startsWith("!!") || src === "!") continue;
+			const m = src.match(/^(![\w-]*!)/);
+			if (m) {
+				const handle = m[1];
+				if (handle && !localHandles.has(handle)) {
+					const lc = lineCol(state.text, node.offset);
+					state.errors.push(
+						new YamlErrorDetail({
+							code: "UnresolvedTag",
+							message: `Tag handle ${handle} is not declared in this document`,
+							offset: node.offset,
+							length: node.length,
+							line: lc.line,
+							column: lc.column,
+						}),
+					);
+				}
+			}
+		}
+		if (node.children) {
+			for (const c of node.children) stack.push(c);
 		}
 	}
 }
@@ -3974,7 +4468,9 @@ export function parseDocument(
 					e.code === "UnexpectedToken" ||
 					e.code === "InvalidDirective" ||
 					e.code === "MalformedFlowCollection" ||
-					e.code === "InvalidIndentation",
+					e.code === "InvalidIndentation" ||
+					e.code === "TabIndentation" ||
+					e.code === "UnresolvedTag",
 			);
 			if (fatalErrors.length > 0) {
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
@@ -4049,7 +4545,9 @@ export function parseAllDocuments(
 						e.code === "AliasCountExceeded" ||
 						e.code === "UnexpectedToken" ||
 						e.code === "InvalidDirective" ||
-						e.code === "InvalidIndentation",
+						e.code === "InvalidIndentation" ||
+						e.code === "TabIndentation" ||
+						e.code === "UnresolvedTag",
 				);
 				if (fatal.length > 0) fatalErrors.push(...fatal);
 			}
