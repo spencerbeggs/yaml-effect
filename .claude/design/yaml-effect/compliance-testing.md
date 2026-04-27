@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-04-26
-last-synced: 2026-04-26
-completeness: 92
+updated: 2026-04-27
+last-synced: 2026-04-27
+completeness: 93
 related:
   - architecture.md
   - parsing.md
@@ -184,7 +184,7 @@ export const XFAIL: Record<string, string> = { ... };
 Tests that run with `it.fails` -- the test is expected to fail. One
 remaining category of XFAIL entries:
 
-1. **Parser accepts invalid YAML** (29 tests) -- our parser succeeds on
+1. **Parser accepts invalid YAML** (15 tests) -- our parser succeeds on
    input the spec says should be rejected. Missing validation for various
    structural constraints (indentation, anchors, flow collection syntax).
 
@@ -411,10 +411,10 @@ into per-category issues (#15, #16).
 | #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
 | #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 59->38) |
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
-| #16 | Parser accepts invalid YAML | Open (23 XFAIL "accepts invalid") |
+| #16 | Parser accepts invalid YAML | Open (15 XFAIL "accepts invalid") |
 
-Current compliance: 2374/2424 raw assertions passing (97.93%), 1188
-filtered assertions passing, 23 XFAIL (all "accepts invalid"), 0 JSON
+Current compliance: 2382/2424 raw assertions passing (98.27%), 1198
+filtered assertions passing, 15 XFAIL (all "accepts invalid"), 0 JSON
 comparison failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries
 (output only). Use `pnpm run test:compliance-raw` to see unfiltered
 results.
@@ -652,6 +652,66 @@ Categories of fixes:
   newline, then a flow-scalar-then-block-map (the implicit-map case),
   pending meta is routed to the outer map (`mapMeta`) rather than
   the first key. Resets on every meta-consuming code path.
+
+### Key Compliance Improvements (parser leniency)
+
+The jump from 97.93% to 98.27% raw compliance (2382/2424 assertions,
++8 assertions) cleared eight "parser accepts invalid YAML" XFAIL
+entries -- DMG6, EW3V, N4JP, U44R, ZVH3, U99R, 9KBC, CXX2 -- by adding
+structural-validation paths in the composer and one block-context
+rejection in the lexer. XFAIL count: 23 -> 15.
+
+Categories of fixes:
+
+- **Column-based key validation in `flattenBlockMapChildren`**
+  (`src/utils/composer.ts`) -- new `validateKeyColumn(col, offset, length)`
+  helper emits `InvalidIndentation` when a key column does not match
+  the externally-anchored first key column. Gated on a new
+  `hasExternalKeyColumn` flag so malformed CSTs without a trustworthy
+  parent column (KK5P) still parse. New `pendingExplicitKeyCol` state
+  tracks the column of `?` so explicit keys with continuation content
+  use the `?` column for indentation tracking. The scalar+block-map
+  first-key branch now calls `validateKeyColumn` (catches DMG6 / EW3V /
+  N4JP / U44R).
+- **Multi-line plain scalar termination on block-map sibling**
+  (`src/utils/composer.ts`, `collectMultilinePlainScalar`) -- new
+  `hasBlockMapAfterInList(children, startIdx)` helper detects when the
+  next non-trivia child after a scalar is a `block-map`. The merge
+  loop now stops on this pattern so the scalar+block-map validation
+  can fire (surfaces the EW3V misalignment).
+- **Continuation column floor for non-scalar continuations**
+  (`src/utils/composer.ts`, `collectMultilinePlainScalar`) -- the
+  non-scalar-continuation branch now applies an optional
+  `minContinuationColumn` parameter, rejecting shallower content as
+  not-a-continuation. Catches ZVH3 (`key: value\n - item1` -- the
+  col-1 block-seq is a sibling of `key`, not part of `value`). AB8U is
+  preserved because `composeBlockSeq` calls the helper without
+  `minContinuationColumn`.
+- **Block-seq in key position** (`src/utils/composer.ts`,
+  `flattenBlockMapChildren`) -- in the block-map flatten loop, a
+  non-empty block-seq with `afterValueSep === false` and no preceding
+  `?` indicator emits `InvalidIndentation`. Empty placeholder
+  block-seqs (length 0) are excluded so KK5P still parses. Catches
+  ZVH3.
+- **Mapping on document-start line** (`src/utils/composer.ts`,
+  `composeDocument`) -- when the scalar+block-map pattern is detected
+  at document level **and** `hasDocumentStart` is true **and** the
+  scalar is on the same line as `---`, the composer emits
+  `UnexpectedToken` "Mapping cannot start on document-start (---)
+  line". Catches 9KBC and CXX2.
+- **Trailing-content detection extension** (`src/utils/composer.ts`,
+  scalar root path) -- the trailing-content check now also flags
+  scalar+block-map sibling patterns (via `hasBlockMapAfterInList`).
+  Preserves the 2CMS rejection that previously relied on the
+  multi-line merge consuming "invalid".
+- **Comma in block context** (`src/utils/lexer.ts`, comma branch of
+  `scanNext`) -- when `flowDepth === 0`, a `,` emits an `error` token
+  rather than `flow-separator`. Catches U99R (`!!str, xxx`).
+- **Fatal-error filter additions** -- `InvalidIndentation` was added
+  to all three fatal-error filters (`parseDocument`,
+  `parseAllDocuments`, `composeDocumentFromCst`) so the new
+  validation errors fail the parse Effect rather than being absorbed
+  as warnings.
 
 ### Dual Block Scalar Decoders
 

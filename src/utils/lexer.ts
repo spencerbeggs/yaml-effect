@@ -1231,6 +1231,12 @@ export function createScanner(text: string): YamlScanner {
 			const sLine = line;
 			const sCol = col;
 			advance();
+			// Comma is only valid as an item separator inside flow context.
+			// Outside flow ({...}/[...]), a stand-alone comma is malformed input —
+			// e.g., U99R `!!str, xxx` where the comma trails a tag.
+			if (flowDepth === 0) {
+				return makeToken("error", ",", start, sLine, sCol);
+			}
 			return makeToken("flow-separator", ",", start, sLine, sCol);
 		}
 
