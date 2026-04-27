@@ -1,5 +1,12 @@
 # yaml-effect
 
+## 0.4.4
+
+### Bug Fixes
+
+* [`87b5795`](https://github.com/spencerbeggs/yaml-effect/commit/87b579535ebceed2934c2b28d18d01f764565f00) `stringifyDocument` now emits an explicit `...` document-end terminator in canonical mode (`forceDefaultStyles: true`) when the document root is an anchored plain scalar with explicit `---`. Without the terminator the anchor risks absorbing trailing input as part of the scalar value. Resolves the KSS4 yaml-test-suite case (multi-document stream where the second document is an anchored plain scalar like `--- &node foo`).
+* `applySingleDocCanonical` (compliance test helper) now drops the `--- ` prefix for single-line single-quoted scalar roots whose content begins with `---` (e.g. `'---word1 word2'`). The quoted form already self-delimits, matching libyaml's canonical emitter behaviour. Resolves the EXG3 yaml-test-suite case.
+
 ## 0.4.3
 
 ### Bug Fixes
