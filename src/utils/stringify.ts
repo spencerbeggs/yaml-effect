@@ -141,6 +141,52 @@ function hasNonAscii(s: string): boolean {
 	return false;
 }
 
+/**
+ * Returns true when the value has whitespace immediately before a newline AND
+ * the value contains a non-trailing newline. Equivalent to the regex pair
+ * `/[\t ]\n/.test(s) && s.replace(/\n+$/, "").includes("\n")` but uses linear
+ * imperative scans to avoid polynomial-time regex behaviour on adversarial
+ * inputs containing many trailing newlines.
+ */
+function hasInteriorTrailingWhitespace(s: string): boolean {
+	let firstWsBeforeNl = -1;
+	for (let i = 1; i < s.length; i++) {
+		if (s.charCodeAt(i) === 0x0a) {
+			const prev = s.charCodeAt(i - 1);
+			if (prev === 0x20 || prev === 0x09) {
+				firstWsBeforeNl = i;
+				break;
+			}
+		}
+	}
+	if (firstWsBeforeNl < 0) return false;
+	let trailingStart = s.length;
+	while (trailingStart > 0 && s.charCodeAt(trailingStart - 1) === 0x0a) trailingStart--;
+	// Confirm the whitespace-before-newline is not purely in the trailing newline
+	// block. If firstWsBeforeNl >= trailingStart the whitespace sits on the last
+	// content line only, which block style handles correctly via the chomp
+	// indicator — only an INTERIOR newline followed by content matters here.
+	for (let i = 0; i < trailingStart; i++) {
+		if (s.charCodeAt(i) === 0x0a) return true;
+	}
+	return false;
+}
+
+/**
+ * Returns true when the value contains a newline followed by one or more
+ * spaces and then a tab — mixed leading whitespace on a continuation line
+ * that block style cannot represent unambiguously.
+ */
+function hasNewlineSpacesTab(s: string): boolean {
+	for (let i = 0; i < s.length - 2; i++) {
+		if (s.charCodeAt(i) !== 0x0a) continue;
+		let j = i + 1;
+		while (j < s.length && s.charCodeAt(j) === 0x20) j++;
+		if (j > i + 1 && j < s.length && s.charCodeAt(j) === 0x09) return true;
+	}
+	return false;
+}
+
 // ---------------------------------------------------------------------------
 // Scalar rendering
 // ---------------------------------------------------------------------------
@@ -205,6 +251,56 @@ function renderDoubleQuoted(s: string, canonical = false): string {
  */
 function renderSingleQuoted(s: string): string {
 	return `'${s.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Renders a multi-line value as a single-quoted scalar with proper fold encoding.
+ *
+ * @privateRemarks
+ * Single-quoted scalars use line folding rules (YAML 1.2 §7.4): bare newlines
+ * between non-empty lines fold to a space; empty lines preserve as literal
+ * newlines. To round-trip a value with N consecutive literal newlines, the
+ * source needs N+1 consecutive source newlines (i.e., one extra to account
+ * for the bare newline that would otherwise fold to a space).
+ *
+ * Continuation lines are prefixed with the given indent. Leading whitespace
+ * on continuation lines after the indent is preserved as part of the content
+ * because empty lines precede them, suppressing the fold-to-space rule.
+ *
+ * Returns null if the content cannot safely be represented as single-quoted
+ * (carriage returns or non-tab control characters).
+ */
+function renderSingleQuotedMultiline(s: string, indent: string): string | null {
+	// CR or non-tab control chars cannot be represented in single-quoted
+	for (let i = 0; i < s.length; i++) {
+		const code = s.charCodeAt(i);
+		if (code === 0x0d || isControlChar(code)) return null;
+	}
+	const escaped = s.replace(/'/g, "''");
+	let result = "";
+	let i = 0;
+	let firstSegment = true;
+	while (i < escaped.length) {
+		let segEnd = i;
+		while (segEnd < escaped.length && escaped[segEnd] !== "\n") segEnd++;
+		const segment = escaped.slice(i, segEnd);
+		if (firstSegment) {
+			result += segment;
+			firstSegment = false;
+		} else {
+			result += `${indent}${segment}`;
+		}
+		i = segEnd;
+		let nlEnd = i;
+		while (nlEnd < escaped.length && escaped[nlEnd] === "\n") nlEnd++;
+		const nlCount = nlEnd - i;
+		if (nlCount > 0) {
+			// Each literal newline in value requires one extra source newline
+			result += "\n".repeat(nlCount + 1);
+		}
+		i = nlEnd;
+	}
+	return `'${result}'`;
 }
 
 /**
@@ -354,11 +450,34 @@ function renderString(s: string, style: ScalarStyle, indent: string, ignoreType 
 		// If the value is only spaces and newlines (no text/tab content),
 		// block scalars can't represent it faithfully — use double-quoted
 		if (/^[\n ]*$/.test(s)) return renderDoubleQuoted(s, canonical);
+		// In canonical mode, multi-line block content with trailing whitespace
+		// on an interior line cannot round-trip cleanly — block scalars normalise
+		// such whitespace. Single-line content with only trailing whitespace
+		// (e.g. `\t\n`) is tolerated by block style. Uses imperative scans
+		// instead of regexes to avoid polynomial-time matching on adversarial
+		// inputs containing many trailing newlines.
+		if (canonical && (style === "block-literal" || style === "block-folded")) {
+			if (hasInteriorTrailingWhitespace(s)) {
+				return renderDoubleQuoted(s, canonical);
+			}
+			// Mixed leading whitespace on a continuation line (space then tab)
+			// produces ambiguous indentation in block style; switch to DQ.
+			if (hasNewlineSpacesTab(s)) {
+				return renderDoubleQuoted(s, canonical);
+			}
+		}
 		// Multi-line: prefer block styles
 		if (style === "block-literal") return renderBlockLiteral(s, indent);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
-		// Fall back to block-literal for multiline with other styles
-		if (style === "plain" || style === "single-quoted") return renderBlockLiteral(s, indent);
+		// In canonical mode, prefer single-quoted with fold encoding for plain
+		// and single-quoted multi-line scalars — matches libyaml canonical form.
+		if (style === "plain" || style === "single-quoted") {
+			if (canonical) {
+				const sq = renderSingleQuotedMultiline(s, indent);
+				if (sq !== null) return sq;
+			}
+			return renderBlockLiteral(s, indent);
+		}
 		return renderDoubleQuoted(s, canonical);
 	}
 	// In canonical mode, force double-quoted when string has non-ASCII chars
@@ -946,9 +1065,13 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 					lines.push(`: ${valLines[0]}`);
 				} else {
 					const first = valLines[0];
-					// Detect block scalar headers (may be prefixed with tag/anchor)
-					const isBlockScalarHeader = first.startsWith("|") || first.startsWith(">") || /^[!&]\S*\s+[|>]/.test(first);
-					if (isBlockScalarHeader) {
+					// Detect block scalar headers and multi-line quoted scalars,
+					// either bare or after an optional `&anchor` / `!tag` prefix.
+					const firstStripped = stripScalarMetadataPrefix(first);
+					const isBlockScalarHeader = firstStripped.startsWith("|") || firstStripped.startsWith(">");
+					const valIsScalar = valNode instanceof YamlScalar;
+					const isInlineQuoted = valIsScalar && (firstStripped.startsWith("'") || firstStripped.startsWith('"'));
+					if (isBlockScalarHeader || isInlineQuoted) {
 						lines.push(`: ${first}`);
 						for (let v = 1; v < valLines.length; v++) {
 							lines.push(valLines[v]);
@@ -971,8 +1094,15 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		}
 
 		const keyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
-		// Alias keys need space before colon to avoid ambiguity (e.g., `*a :` not `*a:`)
-		const sep = pair.key instanceof YamlAlias ? " :" : ":";
+		// Alias keys need a space before the colon to avoid the alias name
+		// absorbing the `:`. Empty scalar keys whose only rendering is an
+		// anchor or tag (e.g. `&a` or `!!str`) need the same disambiguation.
+		const keyIsAnchoredOrTaggedEmpty =
+			pair.key instanceof YamlScalar &&
+			pair.key.length === 0 &&
+			(pair.key.value === null || pair.key.value === undefined || pair.key.value === "") &&
+			(pair.key.anchor !== undefined || pair.key.tag !== undefined);
+		const sep = pair.key instanceof YamlAlias || keyIsAnchoredOrTaggedEmpty ? " :" : ":";
 		const valNode = pair.value;
 		if (!valNode) {
 			lines.push(`${keyStr}${sep}`);
@@ -1009,9 +1139,13 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			lines.push(valLines[0] === "" ? `${keyStr}${sep}` : `${keyStr}${sep} ${valLines[0]}`);
 		} else {
 			const first = valLines[0];
-			// Detect block scalar headers — may be prefixed with tag/anchor
-			const isBlockScalarHeader = first.startsWith("|") || first.startsWith(">") || /^[!&]\S*\s+[|>]/.test(first);
-			if (isBlockScalarHeader) {
+			// Detect block scalar headers and multi-line quoted scalars after the
+			// optional `&anchor` / `!tag` prefix that the scalar renderer may add.
+			const firstStripped = stripScalarMetadataPrefix(first);
+			const isBlockScalarHeader = firstStripped.startsWith("|") || firstStripped.startsWith(">");
+			const valIsScalar = valNode instanceof YamlScalar;
+			const isInlineQuoted = valIsScalar && (firstStripped.startsWith("'") || firstStripped.startsWith('"'));
+			if (isBlockScalarHeader || isInlineQuoted) {
 				lines.push(`${keyStr}${sep} ${first}`);
 				for (let i = 1; i < valLines.length; i++) {
 					lines.push(valLines[i]);
@@ -1060,6 +1194,26 @@ function buildMetadataPrefix(tag: string | undefined, anchor: string | undefined
 }
 
 /**
+ * Strips a leading run of `&anchor`/`!tag` metadata tokens (each followed by
+ * whitespace) from a rendered scalar line and returns the remainder. Used to
+ * detect quoted/block scalar style after the optional metadata prefix that
+ * `stringifyScalarNodeLines` may prepend to the first output line.
+ */
+function stripScalarMetadataPrefix(line: string): string {
+	let i = 0;
+	while (i < line.length) {
+		const ch = line[i];
+		if (ch !== "&" && ch !== "!") break;
+		let j = i + 1;
+		while (j < line.length && line[j] !== " " && line[j] !== "\t") j++;
+		if (j >= line.length || j === i + 1) break;
+		while (j < line.length && (line[j] === " " || line[j] === "\t")) j++;
+		i = j;
+	}
+	return line.slice(i);
+}
+
+/**
  * Stringifies a YamlSeq node into lines, using the node's collection style.
  */
 function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: StringifyContext): string[] {
@@ -1093,7 +1247,17 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 			lines.push(itemLines[0] === "" ? "-" : `- ${itemLines[0]}`);
 		} else {
 			const first = itemLines[0];
-			if (first.startsWith("|") || first.startsWith(">")) {
+			// Block scalar headers and multi-line quoted scalars (when the item is
+			// itself a YamlScalar) place their first line inline after `- `, with
+			// continuation lines emitted as-is. Detection allows an optional
+			// `&anchor` / `!tag` prefix that the scalar renderer may have added.
+			const firstStripped = stripScalarMetadataPrefix(first);
+			const itemIsScalar = item instanceof YamlScalar;
+			const isInlineScalar =
+				firstStripped.startsWith("|") ||
+				firstStripped.startsWith(">") ||
+				(itemIsScalar && (firstStripped.startsWith("'") || firstStripped.startsWith('"')));
+			if (isInlineScalar) {
 				lines.push(`- ${first}`);
 				for (let i = 1; i < itemLines.length; i++) {
 					lines.push(itemLines[i]);

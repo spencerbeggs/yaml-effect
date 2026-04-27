@@ -473,6 +473,26 @@ function hasValueSepBetween(children: readonly CstNode[], startIdx: number, endI
 }
 
 /**
+ * Returns true when the first non-trivia child of a block-map CST node is a
+ * `:` value separator (i.e., the block map begins with an implicit empty key
+ * followed by a value indicator). Used to decide whether a pending anchor/tag
+ * belongs to that empty key rather than to the block map itself.
+ */
+function blockMapStartsWithValueSep(blockMap: CstNode): boolean {
+	for (const c of blockMap.children ?? []) {
+		if (!c) continue;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (c.source === ":") return true;
+			if (c.source.trim() === "") continue;
+			return false;
+		}
+		return false;
+	}
+	return false;
+}
+
+/**
  * Like `hasValueSepAfterInList`, but also skips over plain flow-scalars
  * that appear after a newline. Used to detect multi-line keys:
  * `multi\n  line: value` where `:` comes after continuation plain scalars.
@@ -1281,10 +1301,47 @@ function flattenBlockMapChildren(
 ): SemanticItem[] {
 	const items: SemanticItem[] = [];
 	let pendingMeta: NodeMeta = {};
+	// Outer meta: anchor/tag that came BEFORE a newline in value position. Applies
+	// to the surrounding container (e.g. block map) when the inner content has its
+	// own metadata. Without this split, two adjacent anchors collapse and the first
+	// is lost (test 7BMT, U3XV: `top: &outer\n  &inner key: val`).
+	let outerMeta: NodeMeta = {};
+	let sawNewlineSincePending = false;
 	let afterValueSep = false;
 	let lastValueSepOffset = -1;
 	let lastKeyColumn = externalKeyColumn ?? -1;
 	let lastKeyOffset = externalKeyOffset ?? -1;
+
+	// If we have pending meta and a newline has been seen since it was set, the
+	// pending meta applies to the surrounding context (outer container) and any
+	// new meta encountered belongs to the upcoming inner content.
+	function commitOuterIfNewlineSeen(): void {
+		if (sawNewlineSincePending && hasMeta(pendingMeta)) {
+			// When both slots already carry an anchor or tag — the rare case of
+			// three or more consecutive metadata tokens spanning multiple newlines
+			// — the spread intentionally favours the most recent (pendingMeta)
+			// per a "last wins" rule. registerAnchor surfaces a duplicate-anchor
+			// warning if the dropped anchor is reused elsewhere.
+			outerMeta = hasMeta(outerMeta) ? { ...outerMeta, ...pendingMeta } : pendingMeta;
+			pendingMeta = {};
+		}
+		sawNewlineSincePending = false;
+	}
+
+	function combinedPending(): NodeMeta {
+		if (!hasMeta(outerMeta)) return pendingMeta;
+		if (!hasMeta(pendingMeta)) return outerMeta;
+		return { ...outerMeta, ...pendingMeta };
+	}
+
+	// Reset both meta slots and the newline-since-pending flag. Renamed from
+	// `clearMeta` to avoid shadowing the module-level `clearMeta(m: NodeMeta)`
+	// helper used elsewhere in this file.
+	function resetAllMeta(): void {
+		pendingMeta = {};
+		outerMeta = {};
+		sawNewlineSincePending = false;
+	}
 
 	function pushNode(node: YamlNode, nodeOffset?: number) {
 		// Track key column/offset when pushing in key position (before value-sep)
@@ -1315,7 +1372,10 @@ function flattenBlockMapChildren(
 			continue;
 		}
 
-		if (child.type === "newline") continue;
+		if (child.type === "newline") {
+			if (hasMeta(pendingMeta)) sawNewlineSincePending = true;
+			continue;
+		}
 		if (child.type === "whitespace") {
 			if (child.source === "?") {
 				// Explicit key indicator (YAML §8.2.1). The "?" simply marks
@@ -1327,19 +1387,22 @@ function flattenBlockMapChildren(
 				continue;
 			}
 			if (child.source === ":") {
-				// Flush pending tag/anchor as empty scalar before value-sep
-				if (hasMeta(pendingMeta)) {
-					const value = resolveScalar("", "plain", pendingMeta.tag, state);
+				// Flush pending tag/anchor as empty scalar before value-sep.
+				// Combine outer+pending so any anchors before a newline are also
+				// represented (otherwise outer-context anchors would be lost).
+				const flushMeta = combinedPending();
+				if (hasMeta(flushMeta)) {
+					const value = resolveScalar("", "plain", flushMeta.tag, state);
 					const scalar = new YamlScalar({
 						value,
 						style: "plain" as ScalarStyle,
 						offset: child.offset,
 						length: 0,
-						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+						...(flushMeta.tag !== undefined ? { tag: flushMeta.tag } : {}),
+						...(flushMeta.anchor !== undefined ? { anchor: flushMeta.anchor } : {}),
 					});
-					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
-					pendingMeta = {};
+					if (flushMeta.anchor) registerAnchor(scalar, flushMeta.anchor, state, child.offset);
+					resetAllMeta();
 					pushNode(scalar);
 				}
 				items.push({ kind: "value-sep", offset: child.offset });
@@ -1375,31 +1438,43 @@ function flattenBlockMapChildren(
 			continue;
 		}
 		if (child.type === "anchor") {
+			// If we already have pending meta and a newline was seen since, the
+			// existing pending meta belongs to the outer container (it was on the
+			// same line as the value indicator). Move it to outerMeta so the new
+			// anchor can attach to the inner content as its own pending meta.
+			commitOuterIfNewlineSeen();
 			pendingMeta.anchor = getAnchorName(child, state.text);
 			continue;
 		}
 		if (child.type === "tag") {
+			commitOuterIfNewlineSeen();
 			pendingMeta.tag = child.source;
 			continue;
 		}
 		if (child.type === "flow-scalar" || child.type === "block-scalar") {
-			// If this scalar is a key (followed by ":") and there's pending
-			// meta from a previous VALUE position, flush it as a null value.
+			// Reaching content: if pending meta predates a newline, it belongs to
+			// the outer container, not the upcoming inner content.
+			commitOuterIfNewlineSeen();
+			// If this scalar is a key (followed by `:` at this level) and there's
+			// pending meta from a previous VALUE position, flush it as a null value.
 			// e.g., `a: &anchor\nb:` — the anchor belongs to null, not to `b`.
-			// But NOT when meta is in key position: `!!str a: b` — tag is for key.
-			if (afterValueSep && hasMeta(pendingMeta) && hasValueSepAfterInList(children, i + 1)) {
-				const value = resolveScalar("", "plain", pendingMeta.tag, state);
-				const scalar = new YamlScalar({
-					value,
-					style: "plain" as ScalarStyle,
-					offset: child.offset,
-					length: 0,
-					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
-				});
-				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
-				pendingMeta = {};
-				pushNode(scalar);
+			// Includes any anchor that was committed to outerMeta across a newline.
+			if (afterValueSep && hasValueSepAfterInList(children, i + 1)) {
+				const flushMeta = combinedPending();
+				if (hasMeta(flushMeta)) {
+					const value = resolveScalar("", "plain", flushMeta.tag, state);
+					const scalar = new YamlScalar({
+						value,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: 0,
+						...(flushMeta.tag !== undefined ? { tag: flushMeta.tag } : {}),
+						...(flushMeta.anchor !== undefined ? { anchor: flushMeta.anchor } : {}),
+					});
+					if (flushMeta.anchor) registerAnchor(scalar, flushMeta.anchor, state, child.offset);
+					resetAllMeta();
+					pushNode(scalar);
+				}
 			}
 			// Detect same-line nested mapping (ZCZ6: `a: b: c: d`, ZL4Z: `a: 'b': c`).
 			// If we're in value position and this scalar is followed by ":"
@@ -1437,11 +1512,15 @@ function flattenBlockMapChildren(
 			// and the block-map is its value (e.g., `mapping:\n  ? sky\n  : blue`).
 			const nextContent = findNextContentInList(children, i + 1);
 			if (nextContent?.node.type === "block-map" && !hasValueSepBetween(children, i + 1, nextContent.idx)) {
-				// The scalar is the first key of the nested mapping — keys don't
-				// carry the pending anchor/tag; those belong on the map itself.
-				const key = makeScalar(child, state);
-				const map = composeBlockMap(nextContent.node, state, key, hasMeta(pendingMeta) ? pendingMeta : undefined);
-				pendingMeta = {};
+				// The scalar is the first key of the nested mapping. Anchor/tag
+				// that came BEFORE a newline (outerMeta) belong to the new map;
+				// anchor/tag that came AFTER the newline (pendingMeta), on the
+				// same line as the key, belong to the key itself.
+				const keyMeta = hasMeta(pendingMeta) ? pendingMeta : undefined;
+				const mapMeta = hasMeta(outerMeta) ? outerMeta : undefined;
+				const key = makeScalar(child, state, keyMeta);
+				const map = composeBlockMap(nextContent.node, state, key, mapMeta);
+				resetAllMeta();
 				pushNode(map);
 				i = nextContent.idx; // skip to past the block-map
 				continue;
@@ -1495,17 +1574,18 @@ function flattenBlockMapChildren(
 				}
 				if (isExplicitKey) {
 					const { value: keyValue, nextIdx: keyNextIdx } = collectMultilineKey(children, i);
-					const resolved = resolveScalar(keyValue, "plain", pendingMeta.tag, state);
+					const keyMeta = combinedPending();
+					const resolved = resolveScalar(keyValue, "plain", keyMeta.tag, state);
 					const scalar = new YamlScalar({
 						value: resolved,
 						style: "plain" as ScalarStyle,
 						offset: child.offset,
 						length: child.length,
-						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+						...(keyMeta.tag !== undefined ? { tag: keyMeta.tag } : {}),
+						...(keyMeta.anchor !== undefined ? { anchor: keyMeta.anchor } : {}),
 					});
-					if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
-					pendingMeta = {};
+					if (keyMeta.anchor) registerAnchor(scalar, keyMeta.anchor, state, child.offset);
+					resetAllMeta();
 					pushNode(scalar, child.offset);
 					i = keyNextIdx - 1;
 					continue;
@@ -1578,17 +1658,18 @@ function flattenBlockMapChildren(
 					minContCol,
 					minContCol !== undefined ? state.text : undefined,
 				);
-				const resolved = resolveScalar(value, "plain", pendingMeta.tag, state);
+				const plainMeta = combinedPending();
+				const resolved = resolveScalar(value, "plain", plainMeta.tag, state);
 				const scalar = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
 					offset: child.offset,
 					length: child.length,
-					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					...(plainMeta.tag !== undefined ? { tag: plainMeta.tag } : {}),
+					...(plainMeta.anchor !== undefined ? { anchor: plainMeta.anchor } : {}),
 				});
-				if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, child.offset);
-				pendingMeta = {};
+				if (plainMeta.anchor) registerAnchor(scalar, plainMeta.anchor, state, child.offset);
+				resetAllMeta();
 				pushNode(scalar, child.offset);
 				// After a truly MULTILINE plain scalar in value position (partsCount > 1
 				// means multiple source lines were merged), if collectMultilinePlainScalar
@@ -1639,8 +1720,9 @@ function flattenBlockMapChildren(
 			// Check for trailing content after quoted scalar in value position
 			const style = getScalarStyle(child);
 			const isValuePosition = afterValueSep;
-			const scalar = makeScalar(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
+			const scalarMeta = combinedPending();
+			const scalar = makeScalar(child, state, hasMeta(scalarMeta) ? scalarMeta : undefined);
+			resetAllMeta();
 			pushNode(scalar, child.offset);
 
 			if (isValuePosition && (style === "single-quoted" || style === "double-quoted")) {
@@ -1649,6 +1731,7 @@ function flattenBlockMapChildren(
 			continue;
 		}
 		if (child.type === "alias") {
+			commitOuterIfNewlineSeen();
 			// Check if alias is followed by block-map (alias as first key of implicit mapping).
 			// This pattern occurs when an alias is the FIRST key of a new block mapping that
 			// appears as a sibling CST node (e.g., `*ref: value` where *ref is outside the
@@ -1658,60 +1741,92 @@ function flattenBlockMapChildren(
 			// That case correctly falls through to checkAnchorOnAlias below.
 			const nextAlias = findNextContentInList(children, i + 1);
 			if (nextAlias?.node.type === "block-map") {
+				// Like the scalar first-key path, split outer/pending: outer goes
+				// to the new map, pending stays attached to the alias key.
 				const alias = makeAlias(child, state);
-				const map = composeBlockMap(nextAlias.node, state, alias, hasMeta(pendingMeta) ? pendingMeta : undefined);
-				pendingMeta = {};
+				const aliasMapMeta = hasMeta(outerMeta) ? outerMeta : undefined;
+				const map = composeBlockMap(nextAlias.node, state, alias, aliasMapMeta);
+				resetAllMeta();
 				pushNode(map);
 				i = nextAlias.idx;
 				continue;
 			}
 			// Standalone alias — check for invalid anchor on alias
-			checkAnchorOnAlias(pendingMeta, child, state);
+			const aliasMeta = combinedPending();
+			checkAnchorOnAlias(aliasMeta, child, state);
 			const alias = makeAlias(child, state);
-			pendingMeta = {};
+			resetAllMeta();
 			pushNode(alias);
 			continue;
 		}
 		if (child.type === "block-map") {
-			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
+			commitOuterIfNewlineSeen();
+			const mapMeta = combinedPending();
+			// If the block-map starts with `:` (implicit empty key), the inner
+			// pending meta belongs to that empty key, not to the block map.
+			// Outer meta (from across a newline) still applies to the map.
+			if (hasMeta(pendingMeta) && blockMapStartsWithValueSep(child)) {
+				const emptyKey = new YamlScalar({
+					value: null,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: 0,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(emptyKey, pendingMeta.anchor, state, child.offset);
+				const outerOnlyMeta = hasMeta(outerMeta) ? outerMeta : undefined;
+				const map = composeBlockMap(child, state, emptyKey, outerOnlyMeta);
+				resetAllMeta();
+				pushNode(map);
+				continue;
+			}
+			const map = composeBlockMap(child, state, undefined, hasMeta(mapMeta) ? mapMeta : undefined);
+			resetAllMeta();
 			pushNode(map);
 			continue;
 		}
 		if (child.type === "block-seq") {
-			const seq = composeBlockSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
+			commitOuterIfNewlineSeen();
+			const seqMeta = combinedPending();
+			const seq = composeBlockSeq(child, state, hasMeta(seqMeta) ? seqMeta : undefined);
+			resetAllMeta();
 			pushNode(seq);
 			continue;
 		}
 		if (child.type === "flow-map") {
+			commitOuterIfNewlineSeen();
 			const isValue = afterValueSep;
-			const map = composeFlowMap(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
+			const flowMapMeta = combinedPending();
+			const map = composeFlowMap(child, state, hasMeta(flowMapMeta) ? flowMapMeta : undefined);
+			resetAllMeta();
 			pushNode(map);
 			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
 			continue;
 		}
 		if (child.type === "flow-seq") {
+			commitOuterIfNewlineSeen();
 			const isValue = afterValueSep;
-			const seq = composeFlowSeq(child, state, hasMeta(pendingMeta) ? pendingMeta : undefined);
-			pendingMeta = {};
+			const flowSeqMeta = combinedPending();
+			const seq = composeFlowSeq(child, state, hasMeta(flowSeqMeta) ? flowSeqMeta : undefined);
+			resetAllMeta();
 			pushNode(seq);
 			if (isValue) checkTrailingContentOnSameLine(children, i + 1, child, state);
 		}
 	}
 	// Flush trailing pending tag/anchor as empty scalar
-	if (hasMeta(pendingMeta)) {
-		const value = resolveScalar("", "plain", pendingMeta.tag, state);
+	const trailingMeta = combinedPending();
+	if (hasMeta(trailingMeta)) {
+		const value = resolveScalar("", "plain", trailingMeta.tag, state);
 		const scalar = new YamlScalar({
 			value,
 			style: "plain" as ScalarStyle,
 			offset: 0,
 			length: 0,
-			...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
-			...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+			...(trailingMeta.tag !== undefined ? { tag: trailingMeta.tag } : {}),
+			...(trailingMeta.anchor !== undefined ? { anchor: trailingMeta.anchor } : {}),
 		});
-		if (pendingMeta.anchor) registerAnchor(scalar, pendingMeta.anchor, state, 0);
+		if (trailingMeta.anchor) registerAnchor(scalar, trailingMeta.anchor, state, 0);
 		items.push({ kind: "node", node: scalar });
 	}
 	return items;
@@ -2257,16 +2372,21 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 		if (child.type === "whitespace") {
 			// "-" is the sequence entry indicator
 			if (child.source.trim() === "-") {
-				// If we saw a previous entry with no content, push null
+				// If we saw a previous entry with no content, push null. Any
+				// pending anchor/tag belongs to that empty scalar (e.g. `- &a\n- b`
+				// anchors the first entry, not the second).
 				if (sawEntry) {
-					items.push(
-						new YamlScalar({
-							value: null,
-							style: "plain" as ScalarStyle,
-							offset: child.offset,
-							length: 0,
-						}),
-					);
+					const emptyScalar = new YamlScalar({
+						value: null,
+						style: "plain" as ScalarStyle,
+						offset: child.offset,
+						length: 0,
+						...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+						...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+					});
+					if (pendingMeta.anchor) registerAnchor(emptyScalar, pendingMeta.anchor, state, child.offset);
+					pendingMeta = {};
+					items.push(emptyScalar);
 				}
 				sawEntry = true;
 			}
@@ -2350,6 +2470,25 @@ function composeBlockSeq(cst: CstNode, state: ComposerState, meta?: NodeMeta): Y
 			continue;
 		}
 		if (child.type === "block-map") {
+			// If the block-map starts with `:` (empty first key) and we have a
+			// pending anchor/tag, that meta belongs to the empty key (e.g.
+			// `- &a : value` → first key is empty with anchor `a`, not the map).
+			if (hasMeta(pendingMeta) && blockMapStartsWithValueSep(child)) {
+				const emptyKey = new YamlScalar({
+					value: null,
+					style: "plain" as ScalarStyle,
+					offset: child.offset,
+					length: 0,
+					...(pendingMeta.tag !== undefined ? { tag: pendingMeta.tag } : {}),
+					...(pendingMeta.anchor !== undefined ? { anchor: pendingMeta.anchor } : {}),
+				});
+				if (pendingMeta.anchor) registerAnchor(emptyKey, pendingMeta.anchor, state, child.offset);
+				pendingMeta = {};
+				const map = composeBlockMap(child, state, emptyKey, undefined);
+				sawEntry = false;
+				items.push(map);
+				continue;
+			}
 			const map = composeBlockMap(child, state, undefined, hasMeta(pendingMeta) ? pendingMeta : undefined);
 			pendingMeta = {};
 			sawEntry = false;

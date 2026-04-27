@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-03-19
-last-synced: 2026-03-19
-completeness: 90
+updated: 2026-04-26
+last-synced: 2026-04-26
+completeness: 92
 related:
   - architecture.md
   - parsing.md
@@ -409,14 +409,29 @@ into per-category issues (#15, #16).
 | #8 | Fix block scalar content normalization | **Mostly resolved** (explicit indent fix) |
 | #9 | Fix double-quoted and plain scalar folding rules | **Resolved** |
 | #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
-| #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 83->59) |
+| #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 59->38) |
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | Open (23 XFAIL "accepts invalid") |
 
-Current compliance: 1144/1226 raw assertions passing (93.3%), 23 XFAIL
-(all "accepts invalid"), 0 JSON comparison failures, 0 roundtrip
-failures, ~59 SKIP_ASSERTIONS entries (output only). Use
-`pnpm run test:compliance-raw` to see unfiltered results.
+Current compliance: 2348/2409 raw assertions passing (97.47%), 1188
+filtered assertions passing, 23 XFAIL (all "accepts invalid"), 0 JSON
+comparison failures, 0 roundtrip failures, ~38 SKIP_ASSERTIONS entries
+(output only). Use `pnpm run test:compliance-raw` to see unfiltered
+results.
+
+Remaining canonical-output gaps cluster into a few categories:
+
+- **Tag-on-block-collection inline placement** (6JWB, 735Y, C4HZ) -- tags
+  applied to block-style maps/sequences need inline placement on the
+  introducing line rather than a leading line of their own.
+- **Explicit `?` syntax for complex keys** (5WE3, 6SLA, M5DY, Q9WF, X38W) --
+  emitting `? key\n: value` for non-scalar or multi-line keys in canonical
+  block form.
+- **Multi-document `...` end marker** (KSS4, PUW8) -- emitting the explicit
+  document-end marker between or after documents when the source contained
+  one.
+- **Empty-value canonical `null` rendering** (4ABK) -- explicit `null`
+  output for absent mapping values in canonical form.
 
 ### Key Compliance Improvements (feat/more-compliance)
 
@@ -467,6 +482,108 @@ three pipeline layers:
   `DuplicateAnchor` fatal error (resolves SR86, SU74)
 - **All 18 roundtrip failures resolved** (0 remaining)
 - **Multi-doc join**: Raw test harness concatenates parts directly
+
+### Key Compliance Improvements (canonical stringifier)
+
+The jump from 93.3% to 97.24% raw compliance (2327/2393 assertions, +16
+canonical-output tests previously skipped) came from stringifier and test
+harness improvements focused on canonical output for multi-line scalars:
+
+- **Single-quoted multi-line scalar rendering**: New
+  `renderSingleQuotedMultiline(s, indent)` helper in
+  `src/utils/stringify.ts`. In canonical mode, multi-line plain or
+  single-quoted source values are rendered as single-quoted with the
+  inverse of YAML §7.4 line folding -- each literal newline in the value
+  maps to N+1 source newlines, and continuation segments are indented to
+  the value column. Falls back to block-literal when content has CR or
+  non-tab control characters that single-quoted form cannot represent.
+- **Inline placement of multi-line quoted scalars**: When a mapping value
+  or sequence item is a multi-line quoted scalar, the first line is
+  emitted directly after `:` or `-`, and subsequent lines are emitted
+  as-is (already indented by the renderer). Detection uses
+  `valNode instanceof YamlScalar` plus a quote-prefix check on the first
+  line. Using a node-type check rather than an output-pattern match
+  avoids false positives where nested mappings produce lines like
+  `"key": value` that would otherwise be mistaken for quoted continuations.
+- **Block-style to double-quoted conversion**: For canonical output, the
+  stringifier now downgrades block-style scalars to double-quoted in two
+  cases that block style cannot represent unambiguously:
+  - Trailing whitespace before a non-trailing newline in multi-line
+    content -- detected via `/[\t ]\n/` combined with a multi-line
+    check (`s.replace(/\n+$/, "").includes("\n")`). Single-line content
+    like `\t\n` is still fine for block style.
+  - Mixed leading whitespace (space-then-tab) on continuation lines --
+    detected via `/\n +\t/`.
+- **Single-document scalar canonical**: `applySingleDocCanonical(output, root)`
+  helper in `__test__/yaml-test-suite-raw.e2e.test.ts` and
+  `__test__/yaml-test-suite.e2e.test.ts` strips the leading `---` from a
+  single-doc scalar-rooted output when the value is multi-line and
+  rendered as quoted (single- or double-quoted). Block scalars (`|`, `>`)
+  and single-line scalars retain `---`.
+
+Sixteen canonical-output tests removed from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`: 36F6, 4ZYM, 6FWR, 6WPF,
+9TFX, 9YRD, DWX9, EX5H, H2RW, HS5T, MJS9, NB6Z, PRH3, Q8AD, T26H, T4YY.
+
+### Key Compliance Improvements (composer anchor placement)
+
+The jump from 97.24% to 97.47% raw compliance (2348/2409 assertions) came
+from composer changes that fix anchor/tag placement when metadata spans a
+newline between an outer container and its first inner key, and a
+companion stringifier change that disambiguates anchor-only keys. Five
+additional canonical-output tests now pass (26DV, 7BMT, U3XV, FH7J,
+PW8X), bringing the total canonical-output tests removed from
+`SKIP_ASSERTIONS` on this branch to 21 (16 from the canonical
+stringifier subsection above + 5 new).
+
+- **Outer/inner anchor split in `flattenBlockMapChildren`**
+  (`src/utils/composer.ts`): The block-map flattener previously kept a
+  single `pendingMeta` slot for anchor/tag tokens, so when both an outer
+  container and its first inner key carried metadata
+  (e.g. `&outer\nkey: ...` where `key` itself has `&inner`), the second
+  anchor overwrote the first. New state -- `outerMeta`,
+  `sawNewlineSincePending`, plus helpers `combinedPending()`,
+  `commitOuterIfNewlineSeen()`, and `clearMeta()` -- splits this into
+  two slots. When a newline is observed with `pendingMeta` set, the
+  next anchor/tag/content commits the existing `pendingMeta` to
+  `outerMeta` (it belonged to the outer container) and starts a fresh
+  `pendingMeta` for the inner content. The "scalar followed by
+  block-map" first-key path now routes `outerMeta` to the new map and
+  `pendingMeta` to the first key. All other consumer sites (alias,
+  block-map, block-seq, flow-map, flow-seq, scalar) call
+  `combinedPending()` to merge outer+pending so callers without the
+  split still pick up both layers.
+- **Anchor-on-empty-scalar in `composeBlockSeq`** (`src/utils/composer.ts`):
+  When `sawEntry` is true and a new `-` entry indicator arrives, the
+  empty scalar pushed for the previous entry now picks up any pending
+  anchor/tag. This fixes inputs like `- &a\n- b`, where `&a` previously
+  attached to the second entry instead of anchoring an empty first
+  entry (resolves PW8X).
+- **Implicit empty-key with metadata in block maps** (`src/utils/composer.ts`):
+  New helper `blockMapStartsWithValueSep(blockMap)` detects when an inner
+  block-map begins with `:` (implicit empty key + value). Both
+  `flattenBlockMapChildren` and `composeBlockSeq` now produce an empty
+  scalar first key carrying the pending anchor/tag in this case, rather
+  than attaching the metadata to the block map itself. Outer meta from
+  across a newline still applies to the map. Resolves FH7J (tagged
+  empty values in mappings) and the "anchor before `:`" portion of
+  PW8X.
+- **Space before `:` for anchor/tag-only keys** (`src/utils/stringify.ts`,
+  `stringifyMapNodeLines`): The separator between key and `:` is now
+  `<space>:` (a leading space, then colon) for keys whose only rendering
+  is an anchor or tag (empty scalar with metadata, length 0). Previously
+  only `YamlAlias` keys triggered this, leaving renders like `&a:` that
+  were ambiguous (the colon could parse as part of the anchor name).
+
+These fixes resolve the bugs originally surfaced by 7BMT, U3XV, 26DV
+(anchor on outer line and anchor on inner key both lost), PW8X (anchor
+on empty seq item moved to next item; anchor before `:` attached to map
+instead of empty key; missing space before `:`), and FH7J (tagged empty
+values in mappings).
+
+Five canonical-output tests removed from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`: 26DV, 7BMT, FH7J, PW8X,
+U3XV.
 
 ### Dual Block Scalar Decoders
 

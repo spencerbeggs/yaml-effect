@@ -17,6 +17,7 @@ import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
 import { parse, parseAllDocuments, parseDocument, stringify, stringifyDocument } from "../src/index.js";
 import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
+import { applySingleDocCanonical } from "./utils/canonical.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
 
 // ---------------------------------------------------------------------------
@@ -125,8 +126,6 @@ describe.skipIf(!suiteAvailable || !rawEnabled)("yaml-test-suite compliance (raw
 							}
 							const docs = Either.getOrThrow(docsResult);
 							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
-							// Each part from stringifyDocument already includes its own ---
-							// prefix when hasDocumentStart is true, so just concatenate.
 							const stringified = parts.join("");
 							expect(stringified).toBe(tc.outYaml);
 						} else {
@@ -135,9 +134,9 @@ describe.skipIf(!suiteAvailable || !rawEnabled)("yaml-test-suite compliance (raw
 								expect.unreachable(`Parse failed for ${tc.id}`);
 								return;
 							}
-							const stringified = Effect.runSync(
-								stringifyDocument(Either.getOrThrow(docResult), { forceDefaultStyles: true }),
-							);
+							const doc = Either.getOrThrow(docResult);
+							const raw = Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true }));
+							const stringified = applySingleDocCanonical(raw, doc.contents);
 							expect(stringified).toBe(tc.outYaml);
 						}
 					});
