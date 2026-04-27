@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-19
-last-synced: 2026-03-19
-completeness: 85
+updated: 2026-04-27
+last-synced: 2026-04-27
+completeness: 87
 related:
   - architecture.md
   - parsing.md
@@ -66,7 +66,10 @@ Fields:
 ### YamlComposerError
 
 Tag: `"YamlComposerError"`. Raised when composition encounters semantic
-errors (undefined aliases, duplicate anchors, unresolved tags, etc.).
+errors (undefined aliases, duplicate anchors, unresolved tags, etc.) or
+structural-validation errors detected during composition (key-column
+indentation mismatches, block-seq in key position, mapping content on
+the document-start line).
 
 Fields:
 
@@ -168,7 +171,17 @@ class YamlErrorDetail extends Schema.Class("YamlErrorDetail")({
 ### YamlComposerErrorCode
 
 `UndefinedAlias`, `DuplicateAnchor`, `CircularAlias`, `UnresolvedTag`,
-`InvalidTagValue`, `AliasCountExceeded`.
+`InvalidTagValue`, `AliasCountExceeded`, `InvalidIndentation`,
+`UnexpectedToken`.
+
+The composer reuses the `InvalidIndentation` and `UnexpectedToken` codes
+from the parser-error vocabulary for structural-validation errors raised
+during composition (key-column mismatches, block-seq in key position,
+mapping starting on the document-start line). These errors are produced
+by the composer's leniency-validation helpers (see
+[parsing.md](./parsing.md) "Structural Validation in `flattenBlockMapChildren`")
+but are reported on the `YamlComposerError` channel because the composer
+is the layer that detects them.
 
 ## Error-to-Function Mapping
 

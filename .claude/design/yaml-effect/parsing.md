@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-03-19
-last-synced: 2026-03-19
-completeness: 85
+updated: 2026-04-27
+last-synced: 2026-04-27
+completeness: 88
 related:
   - architecture.md
   - schemas.md
@@ -74,7 +74,11 @@ The scanner handles all YAML 1.2 constructs:
 - **Quoted scalars** -- single-quoted (with `''` escape) and double-quoted
   (with full YAML 1.2 escape sequences: `\n`, `\t`, `\x`, `\u`, `\U`,
   `\N`, `\_`, `\L`, `\P`, line continuation)
-- **Flow indicators** -- `{`, `}`, `[`, `]`, `,` with flow depth tracking
+- **Flow indicators** -- `{`, `}`, `[`, `]`, `,` with flow depth tracking.
+  A `,` at `flowDepth === 0` (block context) emits an `error` token
+  rather than `flow-separator`, since commas have no meaning outside
+  flow collections. This causes inputs like `!!str, xxx` to be rejected
+  (resolves U99R).
 - **Anchors** (`&name`), **aliases** (`*name`), **tags** (`!`, `!!`, `!<>`)
 - **Block structure** -- `?` (explicit key), `-` (sequence entry), `:`
   (value indicator). These emit synthetic `block-map-start` or
@@ -177,11 +181,21 @@ styles:
   `flow-scalar` nodes (one per source line); `collectMultilinePlainScalar`
   merges consecutive plain scalars, stopping at block structure indicators
   (`?`, `:`, `-`), comments, and scalars followed by value-sep (mapping
-  keys). Continuation line detection also handles non-scalar CST nodes
+  keys). It also stops when a candidate scalar is followed by a block-map
+  sibling (detected via `hasBlockMapAfterInList`) -- such a scalar is the
+  first key of a nested implicit mapping, not a continuation, so the merge
+  must terminate so the scalar+block-map validation can fire (resolves
+  EW3V). Continuation line detection also handles non-scalar CST nodes
   (anchors, tags, aliases, directives at non-document-start positions)
-  via `extractLineContent` and `skipChildrenOnLine` helpers. Multi-line
-  explicit keys (`?` followed by indented continuation scalars) are
-  merged via `collectMultilineKey`.
+  via `extractLineContent` and `skipChildrenOnLine` helpers; in the
+  non-scalar continuation branch, an optional `minContinuationColumn`
+  parameter rejects content that returns to a shallower column than the
+  value being continued (so `key: value\n - item1` is not absorbed --
+  the col-1 block-seq is a sibling of `key`, not part of `value`).
+  `composeBlockSeq` deliberately calls `collectMultilinePlainScalar`
+  without `minContinuationColumn` to preserve AB8U-style continuation.
+  Multi-line explicit keys (`?` followed by indented continuation
+  scalars) are merged via `collectMultilineKey`.
 - **Single-quoted scalars** (`decodeSingleQuoted`): Unescapes `''` to
   `'`, then applies `foldFlowLines`.
 - **Double-quoted scalars** (`decodeDoubleQuoted`): Processes escape
@@ -258,6 +272,64 @@ structured key/value sequence. Notable behaviors:
 - `hasValueSepBetween` check prevents false scalar-before-block-map
   pattern matching (where a scalar sibling should not be absorbed as
   a key if a value separator appears between them)
+- `hasBlockMapAfterInList(children, startIdx)` -- helper that returns
+  true when the next non-trivia child after a scalar is a `block-map`
+  (i.e., the scalar is the first key of a nested implicit mapping).
+  Returns false on a sibling `:` value-sep, so it does not fire on
+  ordinary `key: value` shapes. Used both by the leniency-validation
+  branch (below) and by `collectMultilinePlainScalar` to terminate
+  merges when a scalar-then-block-map sibling pattern is detected.
+
+### Structural Validation in `flattenBlockMapChildren`
+
+The block-map flattener performs column-based key validation to reject
+malformed indentation that would otherwise silently parse as nested
+structure. State and helpers:
+
+- `pendingExplicitKeyCol` -- column of a `?` indicator that was just
+  consumed; the next key pushed uses this column (not the scalar's
+  own column) for indentation tracking, so explicit keys with
+  continuation content are anchored to `?`.
+- `hasExternalKeyColumn` -- only validate against `lastKeyColumn` when
+  the parent passed in an externally-anchored first key column. This
+  avoids false positives on malformed CSTs where the flattener cannot
+  trust its own column inference (e.g., KK5P).
+- `validateKeyColumn(col, offset, length)` -- emits an
+  `InvalidIndentation` error when `col !== lastKeyColumn` while
+  `hasExternalKeyColumn` is true.
+- `pushNode` -- before tracking `lastKeyColumn`, resolves the entry
+  indent from `pendingExplicitKeyCol` if a `?` was just consumed.
+
+Validation is applied at three points:
+
+1. **Scalar+block-map first-key path** -- when a scalar is in key
+   position and is followed by a block-map sibling (the implicit
+   nested-mapping case), `validateKeyColumn` runs against the scalar's
+   column. This catches misalignments like DMG6 / EW3V / N4JP / U44R
+   where the inner key is not aligned with the outer key column.
+2. **Block-seq in key position** -- when a non-empty block-seq appears
+   with `afterValueSep === false` and no preceding `?` indicator, the
+   flattener emits `InvalidIndentation`. Empty placeholder block-seqs
+   (`length === 0`) are excluded so KK5P still parses. Catches ZVH3.
+3. **Document-start line** -- in `composeDocument`, when the
+   scalar+block-map pattern is detected at document level **and**
+   `hasDocumentStart` is true **and** the scalar is on the same line
+   as `---`, the composer emits `UnexpectedToken` "Mapping cannot
+   start on document-start (---) line". Catches 9KBC and CXX2.
+
+### Trailing-Content Detection in Scalar Root
+
+When the document root is a scalar and additional content follows that
+cannot be merged via multi-line plain scalar collection, the composer
+flags trailing content. This now also fires for scalar+block-map
+sibling patterns (using `hasBlockMapAfterInList`), preserving the 2CMS
+rejection that previously relied on the multi-line merge consuming
+the "invalid" continuation.
+
+`InvalidIndentation` is included in all three fatal-error filters
+(`parseDocument`, `parseAllDocuments`, `composeDocumentFromCst`) so
+that these structural-validation errors fail the parse Effect rather
+than being absorbed as warnings.
 
 ### Anchor/Alias Handling
 
@@ -362,7 +434,12 @@ Composition errors produce `YamlComposerError` containing:
 - `text: string` -- the original source
 
 Error codes: `UndefinedAlias`, `DuplicateAnchor`, `CircularAlias`,
-`UnresolvedTag`, `InvalidTagValue`, `AliasCountExceeded`.
+`UnresolvedTag`, `InvalidTagValue`, `AliasCountExceeded`,
+`InvalidIndentation`, `UnexpectedToken`. The latter two are produced
+by the structural-validation paths in `flattenBlockMapChildren` and
+`composeDocument` (see "Structural Validation in
+`flattenBlockMapChildren`" above) and are reported on the
+`YamlComposerError` channel rather than `YamlParseError`.
 
 ### Block Scalar Decoding
 

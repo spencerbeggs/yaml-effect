@@ -16,6 +16,9 @@
  * Updated: dual-anchor composer fix (outer/inner meta split), empty seq item anchor preservation, anchored empty key sep.
  * Updated: keep-chomp `...` terminator and chomp preservation, source numeric format preserved (hex, trailing zeros),
  *          tag-on-block-collection (newline-aware), document-level outer/inner meta split.
+ * Updated: parser leniency fixes — block-mapping indent validation (DMG6, EW3V, N4JP, U44R),
+ *          block-seq in key position (ZVH3), comma-in-tag rejection (U99R), mapping on
+ *          document-start line (9KBC, CXX2).
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -23,30 +26,22 @@ export const SKIP: Record<string, string> = {};
 
 /** Tests expected to fail at parse level — known gaps to fix later. */
 export const XFAIL: Record<string, string> = {
-	// Parser accepts invalid YAML (27)
+	// Parser accepts invalid YAML (18)
 	"4HVU": "Parser accepts invalid YAML: Wrong indendation in Sequence",
 	"4JVG": "Parser accepts invalid YAML: Scalar value with two anchors",
 	"5LLU": "Parser accepts invalid YAML: Block scalar with wrong indented line after spaces only",
 	"9C9N": "Parser accepts invalid YAML: Wrong indented flow sequence",
-	"9KBC": "Parser accepts invalid YAML: Mapping starting at --- line",
 	BS4K: "Parser accepts invalid YAML: Comment between plain scalar lines",
 	C2SP: "Parser accepts invalid YAML: Flow Mapping Key on two lines",
-	CXX2: "Parser accepts invalid YAML: Mapping with anchor on document start line",
-	DMG6: "Parser accepts invalid YAML: Wrong indendation in Map",
-	EW3V: "Parser accepts invalid YAML: Wrong indendation in mapping",
 	G9HC: "Parser accepts invalid YAML: Invalid anchor in zero indented sequence",
 	H7J7: "Parser accepts invalid YAML: Node anchor not indented",
-	N4JP: "Parser accepts invalid YAML: Bad indentation in mapping",
 	QB6E: "Parser accepts invalid YAML: Wrong indented multiline quoted scalar",
 	QLJ7: "Parser accepts invalid YAML: Tag shorthand used in documents but only defined in the first",
 	S98Z: "Parser accepts invalid YAML: Block scalar with more spaces than first content line",
 	SY6V: "Parser accepts invalid YAML: Anchor before sequence entry on same line",
-	U44R: "Parser accepts invalid YAML: Bad indentation in mapping (2)",
-	U99R: "Parser accepts invalid YAML: Invalid comma in tag",
 	"VJP3/00": "Parser accepts invalid YAML: Flow collections over many lines",
 	W9L4: "Parser accepts invalid YAML: Literal block scalar with more spaces in first line",
 	"Y79Y/009": "Parser accepts invalid YAML: Tab as block indentation after value indicator",
-	ZVH3: "Parser accepts invalid YAML: Wrong indented sequence item",
 };
 
 /**

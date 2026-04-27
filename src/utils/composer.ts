@@ -368,6 +368,10 @@ function collectMultilinePlainScalar(
 		if (child.type === "flow-scalar" && getScalarStyle(child) === "plain") {
 			// Check if this scalar is followed by `:` — if so, it's a key, stop
 			if (hasValueSepAfterInList(children, idx + 1)) break;
+			// Also stop if scalar is followed by a block-map (it's the first
+			// key of a nested mapping — i.e., an implicit key, not a value
+			// continuation). EW3V: `k1: v1\n k2: v2` — k2 is a key, don't merge.
+			if (hasBlockMapAfterInList(children, idx + 1)) break;
 
 			// Don't merge scalars below the minimum continuation indent (236B).
 			// This prevents merging e.g. "bar" (col 2) with "invalid" (col 0)
@@ -403,6 +407,14 @@ function collectMultilinePlainScalar(
 		if (sawNewline && sourceText && child.type !== "flow-scalar" && child.type !== "block-scalar") {
 			const childCol = lineCol(sourceText, child.offset).column;
 			const isDirectiveContinuation = child.type === "directive";
+			// Apply minContinuationColumn check for non-directive nodes — when
+			// the caller specifies an implicit-mapping continuation indent,
+			// nodes shallower than that aren't continuations and shouldn't
+			// be absorbed (ZVH3: `key: value\n - item1` — the nested block-seq
+			// at col 1 isn't a continuation of the value at col 7+).
+			if (minContinuationColumn !== undefined && !isDirectiveContinuation && childCol < minContinuationColumn) {
+				break;
+			}
 			// Continuation lines must be indented (column > 0), or be directives
 			if (childCol > 0 || isDirectiveContinuation) {
 				const { lineText, lineEndOffset } = extractLineContent(sourceText, child.offset);
@@ -460,6 +472,26 @@ function findNextSignificantChild(children: readonly CstNode[], startIdx: number
 
 function hasValueSepAfterInList(children: readonly CstNode[], startIdx: number): boolean {
 	return findValueSepOffset(children, startIdx) >= 0;
+}
+
+/**
+ * Check if the next non-trivia child is a block-map (indicating that the
+ * preceding scalar is the first key of a nested implicit mapping). Returns
+ * false if a sibling `:` value-sep is encountered first, since that means
+ * the scalar is a key at the current level (not a nested mapping start).
+ */
+function hasBlockMapAfterInList(children: readonly CstNode[], startIdx: number): boolean {
+	for (let j = startIdx; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "newline" || c.type === "comment") continue;
+		if (c.type === "whitespace") {
+			if (c.source === ":") return false;
+			continue;
+		}
+		return c.type === "block-map";
+	}
+	return false;
 }
 
 /** Find the offset of the next ":" value separator in a CST children list, or -1 if none. */
@@ -1353,6 +1385,16 @@ function flattenBlockMapChildren(
 	let lastValueSepOffset = -1;
 	let lastKeyColumn = externalKeyColumn ?? -1;
 	let lastKeyOffset = externalKeyOffset ?? -1;
+	// Whether `lastKeyColumn` originated from an externally-provided first key
+	// (i.e., the parser placed the first key as a sibling before the block-map).
+	// Only externally-anchored columns are used for indentation validation —
+	// internally-tracked columns may include malformed CST artifacts and
+	// shouldn't trigger validation errors.
+	const hasExternalKeyColumn = externalKeyColumn !== undefined;
+	// When `?` explicit-key indicator is seen, the entry indent is the column
+	// of `?`, not of the key scalar. Track it so the next key uses the right
+	// column for indentation validation. Reset after the key is consumed.
+	let pendingExplicitKeyCol = -1;
 
 	// If we have pending meta and a newline has been seen since it was set, the
 	// pending meta applies to the surrounding context (outer container) and any
@@ -1385,12 +1427,32 @@ function flattenBlockMapChildren(
 		sawNewlineSincePending = false;
 	}
 
+	function validateKeyColumn(col: number, offset: number, length: number): void {
+		if (lastKeyColumn >= 0 && col !== lastKeyColumn) {
+			const lc = lineCol(state.text, offset);
+			state.errors.push(
+				new YamlErrorDetail({
+					code: "InvalidIndentation",
+					message: "Bad indentation in block mapping",
+					offset,
+					length,
+					line: lc.line,
+					column: lc.column,
+				}),
+			);
+		}
+	}
+
 	function pushNode(node: YamlNode, nodeOffset?: number) {
 		// Track key column/offset when pushing in key position (before value-sep)
 		if (!afterValueSep && nodeOffset !== undefined && nodeOffset >= 0) {
-			lastKeyColumn = lineCol(state.text, nodeOffset).column;
+			// If `?` explicit-key indicator preceded this scalar, the entry's
+			// indent is the `?` column. Otherwise it's the scalar's column.
+			const newCol = pendingExplicitKeyCol >= 0 ? pendingExplicitKeyCol : lineCol(state.text, nodeOffset).column;
+			lastKeyColumn = newCol;
 			lastKeyOffset = nodeOffset;
 		}
+		pendingExplicitKeyCol = -1;
 		items.push({ kind: "node", node });
 		afterValueSep = false;
 	}
@@ -1424,7 +1486,9 @@ function flattenBlockMapChildren(
 				// that the next content node is the key of this mapping entry.
 				// We don't need to push a semantic item because the node that
 				// follows will naturally be in key position (before value-sep).
-				// Reset afterValueSep so the next node is treated as a key.
+				// Track the column of `?` since the entry's indent is the
+				// `?` column, not the key scalar's column.
+				pendingExplicitKeyCol = lineCol(state.text, child.offset).column;
 				afterValueSep = false;
 				continue;
 			}
@@ -1558,6 +1622,16 @@ function flattenBlockMapChildren(
 				// that came BEFORE a newline (outerMeta) belong to the new map;
 				// anchor/tag that came AFTER the newline (pendingMeta), on the
 				// same line as the key, belong to the key itself.
+				// Validate column consistency: in key position, the scalar must
+				// match the established key column for this block mapping.
+				// Use `?` column if explicit-key indicator was seen, otherwise scalar.
+				// Only validate when externally-anchored (avoids false positives
+				// from malformed CSTs).
+				if (!afterValueSep && hasExternalKeyColumn) {
+					const scalarCol =
+						pendingExplicitKeyCol >= 0 ? pendingExplicitKeyCol : lineCol(state.text, child.offset).column;
+					validateKeyColumn(scalarCol, child.offset, child.length);
+				}
 				const keyMeta = hasMeta(pendingMeta) ? pendingMeta : undefined;
 				const mapMeta = hasMeta(outerMeta) ? outerMeta : undefined;
 				const key = makeScalar(child, state, keyMeta);
@@ -1833,6 +1907,24 @@ function flattenBlockMapChildren(
 		if (child.type === "block-seq") {
 			commitOuterIfNewlineSeen();
 			const seqMeta = combinedPending();
+			// A non-empty block-seq appearing in key position (without `?`
+			// explicit-key indicator) means the parser produced a structure
+			// where a sequence is being treated as a key — that's invalid in
+			// block context. Empty block-seqs are placeholders the parser
+			// sometimes emits and should be ignored.
+			if (!afterValueSep && pendingExplicitKeyCol < 0 && child.length > 0) {
+				const lc = lineCol(state.text, child.offset);
+				state.errors.push(
+					new YamlErrorDetail({
+						code: "InvalidIndentation",
+						message: "Sequence in mapping key position",
+						offset: child.offset,
+						length: child.length,
+						line: lc.line,
+						column: lc.column,
+					}),
+				);
+			}
 			const seq = composeBlockSeq(child, state, hasMeta(seqMeta) ? seqMeta : undefined);
 			resetAllMeta();
 			pushNode(seq);
@@ -3187,6 +3279,25 @@ function composeDocument(
 			// Check if next meaningful child is a block-map (this scalar is a key)
 			const nextContent = findNextContentChild(children, i + 1);
 			if (nextContent && nextContent.type === "block-map") {
+				// A mapping cannot start on the `---` line. The `---` directive end
+				// is followed by a single value (or anchor+value), but a mapping
+				// pattern (key:) on the same line as `---` is malformed (9KBC, CXX2).
+				if (hasDocStart) {
+					const docStartChild = children.find((c) => c.type === "whitespace" && c.source === "---");
+					if (docStartChild && sameLine(state.text, docStartChild.offset, child.offset)) {
+						const lc = lineCol(state.text, child.offset);
+						state.errors.push(
+							new YamlErrorDetail({
+								code: "UnexpectedToken",
+								message: "Mapping cannot start on document-start (---) line",
+								offset: child.offset,
+								length: child.length,
+								line: lc.line,
+								column: lc.column,
+							}),
+						);
+					}
+				}
 				// Resolve which meta attaches to the root map vs. the first key.
 				// - If outer meta exists (collected across a newline), it belongs to
 				//   the map. The current `meta` belongs to the key.
@@ -3260,7 +3371,13 @@ function composeDocument(
 						const isTrailing =
 							(nextContent.type === "flow-scalar" &&
 								hasValueSepAfter(children, indexOfChild(children, nextContent) + 1)) ||
-							nextContent.type === "block-map";
+							nextContent.type === "block-map" ||
+							// Also catch: flow-scalar followed by a block-map sibling
+							// (the scalar+block-map pattern that forms an implicit mapping).
+							// Without this, 2CMS slips through after `hasBlockMapAfterInList`
+							// stops the merge before reaching the trailing scalar.
+							(nextContent.type === "flow-scalar" &&
+								hasBlockMapAfterInList(children, indexOfChild(children, nextContent) + 1));
 						if (isTrailing) {
 							const lc = lineCol(state.text, nextContent.offset);
 							state.errors.push(
@@ -3856,7 +3973,8 @@ export function parseDocument(
 					e.code === "AliasCountExceeded" ||
 					e.code === "UnexpectedToken" ||
 					e.code === "InvalidDirective" ||
-					e.code === "MalformedFlowCollection",
+					e.code === "MalformedFlowCollection" ||
+					e.code === "InvalidIndentation",
 			);
 			if (fatalErrors.length > 0) {
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
@@ -3930,7 +4048,8 @@ export function parseAllDocuments(
 						e.code === "DuplicateAnchor" ||
 						e.code === "AliasCountExceeded" ||
 						e.code === "UnexpectedToken" ||
-						e.code === "InvalidDirective",
+						e.code === "InvalidDirective" ||
+						e.code === "InvalidIndentation",
 				);
 				if (fatal.length > 0) fatalErrors.push(...fatal);
 			}
