@@ -46,6 +46,8 @@ export class YamlScalar extends Schema.TaggedClass<YamlScalar>()("YamlScalar", {
 	style: ScalarStyle,
 	anchor: Schema.optional(Schema.String),
 	comment: Schema.optional(Schema.String),
+	chomp: Schema.optional(Schema.Literal("strip", "clip", "keep")),
+	raw: Schema.optional(Schema.String),
 	offset: Schema.Int.pipe(Schema.nonNegative()),
 	length: Schema.Int.pipe(Schema.nonNegative()),
 }) {}

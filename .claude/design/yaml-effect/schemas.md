@@ -72,6 +72,18 @@ Tag: `"YamlScalar"`. Fields:
 - `tag?: String` -- explicit YAML tag (e.g., `!!str`)
 - `anchor?: String` -- anchor name
 - `comment?: String` -- trailing/leading comment text
+- `chomp?: Literal("strip", "clip", "keep")` -- block-scalar chomp
+  indicator parsed from the source header (`-` strip, `+` keep, otherwise
+  clip). Populated only for block-literal/block-folded scalars; absent for
+  flow scalars. Used by the stringifier to round-trip `|+` / `|-` headers
+  whose semantics cannot be inferred from the resolved value alone (e.g.
+  newline-only content needs `|+` to preserve a trailing newline).
+- `raw?: String` -- source representation of a numeric scalar when it
+  differs from `String(value)`. Populated for plain scalars whose
+  resolved value is `typeof "number"` and whose source form is
+  non-canonical (hex `0xFFEEBB`, octal `0o755`, trailing zeros `450.00`,
+  etc.). The stringifier prefers `raw` over `renderNumber(value)` so the
+  original textual format survives a parse/stringify round-trip.
 - `offset: Int (>= 0)`, `length: Int (>= 0)`
 
 ### YamlAlias

@@ -14,6 +14,8 @@
  * Updated: escape sequences (named C0 escapes, canonical unicode), tag normalization, multi-doc join, tagged block scalars.
  * Updated: single-quoted multi-line render, scalar-rooted single-doc canonical, block→DQ for tricky whitespace.
  * Updated: dual-anchor composer fix (outer/inner meta split), empty seq item anchor preservation, anchored empty key sep.
+ * Updated: keep-chomp `...` terminator and chomp preservation, source numeric format preserved (hex, trailing zeros),
+ *          tag-on-block-collection (newline-aware), document-level outer/inner meta split.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -60,22 +62,13 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"5T43": ["output"],
 	"5WE3": ["output"],
 	"652Z": ["output"],
-	"6BFJ": ["output"],
-	"6JWB": ["output"],
 	"6M2F": ["output"],
 	"6SLA": ["output"],
 	"6WLZ": ["output"],
-	"735Y": ["output"],
-	"9KAX": ["output"],
 	"9MMW": ["output"],
 	"9MQT/00": ["output"],
 	B3HG: ["output"],
-	C4HZ: ["output"],
 	EXG3: ["output"],
-	F8F9: ["output"],
-	"JEF9/00": ["output"],
-	"JEF9/01": ["output"],
-	"JEF9/02": ["output"],
 	K54U: ["output"],
 	K858: ["output"],
 	KK5P: ["output"],
@@ -87,7 +80,6 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	Q9WF: ["output"],
 	R4YG: ["output"],
 	T5N4: ["output"],
-	UGM3: ["output"],
 	"VJP3/01": ["output"],
 	WZ62: ["output"],
 	X38W: ["output"],

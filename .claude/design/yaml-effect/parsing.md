@@ -211,6 +211,30 @@ The composer walks CST nodes and produces:
 `hasDocumentStart` is detected by checking for a `whitespace` CST node
 with `source === "---"` among the document's children.
 
+### Scalar Construction (`makeScalar`)
+
+`makeScalar()` builds a `YamlScalar` from a CST scalar node. In addition
+to `value`, `style`, `tag`, `anchor`, and `comment`, it populates two
+optional round-trip metadata fields:
+
+- **`chomp`** -- for block scalars only, computed by `getBlockChomp(node)`.
+  The helper trims leading whitespace from `node.source`, isolates the
+  header line (text before the first newline), and returns `"keep"` if it
+  contains `+`, `"strip"` if it contains `-`, otherwise `"clip"`. Returns
+  `undefined` for non-block scalars. The chomp indicator is required for
+  faithful round-tripping of `|+` headers because the resolved value alone
+  cannot distinguish between "the value happened to end in a newline" and
+  "the source explicitly requested all trailing newlines preserved".
+- **`raw`** -- the source representation when `style === "plain"`,
+  `typeof value !== "string"`, and the source form differs from
+  `String(value)`. The check is performed by `shouldPreserveRaw(rawValue,
+  value)`, which returns `true` only for numbers whose source spelling
+  (hex `0xFFEEBB`, octal, `450.00`, etc.) does not equal `String(value)`.
+  Populated by `makeScalar()` for normal scalar nodes and by the
+  plain-scalar paths inside `flattenBlockMapChildren()` (which constructs
+  `YamlScalar` instances directly when synthesizing block-map keys/values
+  from concatenated `flow-scalar` children).
+
 ### TAG Directive Resolution
 
 The composer processes `%TAG` directives to build a tag handle prefix
@@ -247,11 +271,79 @@ structured key/value sequence. Notable behaviors:
   implicit mapping keys (followed by block-map) skip this check since
   the anchor applies to the map, not the alias.
 
+### Newline-Aware Tag/Anchor Split in `composeBlockSeq`
+
+`composeBlockSeq()` tracks `pendingMeta` (the most-recent uncomsumed
+tag/anchor) plus a `sawNewlineSincePending` flag. The flag is set when
+a `newline` CST child is encountered while `pendingMeta` is non-empty,
+and cleared whenever the meta is consumed. When the next significant
+content is a flow-scalar followed by a block-map (the implicit-map case
+inside a sequence entry, e.g. `- !!map\n  key: value`), the helper
+splits the meta:
+
+- If `sawNewlineSincePending` is true, the pending meta belongs to the
+  outer container (the implicit map). The first key is constructed
+  with no meta, and `composeBlockMap(blockMap, state, key, mapMeta)`
+  receives `mapMeta`.
+- Otherwise, the pending meta attaches to the first key (legacy
+  behavior: `&a key: value` anchors the key, not the map).
+
+Without this split, a tag like `!!map` written above the first key on
+its own line was incorrectly attached to the key (or silently dropped
+when the next anchor overwrote it). The same flag is also reset on
+every other code path that consumes `pendingMeta` (scalar, alias,
+block-map, block-seq, empty-key cases).
+
 ### Flow Collection as Document-Level Key
 
 When `composeDocument()` encounters a `flow-seq` or `flow-map` CST node
 followed by a `block-map` sibling, the flow collection becomes the first
 key of an implicit mapping via `composeBlockMap(blockMap, state, flowNode)`.
+When metadata is present, the `outerMeta` split (described below) routes
+it to the outer block-map; the remaining `meta` attaches to the flow
+collection that becomes the inner first key. Both `flow-map`-as-key and
+`flow-seq`-as-key paths use this split.
+
+### Document-Level Outer/Inner Meta Split (`composeDocument`)
+
+`composeDocument()` maintains two metadata slots:
+
+- `meta` -- the most-recent uncommitted tag/anchor at document level.
+- `outerMeta` -- meta that has crossed a newline boundary and therefore
+  belongs to the outer container (the root collection), not to whatever
+  inner key/scalar it precedes.
+
+A `sawNewlineSinceMeta` flag is set whenever a `newline` CST child is
+seen while `meta` is non-empty. When the next `anchor` or `tag` child
+arrives, the helper `commitMetaAcrossNewline()` moves the existing
+`meta` into `outerMeta` (because that meta crossed a newline) and
+starts a fresh `meta` for the incoming token. Without this commit step,
+a sequence like `&a !!t1\n&b !!t2 key: ...` would silently overwrite
+the first pair when the second arrives.
+
+When the document's root content is finally constructed, all six
+content-producing paths consult both slots:
+
+- **block-map** / **block-seq** / **flow-map** / **flow-seq** as root
+  collection -- combine `outerMeta` and `meta` (both apply to the same
+  collection at root level when there is no inner key).
+- **flow-map** / **flow-seq as key** (followed by a `block-map`
+  sibling) -- when `outerMeta` is set, route it to the outer
+  `composeBlockMap` call as `mapMeta`; route remaining `meta` to the
+  flow collection (the inner first key). When `outerMeta` is empty,
+  combine both into the flow collection's meta.
+- **scalar root** (including the multi-line plain scalar path via
+  `collectMultilinePlainScalar`) -- combine `outerMeta` and `meta` and
+  apply to the scalar.
+- **scalar as block-map key** -- when `outerMeta` is set, it becomes
+  the map meta and `meta` becomes the key meta. When `outerMeta` is
+  empty, the legacy `hasDocStart && hasMeta(meta)` rule still treats
+  `meta` as map-level (otherwise it attaches to the key). The same
+  three-branch resolution is applied to both the `block-map` follow-on
+  case and the flat (`hasValueSepAfter`) case.
+
+After the root content is built, both `meta` and `outerMeta` are
+cleared and `sawNewlineSinceMeta` is reset.
 
 ### Explicit Key `?` in Flow Mappings
 

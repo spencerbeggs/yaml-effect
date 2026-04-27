@@ -112,10 +112,19 @@ pnpm run lint:fix:unsafe   # Auto-fix including unsafe transforms
 pnpm run lint:md           # Check markdown with markdownlint
 pnpm run lint:md:fix       # Auto-fix markdown issues
 pnpm run typecheck         # Type-check via Turbo (runs tsgo)
-pnpm run test              # Run all tests
+pnpm run test              # Run unit + filtered compliance tests
 pnpm run test:watch        # Run tests in watch mode
 pnpm run test:coverage     # Run tests with v8 coverage report
+pnpm run test:compliance   # Run filtered yaml-test-suite (uses skip maps)
+pnpm run test:compliance-raw  # Run unfiltered yaml-test-suite (true compliance %)
 ```
+
+When changing parser, composer, or stringifier code, run
+`pnpm run test:compliance-raw` to see the true compliance percentage. If
+filtered tests start failing on `it.fails` (a previously XFAIL test now
+passes), remove that entry from
+`__test__/utils/yaml-test-suite-skip-map.ts`. See
+@.claude/design/yaml-effect/compliance-testing.md for the full workflow.
 
 ### Building
 

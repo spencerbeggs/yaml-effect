@@ -413,17 +413,14 @@ into per-category issues (#15, #16).
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | Open (23 XFAIL "accepts invalid") |
 
-Current compliance: 2348/2409 raw assertions passing (97.47%), 1188
+Current compliance: 2374/2424 raw assertions passing (97.93%), 1188
 filtered assertions passing, 23 XFAIL (all "accepts invalid"), 0 JSON
-comparison failures, 0 roundtrip failures, ~38 SKIP_ASSERTIONS entries
+comparison failures, 0 roundtrip failures, ~28 SKIP_ASSERTIONS entries
 (output only). Use `pnpm run test:compliance-raw` to see unfiltered
 results.
 
 Remaining canonical-output gaps cluster into a few categories:
 
-- **Tag-on-block-collection inline placement** (6JWB, 735Y, C4HZ) -- tags
-  applied to block-style maps/sequences need inline placement on the
-  introducing line rather than a leading line of their own.
 - **Explicit `?` syntax for complex keys** (5WE3, 6SLA, M5DY, Q9WF, X38W) --
   emitting `? key\n: value` for non-scalar or multi-line keys in canonical
   block form.
@@ -584,6 +581,77 @@ values in mappings).
 Five canonical-output tests removed from `SKIP_ASSERTIONS` in
 `__test__/utils/yaml-test-suite-skip-map.ts`: 26DV, 7BMT, FH7J, PW8X,
 U3XV.
+
+### Key Compliance Improvements (chomp preservation + numeric raw + meta split)
+
+The jump from 97.47% to 97.93% raw compliance (2374/2424 assertions,
++26 assertions, +10 canonical-output tests previously skipped) came
+from preserving block-scalar chomp metadata, preserving non-canonical
+numeric source representations, and a document-level outer/inner
+metadata split that mirrors the existing block-map and block-seq
+splits.
+
+The 10 newly-passing canonical-output tests removed from
+`SKIP_ASSERTIONS` in `__test__/utils/yaml-test-suite-skip-map.ts`:
+F8F9, JEF9/00, JEF9/01, JEF9/02, 6JWB, 735Y, C4HZ, UGM3, 9KAX, 6BFJ.
+
+Categories of fixes:
+
+- **Chomp preservation on `YamlScalar`** -- new optional fields
+  `chomp: "strip" | "clip" | "keep"` and `raw: string` on
+  `YamlScalar` (`src/schemas/YamlAstNodes.ts`). The composer's
+  `getBlockChomp()` helper extracts the chomp indicator from the
+  block-scalar header; `makeScalar()` stores it on the resulting node.
+  `stripNodeComments()` and `normalizeNodeTags()` propagate `chomp`
+  and `raw` when constructing replacement nodes so transformations
+  do not lose round-trip metadata.
+- **Value-driven chomp computation in `renderBlockLiteral`**
+  (`src/utils/stringify.ts`) -- chomp is computed primarily from the
+  value's trailing-newline structure (`+` for `\n\n`, `-` for no
+  trailing `\n`, empty/clip for one trailing `\n`). The new
+  `explicitChomp` parameter (sourced from `node.chomp` and routed
+  through `renderString`) reserves `+` for newline-only values when
+  the original chomp was `"keep"`, so an empty `|+` literal
+  round-trips. The explicit indent indicator emission was also
+  refined: for newline-only bodies the indicator is emitted only
+  under keep-chomp.
+- **Keep-chomp `...` document terminator** -- new `endsWithKeepChomp`
+  helper detects when the rendered output ends with `|+` or `>+`. In
+  canonical mode, `stringifyDocument()` emits an explicit `...\n`
+  even when `doc.hasDocumentEnd` is false, because keep-chomp
+  consumes any trailing blanks up to the next document marker --
+  without `...` the reader cannot tell where the open-ended scalar
+  ends. (Resolves F8F9, JEF9/00-02, 9KAX, 6BFJ.)
+- **Numeric raw preservation** -- `makeScalar()` populates `raw` for
+  plain scalars whose resolved value is a number and whose source
+  spelling differs from `String(value)`. The decision is made by
+  `shouldPreserveRaw(rawValue, value)`. The plain-scalar path inside
+  `flattenBlockMapChildren()` (which builds `YamlScalar` directly
+  for synthesized block-map keys/values) also populates `raw`.
+  `stringifyScalarNodeLines()` prefers `node.raw` over
+  `renderNumber(value)` so non-canonical formats (hex `0xFFEEBB`,
+  octal, trailing zeros like `450.00`, leading `+`) survive
+  round-trip. (Resolves UGM3 and several hex/octal canonical-output
+  variants.)
+- **Document-level outer/inner meta split in `composeDocument`** --
+  parallel to the existing splits in `flattenBlockMapChildren` and
+  `composeBlockSeq`. New `outerMeta` slot plus `sawNewlineSinceMeta`
+  flag and `commitMetaAcrossNewline()` helper. When a tag/anchor at
+  document level is followed by a newline and then more meta, the
+  prior meta is committed to `outerMeta` (it belonged to the outer
+  container). All six content-producing root paths (block-map,
+  block-seq, flow-map, flow-seq, scalar-root, multi-line plain
+  scalar) consult both slots. The flow-collection-as-key path
+  splits outer (root map) vs inner (flow collection key) meta.
+  (Resolves 6JWB, 735Y, C4HZ -- "tag-on-block-collection inline
+  placement" -- by ensuring the tag attaches to the outer
+  collection when separated by a newline, then naturally renders
+  inline on the introducing line.)
+- **Newline-aware tag/anchor split in `composeBlockSeq`** -- new
+  `sawNewlineSincePending` flag. When a `-` entry is followed by a
+  newline, then a flow-scalar-then-block-map (the implicit-map case),
+  pending meta is routed to the outer map (`mapMeta`) rather than
+  the first key. Resets on every meta-consuming code path.
 
 ### Dual Block Scalar Decoders
 

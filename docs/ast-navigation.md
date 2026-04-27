@@ -256,8 +256,15 @@ A leaf value: string, number, boolean, or null.
 | `tag` | `string` (optional) | Explicit YAML tag |
 | `anchor` | `string` (optional) | Anchor name for aliasing |
 | `comment` | `string` (optional) | Trailing or leading comment |
+| `chomp` | `"strip"` \| `"clip"` \| `"keep"` (optional) | Block scalar chomping indicator (`-`, default, or `+`) preserved from source |
+| `raw` | `string` (optional) | Original source text, used to round-trip non-canonical numeric formats and block scalar headers |
 | `offset` | `number` | Zero-based character offset |
 | `length` | `number` | Character length of the span |
+
+The `chomp` and `raw` fields are populated by the composer when parsing and
+read by the stringifier to preserve fidelity on round-trip. They are optional
+on construction — manually built `YamlScalar` instances do not need to set
+them.
 
 ### `YamlMap`
 
