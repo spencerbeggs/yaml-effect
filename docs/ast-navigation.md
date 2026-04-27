@@ -257,7 +257,7 @@ A leaf value: string, number, boolean, or null.
 | `anchor` | `string` (optional) | Anchor name for aliasing |
 | `comment` | `string` (optional) | Trailing or leading comment |
 | `chomp` | `"strip"` \| `"clip"` \| `"keep"` (optional) | Block scalar chomping indicator (`-`, default, or `+`) preserved from source |
-| `raw` | `string` (optional) | Original source text, used to round-trip non-canonical numeric formats and block scalar headers |
+| `raw` | `string` (optional) | Source text for plain numeric scalars whose form is non-canonical, e.g. hex literals (`0xFFEEBB`) or decimals with trailing zeros (`450.00`) |
 | `offset` | `number` | Zero-based character offset |
 | `length` | `number` | Character length of the span |
 

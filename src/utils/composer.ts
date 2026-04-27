@@ -1112,9 +1112,15 @@ function makeScalar(cst: CstNode, state: ComposerState, meta?: NodeMeta): YamlSc
  * Returns true when the scalar's source representation should be preserved
  * for canonical round-trip — i.e. the source form differs from `String(value)`
  * but resolves to the same value.
+ *
+ * Special-float values (NaN, +/-Infinity) are excluded: their canonical YAML
+ * spelling is the lowercase `.inf` / `.nan` form per spec §10.3, so source
+ * variants like `.INF` or `.NaN` should normalize on round-trip rather than
+ * preserve.
  */
 function shouldPreserveRaw(rawValue: string, value: unknown): boolean {
 	if (typeof value === "number") {
+		if (Number.isNaN(value) || !Number.isFinite(value)) return false;
 		return rawValue !== String(value);
 	}
 	return false;
