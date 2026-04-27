@@ -12,6 +12,8 @@
  * Updated: canonical output fixes — comment stripping, inline doc-start scalars, anchor/tag placement, empty scalars.
  * Updated: scalar style preservation, tag placement on root maps, quoting for tagged values.
  * Updated: escape sequences (named C0 escapes, canonical unicode), tag normalization, multi-doc join, tagged block scalars.
+ * Updated: single-quoted multi-line render, scalar-rooted single-doc canonical, block→DQ for tricky whitespace.
+ * Updated: dual-anchor composer fix (outer/inner meta split), empty seq item anchor preservation, anchored empty key sep.
  */
 
 /** Tests to skip entirely — not applicable to our implementation. */
@@ -52,39 +54,25 @@ export const XFAIL: Record<string, string> = {
  * - "roundtrip" — skip stringify roundtrip comparison
  */
 export const SKIP_ASSERTIONS: Record<string, string[]> = {
-	HS5T: ["output"],
-	Q8AD: ["output"],
-	"26DV": ["output"],
 	"2LFX": ["output"],
-	"36F6": ["output"],
 	"4ABK": ["output"],
 	"4WA9": ["output"],
-	"4ZYM": ["output"],
 	"5T43": ["output"],
 	"5WE3": ["output"],
 	"652Z": ["output"],
 	"6BFJ": ["output"],
-	"6FWR": ["output"],
 	"6JWB": ["output"],
 	"6M2F": ["output"],
 	"6SLA": ["output"],
 	"6WLZ": ["output"],
-	"6WPF": ["output"],
 	"735Y": ["output"],
-	"7BMT": ["output"],
 	"9KAX": ["output"],
 	"9MMW": ["output"],
 	"9MQT/00": ["output"],
-	"9TFX": ["output"],
-	"9YRD": ["output"],
 	B3HG: ["output"],
 	C4HZ: ["output"],
-	DWX9: ["output"],
-	EX5H: ["output"],
 	EXG3: ["output"],
 	F8F9: ["output"],
-	FH7J: ["output"],
-	H2RW: ["output"],
 	"JEF9/00": ["output"],
 	"JEF9/01": ["output"],
 	"JEF9/02": ["output"],
@@ -95,17 +83,10 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"M2N8/00": ["output"],
 	"M2N8/01": ["output"],
 	M5DY: ["output"],
-	MJS9: ["output"],
-	NB6Z: ["output"],
-	PRH3: ["output"],
 	PUW8: ["output"],
-	PW8X: ["output"],
 	Q9WF: ["output"],
 	R4YG: ["output"],
-	T26H: ["output"],
-	T4YY: ["output"],
 	T5N4: ["output"],
-	U3XV: ["output"],
 	UGM3: ["output"],
 	"VJP3/01": ["output"],
 	WZ62: ["output"],

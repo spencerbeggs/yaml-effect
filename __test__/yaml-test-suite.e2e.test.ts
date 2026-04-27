@@ -12,6 +12,7 @@ import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
 import { parse, parseAllDocuments, parseDocument, stringify, stringifyDocument } from "../src/index.js";
 import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
+import { applySingleDocCanonical } from "./utils/canonical.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
 import { SKIP, SKIP_ASSERTIONS, XFAIL } from "./utils/yaml-test-suite-skip-map.js";
 
@@ -149,9 +150,9 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 								expect.unreachable(`Parse failed for ${tc.id}`);
 								return;
 							}
-							const stringified = Effect.runSync(
-								stringifyDocument(Either.getOrThrow(docResult), { forceDefaultStyles: true }),
-							);
+							const doc = Either.getOrThrow(docResult);
+							const raw = Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true }));
+							const stringified = applySingleDocCanonical(raw, doc.contents);
 							expect(stringified).toBe(tc.outYaml);
 						}
 					});
