@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-04-27
-last-synced: 2026-04-27
-completeness: 93
+updated: 2026-04-28
+last-synced: 2026-04-28
+completeness: 94
 related:
   - architecture.md
   - parsing.md
@@ -413,26 +413,23 @@ into per-category issues (#15, #16).
 | #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
 | #16 | Parser accepts invalid YAML | **Resolved** (0 remaining XFAIL "accepts invalid") |
 
-Current compliance: 17 failing canonical-output tests of 1226 raw
-assertions (98.62%, up from 98.45% earlier on this branch and 98.20%
-before that). Filtered compliance has 0 XFAIL and 0 SKIP entries, 0
-JSON comparison failures, 0 roundtrip failures, 17 SKIP_ASSERTIONS
-entries (all canonical-output mismatches). Use
-`pnpm run test:compliance-raw` to see unfiltered results.
+Current compliance: 13 failing canonical-output tests of 1226 raw
+assertions (98.94%, up from 98.62% earlier on this branch). Filtered
+compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison failures,
+0 roundtrip failures, 13 SKIP_ASSERTIONS entries (all canonical-output
+mismatches). Use `pnpm run test:compliance-raw` to see unfiltered
+results.
 
-The remaining 17 canonical-output failures and the structural reasons
+The remaining 13 canonical-output failures and the structural reasons
 they have not been closed piecemeal are catalogued in
 [canonical-output-gaps.md](./canonical-output-gaps.md). At a high
 level they cluster into:
 
-- **Class A -- Parser shape (4 failures)**: KK5P, M2N8/00, M2N8/01,
-  M5DY. Explicit `?` keys whose key OR value is a block collection.
-  Requires explicit-key subtree grouping in `parseBlockMapping` (the
-  parser collects `?`, key, `:`, value into a structured pair before
-  the composer sees them) rather than the current flat-children
-  approach. A piecemeal fix was attempted on `feat/parser` and
-  reverted; the full refactor scope is documented in
-  canonical-output-gaps.md.
+- **Class A -- Parser shape (closed 2026-04-28)**: KK5P, M2N8/00,
+  M2N8/01, M5DY all pass. Closed via composer-side
+  `scanExplicitKeyShape` heuristic plus `sawExplicitKey` parser tweak
+  rather than the full structured-pair refactor — see
+  canonical-output-gaps.md "Class A Resolution" for details.
 - **Class B -- Multi-document tag scoping (1 failure)**: 6WLZ.
   Stringifier needs to expand `!handle!suffix` to verbatim
   `!<full-tag>` form when the canonical emitter is dropping the
@@ -1057,6 +1054,100 @@ documented as a single design doc rather than additional piecemeal
 rules; see [canonical-output-gaps.md](./canonical-output-gaps.md)
 for the full enumeration and the two proposed structural paths
 (AST source-shape capture vs. libyaml-faithful canonical emitter).
+
+### Key Compliance Improvements (explicit-key parser/composer fixes)
+
+The jump from 98.62% to 98.94% raw compliance (13 failing
+canonical-output tests of 1226 assertions, down from 17) closed
+the entire Class A "explicit-`?` keys with collection bodies"
+group documented in
+[canonical-output-gaps.md](./canonical-output-gaps.md). The
+required structural change -- letting the parser and composer
+faithfully represent explicit keys whose key OR value is itself
+a block collection -- was deferred for several earlier passes
+because each piecemeal attempt broke unrelated fixtures. This
+pass solved it with three coordinated edits across the parser,
+composer, and stringifier rather than with a parser CST refactor.
+
+Cleared canonical-output tests, removed from `SKIP_ASSERTIONS` in
+`__test__/utils/yaml-test-suite-skip-map.ts`:
+
+- **KK5P** (Various combinations of explicit block mappings).
+- **M5DY** (Spec Example 2.11 -- Mapping between Sequences).
+- **M2N8/00** (Question mark edge cases -- block-seq item with
+  explicit-`?` map).
+- **M2N8/01** (Question mark edge cases -- explicit-`?` flow key
+  with following entries).
+
+Categories of fixes:
+
+- **Parser: `sawExplicitKey` guard on early-exit** (`src/utils/parser.ts`,
+  `parseBlockMapping`). The early-exit at the top of the parse
+  loop used to break out on
+  `block-seq-start && token.column <= indent && children.length > 0
+  && !lastNonTriviaIsValueSep(children)`. Adding `&& !sawExplicitKey`
+  lets the parser stay in the explicit-key body when the key starts
+  with `-` and the lexer's `block-seq-start.column` (always the
+  lineIndent) is `<= indent`. Before the fix, M5DY produced an
+  outer block-map with `length === 2` (just `?` and a whitespace),
+  with the rest of the document parsing as siblings instead of as
+  the key and value of the explicit pair.
+- **Parser: `findFirstSeqEntryColumn` for explicit-key seq indent**
+  (`src/utils/parser.ts`, `parseBlockMapping`'s `block-seq-start`
+  branch). When `sawExplicitKey` is true, the seq indent passed to
+  `parseBlockSequence` is now derived via
+  `findFirstSeqEntryColumn(state, token.column)` rather than the
+  lexer-emitted `token.column`. The lineIndent column from the
+  lexer can be smaller than the actual `-` column when a seq
+  follows another block indicator on the same line. The
+  implicit-key value position (`key: - a`) still uses
+  `token.column` so the existing 5U3A rejection keeps firing.
+  See [parsing.md](./parsing.md) "Explicit-Key Handling in
+  `parseBlockMapping`".
+- **Composer: `scanExplicitKeyShape` + inline-implicit-map path**
+  (`src/utils/composer.ts`, `flattenBlockMapChildren`). The `?`
+  child handler now delegates to a helper that returns one of
+  three shapes: `terminated` (a `:` was found at the `?` column,
+  use existing per-node logic), `inline-implicit-map` (no
+  same-column `:` but a same-line `:` at deeper column, so the
+  body is itself a compact implicit map -- the handler
+  recursively flattens the slice and pushes a `YamlMap` as a
+  single key node), or `simple` (no internal `:` at all). New
+  helpers `findFirstContent` / `findLastContent` skip leading and
+  trailing whitespace+newline children when computing the slice
+  bounds for the recursive call. The same-line check on the inner
+  `:` is essential to avoid mis-merging sibling pairs across
+  lines (e.g. 7W2P's `? a\n? b\nc:\n` must produce three pairs,
+  not one inline map). See [parsing.md](./parsing.md) "Inline
+  Implicit-Map Keys via `scanExplicitKeyShape`".
+- **Composer: `isExplicitKey` gates multi-line flow-key check**
+  (`src/utils/composer.ts`). The C2SP-cleared
+  `checkMultilineImplicitKeys` rejection (multi-line `style ===
+  "flow"` collections used as implicit keys) needed to be
+  suppressed when the key was introduced by `?`, since the
+  `? key\n: value` form is explicitly designed for keys that
+  don't fit on one line. The new `isExplicitKey(text, offset)`
+  helper does a backward scan from the key node's offset through
+  whitespace and newline characters and returns true when the
+  nearest non-whitespace is `?` (preceded by start-of-text or
+  whitespace). Used to allow M5DY's second doc shape
+  `? [ flow,\n  spans ]`.
+- **Stringifier: `isComplexKey` requires non-empty collection key**
+  (`src/utils/stringify.ts`, `stringifyMapNodeLines`). The trigger
+  for `? key\n: value` form was tightened from "key is `YamlMap` or
+  `YamlSeq`" to "key is a non-empty `YamlMap` or `YamlSeq`". Empty
+  collection keys (`[]`, `{}`) render as one line and CAN be used
+  as implicit keys (`[]: x` form). Without this change, M2N8/01's
+  inner pair (a `YamlSeq` with no items as the key, value `x`)
+  rendered as `? []\n: x` instead of the canonical inline `[]: x`.
+  See [stringify.md](./stringify.md) "Explicit `? key\n: value`
+  Syntax".
+
+Files changed: `src/utils/parser.ts`, `src/utils/composer.ts`,
+`src/utils/stringify.ts`, plus the four cleared entries in
+`__test__/utils/yaml-test-suite-skip-map.ts`. All unit tests pass
+and filtered compliance passes; the canonical-output failure
+count dropped from 17 to 13.
 
 ### Dual Block Scalar Decoders
 

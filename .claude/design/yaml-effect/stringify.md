@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-04-27
-last-synced: 2026-04-27
-completeness: 87
+updated: 2026-04-28
+last-synced: 2026-04-28
+completeness: 88
 related:
   - architecture.md
   - schemas.md
@@ -222,16 +222,22 @@ metadata.
 `stringifyMapNodeLines()` emits explicit-key block syntax (`? key\n: value`
 rather than implicit `key: value`) when the key cannot be expressed on a
 single line in front of the colon. The trigger is the `isComplexKey`
-predicate, computed via the new `keyIsScalarWithNewline` helper:
+predicate, which combines a non-empty-collection check with the
+`keyIsScalarWithNewline` helper:
 
-- Key is a `YamlMap` or `YamlSeq` (existing trigger -- non-scalar keys must
-  be hoisted onto a `?` line).
-- Key is a `YamlScalar` whose value is a `string` containing `\n` (new) --
+- Key is a **non-empty** `YamlMap` or `YamlSeq`
+  (`keyIsNonEmptyCollection`: an instance check plus a non-empty `items`
+  array). Empty collection keys (`[]`, `{}`) render as a single line and
+  CAN be used as implicit keys (`[]: x` form), so the explicit-form
+  trigger must exclude them. Without this exclusion, M2N8/01's inner
+  pair (a `YamlSeq` with no items as the key, value `x`) was rendered as
+  `? []\n: x` instead of the canonical inline `[]: x`.
+- Key is a `YamlScalar` whose value is a `string` containing `\n` --
   multi-line scalar values cannot be inlined as `key:` because the colon
   would land mid-content.
 - Key is a `YamlScalar` whose `style` is `block-literal` or `block-folded`
-  (new) -- the rendered key always begins with a `|` / `>` header line, so
-  the implicit form would emit `|...:` and corrupt the header.
+  -- the rendered key always begins with a `|` / `>` header line, so the
+  implicit form would emit `|...:` and corrupt the header.
 
 When `isComplexKey` is true the renderer emits `? <first-line>` for the
 key, then the continuation lines, then a `: <value>` line.

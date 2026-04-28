@@ -336,8 +336,12 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		// For explicit key mappings, the sequence after ":" is already
 		// consumed by parseBlockValue, so this check only applies to
 		// sequences appearing on a subsequent line after ":" (not same-line).
+		// Also don't stop when we're in the middle of consuming an explicit
+		// key (`?` seen, no `:` yet) and the seq IS the explicit key (KK5P,
+		// M5DY: `? - a`). The lexer emits block-seq-start at lineIndent
+		// which can be <= the mapping indent in this case.
 		if (token.kind === "block-seq-start" && token.column <= indent && children.length > 0) {
-			if (!lastNonTriviaIsValueSep(children)) break;
+			if (!lastNonTriviaIsValueSep(children) && !sawExplicitKey) break;
 		}
 
 		// Trivia
@@ -394,7 +398,15 @@ function parseBlockMapping(state: ParserState, indent: number): CstNode {
 		}
 
 		if (token.kind === "block-seq-start") {
-			children.push(parseBlockSequence(state, token.column));
+			// When `?` introduces an explicit key followed by a block-seq on
+			// the same line (`? - a`), the lexer emits block-seq-start at
+			// lineIndent but the actual entries are at a deeper column. Use
+			// the entry column in that case so parseBlockSequence's indent
+			// comparisons match (KK5P, M5DY, M2N8 explicit-? compact-key
+			// form). For implicit-key value position (`key: - a`), keep
+			// token.column to preserve invalid-input rejection (5U3A).
+			const seqIndent = sawExplicitKey ? findFirstSeqEntryColumn(state, token.column) : token.column;
+			children.push(parseBlockSequence(state, seqIndent));
 			continue;
 		}
 

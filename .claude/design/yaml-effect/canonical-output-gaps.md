@@ -1,14 +1,16 @@
 # Canonical Output Gaps and Future Work
 
 Status: exploration
-Date: 2026-04-27
+Date: 2026-04-27 (updated 2026-04-28 — Class A closed)
 
 ## Summary
 
-Compliance against the official yaml-test-suite is at **98.6% raw**
-(2358/2393 assertions). The remaining 17 canonical-output failures
-cluster into three classes that share a common root cause: **the AST
-discards the information libyaml's canonical emitter relies on**.
+Compliance against the official yaml-test-suite is at **98.9% raw**
+(2426/2439 assertions, up from 98.6%/17-failures earlier on this
+branch). The remaining 13 canonical-output failures cluster around
+stringifier/composer quirks where the AST discards information
+libyaml's canonical emitter relies on. Class A (parser shape, 4
+failures) has been closed.
 
 Parse-level compliance is at **100%** (every test that should parse,
 parses; every test that should reject, rejects). Roundtrip compliance
@@ -18,7 +20,56 @@ against libyaml's canonical emission) has gaps.
 This doc records why the remaining gaps are not piecemeal-fixable and
 what structural work would be required to close them.
 
-## The Failing 17
+## Class A Resolution (2026-04-28)
+
+The parser-shape failures (KK5P, M2N8/00, M2N8/01, M5DY) were closed
+without the full parser refactor described below. Three changes did
+the work:
+
+1. **Parser** (`src/utils/parser.ts`, `parseBlockMapping`):
+   - When the last non-trivia child is `?` (explicit-key indicator,
+     `sawExplicitKey === true`) and the next token is a `block-seq-start`
+     at column ≤ mapping indent, do not break out of the loop. The
+     seq IS the explicit key (KK5P, M5DY: `? - a` form).
+   - When entering the `block-seq-start` branch with `sawExplicitKey`
+     true, use `findFirstSeqEntryColumn(state, token.column)` instead
+     of `token.column` for the seq indent. The lexer emits
+     `block-seq-start` at lineIndent which can be ≤ the mapping indent
+     when the `-` follows another block indicator on the same line.
+2. **Composer** (`src/utils/composer.ts`, `flattenBlockMapChildren`):
+   New `scanExplicitKeyShape` helper inspects children after a `?`:
+   - `terminated` — found a `:` at the `?` column → existing flat
+     per-node logic handles it.
+   - `inline-implicit-map` — no matching `:` at `?` column, but a `:`
+     on the same line as `?` exists at a deeper column → the entire
+     slice from `?+1` to the next sibling `?` (or end) is a compact
+     inline implicit-map key. Compose recursively as a YamlMap and
+     push as a single key node (M2N8/00, M2N8/01).
+   - `simple` — no internal `:` at all → existing logic (the next
+     content node is the single key).
+   The same-line check (`cLine === qLine`) prevents fire on sibling
+   pairs across lines (7W2P, ZWK4 — `? a\n? b\nc:`).
+3. **Composer** (`checkMultilineImplicitKeys`): skip the multi-line
+   flow-collection-as-implicit-key check when the key was introduced
+   by a `?` indicator (new `isExplicitKey` helper does a backward
+   scan from the key offset). M5DY second doc has `? [...flow...]`
+   spanning two lines — explicit, so allowed.
+4. **Stringifier** (`src/utils/stringify.ts`, `stringifyMapNodeLines`):
+   The `isComplexKey` predicate (which forces `? key\n: value` form)
+   was tightened. Previously fired for ANY YamlMap or YamlSeq key.
+   Now only fires for non-empty collection keys
+   (`pair.key.items.length > 0`). Empty collection keys (`[]`, `{}`)
+   render as one line and CAN be implicit `[]: x` (M2N8/01 inner
+   pair).
+
+The wider parser refactor described in "Tier 4" below — passing a
+structured pair node from parser to composer instead of a flat
+children list — was avoided. The composer-side `scanExplicitKeyShape`
+heuristic plus the parser's `sawExplicitKey` exit-condition tweak was
+sufficient for these four fixtures without disturbing other test
+cases.
+
+## The Remaining 13
 
 | ID | Class | What libyaml does | What we need |
 | -- | ----- | ----------------- | ------------ |
@@ -32,10 +83,10 @@ what structural work would be required to close them.
 | B3HG | Stringifier | Drops `---` for block-folded with single-line folded content | No clean rule (compare 96L6 which keeps `---`) |
 | K54U | Stringifier | Adds `...` after `---<TAB>scalar` | No AST-visible discriminator (compare 27NA, 4V8U) |
 | K858 | Stringifier | Empty `\|+` gets `\|2+` indent indicator (in block-map context only) | Distinguish block-map-value vs block-seq-item context (compare JEF9) |
-| KK5P | Parser | Explicit `?` keys with collection values | Parser refactor — see below |
-| M2N8/00 | Parser | Block-seq item containing explicit-`?` map | Parser refactor |
-| M2N8/01 | Parser | Explicit-`?` flow key with following entries | Parser refactor |
-| M5DY | Parser | `? - seq\n: - seq` pairs | Parser refactor |
+| ~~KK5P~~ | ~~Parser~~ | **Closed 2026-04-28** | Composer `scanExplicitKeyShape` + parser `sawExplicitKey` tweak |
+| ~~M2N8/00~~ | ~~Parser~~ | **Closed 2026-04-28** | Composer inline-implicit-map detection |
+| ~~M2N8/01~~ | ~~Parser~~ | **Closed 2026-04-28** | Composer inline-implicit-map detection + stringifier `isComplexKey` tightening |
+| ~~M5DY~~ | ~~Parser~~ | **Closed 2026-04-28** | Parser `block-seq-start` indent fix + explicit-key multi-line flow allow |
 | PUW8 | Stringifier | `...\n` after empty trailing doc when previous had content | Cross-document context |
 | VJP3/01 | Stringifier | Prepends `---\n` for nested-flow→block conversion | Detect "source had multi-line flow" |
 | XLQ9 | Stringifier | `...` after multi-line plain scalar root | No discriminator (compare 3MYT, 4V8U) |

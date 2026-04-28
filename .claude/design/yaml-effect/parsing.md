@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: architecture
 created: 2026-03-14
-updated: 2026-04-27
-last-synced: 2026-04-27
-completeness: 88
+updated: 2026-04-28
+last-synced: 2026-04-28
+completeness: 89
 related:
   - architecture.md
   - schemas.md
@@ -150,7 +150,43 @@ with `tokens`, `text`, `pos`). Key functions:
   values) when checking if the previous non-trivia token was a value
   separator
 - `findFirstSeqEntryColumn()` -- helper for resolving indent level of the
-  first sequence entry in a block
+  first sequence entry in a block. Used in two places inside
+  `parseBlockMapping`: the existing implicit-mapping path, and the new
+  explicit-key (`sawExplicitKey`) branch that anchors a `?`-introduced
+  block-seq key to the first `-` column rather than the lexer-emitted
+  `block-seq-start.column` (which is the lineIndent and can be smaller
+  than the actual `-` column when the seq follows another block
+  indicator on the same line).
+
+### Explicit-Key Handling in `parseBlockMapping`
+
+Two coordinated changes let `parseBlockMapping` keep gathering siblings
+when a `?`-introduced explicit key is itself a block sequence:
+
+- **`sawExplicitKey` guard on the early-exit condition**. The early-exit
+  at the top of the parse loop used to fire on
+  `block-seq-start && token.column <= indent && children.length > 0 &&
+  !lastNonTriviaIsValueSep(children)`. The new condition adds
+  `&& !sawExplicitKey`. When the explicit-key indicator (`?`) is the
+  active context and the key body starts with `-`, the lexer can emit
+  `block-seq-start` at lineIndent which is `<= indent` (the mapping's
+  own indent column). Without the `sawExplicitKey` guard the parser
+  broke out of the loop and the seq became a sibling of the outer map
+  instead of becoming the explicit key body. M5DY was the canonical
+  failure -- the outer block-map had `length === 2` (just `?` and a
+  whitespace), and the rest of the document parsed as siblings of the
+  map.
+- **Indent resolution in the `block-seq-start` branch**. When
+  `sawExplicitKey` is true, the seq indent passed into
+  `parseBlockSequence` is now derived via
+  `findFirstSeqEntryColumn(state, token.column)` rather than the raw
+  `token.column`. The lexer's `block-seq-start.column` is the lineIndent,
+  which can be smaller than the actual `-` column when the seq follows
+  another block indicator on the same line (e.g. `? - a` where the `-`
+  is at col 2 even though the line starts at col 0). The
+  implicit-key-value position (`key: - a`) intentionally stays at
+  `token.column` so the existing `5U3A` rejection (sequence on same
+  line as mapping value indicator) keeps firing.
 
 CST node construction:
 
@@ -470,6 +506,51 @@ extended to cover `YamlMap` and `YamlSeq` keys with `style === "flow"`
 whose source spans multiple lines. A flow collection used as an
 implicit mapping key must fit on a single line. Catches C2SP ("Flow
 mapping key on two lines").
+
+The check is gated by the new `isExplicitKey(text, offset)` helper.
+When the key was introduced by an explicit `?` indicator, multi-line
+flow collection keys are allowed (the `? key\n: value` form is
+explicitly designed for keys that don't fit on one line). The helper
+does a backward scan from the key node's offset through whitespace
+and newline characters and returns true when the nearest
+non-whitespace character is `?` (preceded by start-of-text or
+whitespace). This preserves the M5DY second doc shape (`? [ flow,\n
+spans ]`) while keeping the C2SP rejection on implicit forms.
+
+### Inline Implicit-Map Keys via `scanExplicitKeyShape`
+
+When `flattenBlockMapChildren` encounters a `?` whitespace child it
+calls `scanExplicitKeyShape(children, qIdx, qCol, text)`. The helper
+classifies the explicit-key region into one of three shapes and
+returns:
+
+- `{ kind: "terminated", matchIdx }` -- a `:` was found at the same
+  column as the `?` (the canonical termination of an explicit key).
+  Existing per-node logic processes the slice between `?` and `:` as
+  the key body.
+- `{ kind: "inline-implicit-map", endIdx }` -- no matching `:` at the
+  `?` column, but a `:` exists at a deeper column on the same source
+  line as `?`. The slice from `?+1` through `endIdx` (the next sibling
+  `?` at the same column or `children.length`) forms a compact inline
+  implicit-map that is itself the explicit key. The `?` handler
+  recursively calls `flattenBlockMapChildren` on the slice and
+  `buildPairs` to construct a `YamlMap`, then pushes the map as a
+  single key node and advances `i` past the slice.
+- `{ kind: "simple" }` -- no internal `:` at all. Falls through to
+  existing handling.
+
+The same-line check (`cLine === qLine` on the inner `:`) is essential
+to avoid mistakenly merging sibling pairs across lines: 7W2P's
+`? a\n? b\nc:\n` should produce three pairs, not one inline map. The
+helper relies on two further small helpers `findFirstContent` and
+`findLastContent` that skip leading and trailing whitespace+newline
+children when computing the slice offset and length for the inner
+recursive flatten call.
+
+This is what now lets KK5P and M2N8/00-01 round-trip correctly:
+the explicit key region can itself be a non-trivial implicit
+mapping, and the composer reconstructs that without leaking the
+inner pairs as siblings of the outer map.
 
 ### Cross-Document Tag-Handle Validation
 
