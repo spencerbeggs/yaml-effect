@@ -72,4 +72,12 @@ export class YamlDocument extends Schema.Class<YamlDocument>("YamlDocument")({
 	comment: Schema.optional(Schema.String),
 	hasDocumentStart: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 	hasDocumentEnd: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+	/**
+	 * `true` when the document-start marker `---` was followed by a tab
+	 * character in the source (e.g. `---\tscalar`). Used by the canonical
+	 * stringifier to emit `...` terminator (libyaml's emitter does this for
+	 * tab-after-`---` to avoid downstream re-tokenisation ambiguity). Optional;
+	 * absent on synthetic docs.
+	 */
+	hasDocumentStartTab: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 }) {}

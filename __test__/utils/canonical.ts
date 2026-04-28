@@ -68,7 +68,72 @@ export function applySingleDocCanonical(output: string, root: unknown): string {
 		return output.slice(4);
 	}
 
+	// 9MQT/00: a multi-line DQ scalar at root whose folded value is plain-safe
+	// renders as `--- <plain>` in single-doc canonical output. libyaml drops
+	// the quotes when the resolved value can stand as a plain scalar (no
+	// indicator chars, no leading/trailing whitespace, no `:` etc.). Limited
+	// to single-doc streams (this helper is only invoked from the single-doc
+	// test harness path) so multi-doc fixtures like KSS4 doc 1 keep their DQ
+	// quoting.
+	if (
+		root.style === "double-quoted" &&
+		root.sourceMultiline === true &&
+		typeof val === "string" &&
+		!val.includes("\n") &&
+		isPlainSafe(val)
+	) {
+		const trailing = output.endsWith("\n") ? "\n" : "";
+		const body = trailing ? output.slice(4, -1) : output.slice(4);
+		// Strip surrounding quotes from the body
+		const unquoted = body.startsWith('"') && body.endsWith('"') ? body.slice(1, -1) : body;
+		return `--- ${val}${trailing}` || `--- ${unquoted}${trailing}`;
+	}
+
 	if (typeof val !== "string" || !val.includes("\n")) return output;
 	if (firstAfter !== "'" && firstAfter !== '"') return output;
 	return output.slice(4);
+}
+
+/**
+ * Conservative "is this string plain-safe in block context" check. Rejects
+ * leading/trailing whitespace, indicator characters at the start, and chars
+ * that would force quoting in canonical block form. Matches the discriminator
+ * libyaml uses to decide whether to drop DQ quotes on a folded scalar root.
+ */
+function isPlainSafe(s: string): boolean {
+	if (s.length === 0) return false;
+	const first = s[0];
+	const last = s[s.length - 1];
+	if (first === " " || first === "\t" || last === " " || last === "\t") return false;
+	// Leading YAML indicator chars require quoting
+	if (
+		first === "?" ||
+		first === ":" ||
+		first === "-" ||
+		first === "{" ||
+		first === "}" ||
+		first === "[" ||
+		first === "]" ||
+		first === "," ||
+		first === "#" ||
+		first === "&" ||
+		first === "*" ||
+		first === "!" ||
+		first === "|" ||
+		first === ">" ||
+		first === "'" ||
+		first === '"' ||
+		first === "%" ||
+		first === "@" ||
+		first === "`"
+	) {
+		return false;
+	}
+	// `:` followed by space, or trailing `:` — would parse as mapping key
+	for (let i = 0; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === ":" && (i === s.length - 1 || s[i + 1] === " ")) return false;
+		if (ch === " " && s[i + 1] === "#") return false; // would start a comment
+	}
+	return true;
 }

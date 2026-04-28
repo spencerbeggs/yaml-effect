@@ -53,15 +53,10 @@ export const XFAIL: Record<string, string> = {};
  */
 export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"2LFX": ["output"],
-	"4ABK": ["output"],
 	"4WA9": ["output"],
-	"5T43": ["output"],
 	"652Z": ["output"],
 	"6WLZ": ["output"],
-	"9MQT/00": ["output"],
 	B3HG: ["output"],
-	K54U: ["output"],
 	PUW8: ["output"],
 	"VJP3/01": ["output"],
-	XLQ9: ["output"],
 };

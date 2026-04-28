@@ -3931,11 +3931,28 @@ function composeDocument(
 				if (meta.tag !== undefined) combined.tag = meta.tag;
 				if (meta.anchor !== undefined) combined.anchor = meta.anchor;
 				const resolved = resolveScalar(value, "plain", combined.tag, state);
+				// Span the full source range when multi-line plain folding merged
+				// multiple children. `nextIdx` is the index after the last
+				// consumed child; walk back to find the last child with a
+				// non-trivial offset (skip newline/whitespace) and extend the
+				// span to its end. Includes directives and other non-scalar
+				// continuations the lexer mis-tokenised on a folded line.
+				let scalarLength = child.length;
+				if (partsCount > 1) {
+					for (let li = nextIdx - 1; li > i; li--) {
+						const last = children[li];
+						if (!last) continue;
+						if (last.type === "newline") continue;
+						if (last.type === "whitespace" && last.source.trim() === "") continue;
+						scalarLength = last.offset + last.length - child.offset;
+						break;
+					}
+				}
 				contents = new YamlScalar({
 					value: resolved,
 					style: "plain" as ScalarStyle,
 					offset: child.offset,
-					length: child.length,
+					length: scalarLength,
 					...(combined.tag !== undefined ? { tag: combined.tag } : {}),
 					...(combined.anchor !== undefined ? { anchor: combined.anchor } : {}),
 				});
@@ -4111,6 +4128,20 @@ function composeDocument(
 	// Detect whether `...` document end marker was present in the CST
 	const hasDocEnd = children.some((c) => c.type === "whitespace" && c.source === "...");
 
+	// Detect whether `---` was followed by a tab (K54U). Scan children for the
+	// document-start marker; if the immediately-following character in the
+	// source is a tab, set the flag so the stringifier can emit `...` for
+	// libyaml-compatible canonical output.
+	let hasDocStartTab = false;
+	for (let ci = 0; ci < children.length; ci++) {
+		const c = children[ci];
+		if (c && c.type === "whitespace" && c.source === "---") {
+			const after = state.text[c.offset + c.length];
+			if (after === "\t") hasDocStartTab = true;
+			break;
+		}
+	}
+
 	return new YamlDocument({
 		contents,
 		errors: [...state.errors],
@@ -4118,6 +4149,7 @@ function composeDocument(
 		directives,
 		hasDocumentStart: hasDocStart,
 		hasDocumentEnd: hasDocEnd,
+		...(hasDocStartTab ? { hasDocumentStartTab: true } : {}),
 		...(documentComment !== undefined ? { comment: documentComment } : {}),
 	});
 }
@@ -4564,6 +4596,94 @@ export function getNodeValue(node: YamlNode | null, anchors?: Map<string, YamlNo
 	return null;
 }
 
+/**
+ * Walk the AST and stamp `sourceMultiline: true` on every YamlScalar/Map/Seq
+ * whose source span (offset..offset+length in `text`) contains a newline.
+ *
+ * The composer uses this single post-pass instead of threading the flag
+ * through dozens of construction sites. Nodes whose span is single-line are
+ * returned unchanged (no copy) to avoid unnecessary allocation.
+ */
+function isSourceMultiline(text: string, offset: number, length: number): boolean {
+	if (length <= 0) return false;
+	const end = Math.min(offset + length, text.length);
+	for (let i = offset; i < end; i++) {
+		const ch = text.charCodeAt(i);
+		if (ch === 0x0a /* \n */ || ch === 0x0d /* \r */) return true;
+	}
+	return false;
+}
+
+function decorateSourceMultiline(node: YamlNode | null, text: string): YamlNode | null {
+	if (node === null || node instanceof YamlAlias) return node;
+	if (node instanceof YamlScalar) {
+		if (!isSourceMultiline(text, node.offset, node.length)) return node;
+		return new YamlScalar({
+			value: node.value,
+			style: node.style,
+			...(node.tag !== undefined ? { tag: node.tag } : {}),
+			...(node.anchor !== undefined ? { anchor: node.anchor } : {}),
+			...(node.comment !== undefined ? { comment: node.comment } : {}),
+			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
+			...(node.raw !== undefined ? { raw: node.raw } : {}),
+			sourceMultiline: true,
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlMap) {
+		const newItems = node.items.map(
+			(pair) =>
+				new YamlPair({
+					key: decorateSourceMultiline(pair.key, text) ?? pair.key,
+					value: pair.value === null ? null : decorateSourceMultiline(pair.value, text),
+					...(pair.comment !== undefined ? { comment: pair.comment } : {}),
+				}),
+		);
+		const multiline = isSourceMultiline(text, node.offset, node.length);
+		return new YamlMap({
+			items: newItems,
+			style: node.style,
+			...(node.tag !== undefined ? { tag: node.tag } : {}),
+			...(node.anchor !== undefined ? { anchor: node.anchor } : {}),
+			...(node.comment !== undefined ? { comment: node.comment } : {}),
+			...(multiline ? { sourceMultiline: true } : {}),
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	if (node instanceof YamlSeq) {
+		const newItems = node.items.map((item) => decorateSourceMultiline(item, text) ?? item);
+		const multiline = isSourceMultiline(text, node.offset, node.length);
+		return new YamlSeq({
+			items: newItems,
+			style: node.style,
+			...(node.tag !== undefined ? { tag: node.tag } : {}),
+			...(node.anchor !== undefined ? { anchor: node.anchor } : {}),
+			...(node.comment !== undefined ? { comment: node.comment } : {}),
+			...(multiline ? { sourceMultiline: true } : {}),
+			offset: node.offset,
+			length: node.length,
+		});
+	}
+	return node;
+}
+
+function decorateDocumentSourceMultiline(doc: YamlDocument, text: string): YamlDocument {
+	const decorated = decorateSourceMultiline(doc.contents ?? null, text);
+	if (decorated === doc.contents) return doc;
+	return new YamlDocument({
+		contents: decorated,
+		errors: doc.errors,
+		warnings: doc.warnings,
+		directives: doc.directives,
+		...(doc.comment !== undefined ? { comment: doc.comment } : {}),
+		hasDocumentStart: doc.hasDocumentStart,
+		hasDocumentEnd: doc.hasDocumentEnd,
+		...(doc.hasDocumentStartTab ? { hasDocumentStartTab: true } : {}),
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -4629,7 +4749,7 @@ export function parseDocument(
 				return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
 			}
 
-			return Effect.succeed(result);
+			return Effect.succeed(decorateDocumentSourceMultiline(result, text));
 		}),
 	);
 }
@@ -4689,7 +4809,7 @@ export function parseAllDocuments(
 				if (!cst) continue;
 				const state = createState(text, options);
 				const doc = composeDocument(cst, state, i < cstNodes.length - 1, cstNodes[i + 1]);
-				documents.push(doc);
+				documents.push(decorateDocumentSourceMultiline(doc, text));
 
 				const fatal = state.errors.filter(
 					(e) =>
@@ -4818,5 +4938,5 @@ export function composeDocumentFromCst(
 		return Effect.fail(new YamlComposerError({ errors: fatalErrors, text }));
 	}
 
-	return Effect.succeed(result);
+	return Effect.succeed(decorateDocumentSourceMultiline(result, text));
 }

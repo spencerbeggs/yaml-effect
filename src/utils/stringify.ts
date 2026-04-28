@@ -918,6 +918,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			comment: node.comment,
 			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
 			...(node.raw !== undefined ? { raw: node.raw } : {}),
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -936,6 +937,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			tag: norm(node.tag),
 			anchor: node.anchor,
 			comment: node.comment,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -947,6 +949,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			tag: norm(node.tag),
 			anchor: node.anchor,
 			comment: node.comment,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -971,6 +974,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			anchor: node.anchor,
 			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
 			...(node.raw !== undefined ? { raw: node.raw } : {}),
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -987,6 +991,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			style: node.style,
 			tag: node.tag,
 			anchor: node.anchor,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -997,6 +1002,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			style: node.style,
 			tag: node.tag,
 			anchor: node.anchor,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -1221,7 +1227,29 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			continue;
 		}
 
-		const keyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
+		// 5T43: in canonical mode, drop quotes from a quoted key whose content
+		// is a simple identifier when the source map was a SINGLE-line flow
+		// collection. The quotes were structurally needed in flow source
+		// (e.g. `"key":value` cannot be `key:value` because flow tokens are
+		// delimiter-tight) but in the converted block form an unquoted plain
+		// key is unambiguous. Restricted to identifier-style content
+		// (alphanumeric+underscore, no spaces) so multi-word quoted keys
+		// like `"single line"` are kept (9BXH).
+		let resolvedKeyStr: string;
+		if (
+			ctx.forceDefaultStyles &&
+			node.style === "flow" &&
+			node.sourceMultiline !== true &&
+			pair.key instanceof YamlScalar &&
+			(pair.key.style === "single-quoted" || pair.key.style === "double-quoted") &&
+			typeof pair.key.value === "string" &&
+			/^[A-Za-z_][A-Za-z0-9_]*$/.test(pair.key.value)
+		) {
+			resolvedKeyStr = pair.key.value;
+		} else {
+			resolvedKeyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
+		}
+		const keyStr = resolvedKeyStr;
 		// Alias keys need a space before the colon to avoid the alias name
 		// absorbing the `:`. Empty scalar keys whose only rendering is an
 		// anchor or tag (e.g. `&a` or `!!str`) need the same disambiguation.
@@ -1233,7 +1261,21 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		const sep = pair.key instanceof YamlAlias || keyIsAnchoredOrTaggedEmpty ? " :" : ":";
 		const valNode = pair.value;
 		if (!valNode) {
-			lines.push(`${keyStr}${sep}`);
+			// 4ABK: when the document ROOT is a multi-line flow map AND the
+			// pair has a non-empty plain key, emit `key: null` rather than
+			// `key:` so the null is unambiguous in canonical (block) form.
+			// Restricted to root via `ctx.parentPosition === undefined` so
+			// nested flow maps (8KB6: flow inside a block-seq item) keep
+			// `key:`. Single-line flow root keeps `key:` too — only
+			// multi-line flow root triggers the explicit-null form.
+			const isPlainKey = pair.key instanceof YamlScalar && pair.key.style === "plain";
+			const keyIsNonEmpty = pair.key instanceof YamlScalar && pair.key.length > 0;
+			const isRootFlowMap = ctx.parentPosition === undefined && node.style === "flow" && node.sourceMultiline === true;
+			if (ctx.forceDefaultStyles && isRootFlowMap && isPlainKey && keyIsNonEmpty) {
+				lines.push(`${keyStr}${sep} null`);
+			} else {
+				lines.push(`${keyStr}${sep}`);
+			}
 			continue;
 		}
 		const valCtx: StringifyContext = { ...ctx, parentPosition: "block-map-value" };
@@ -1577,8 +1619,35 @@ export function stringifyDocument(
 				contents.style === "plain" &&
 				contents.anchor !== undefined &&
 				!contents.tag;
+			// XLQ9: a multi-line plain scalar root whose folded value contains
+			// a `%`-introduced directive-like substring (e.g. "scalar %YAML 1.2")
+			// needs `...` so a follow-on parser cannot re-interpret the trailing
+			// `%XXX` as a directive in some other YAML stream context. libyaml's
+			// canonical emitter is conservative here. Other multi-line plain
+			// roots (3MYT, EX5H, EXG3) without a `%` continuation render
+			// without `...`.
+			const looksLikeDirectiveContinuation =
+				contents instanceof YamlScalar && typeof contents.value === "string" && / %[A-Z]/.test(contents.value);
+			const needsTerminatorForMultilinePlainScalar =
+				ctx.forceDefaultStyles &&
+				doc.hasDocumentStart &&
+				contents instanceof YamlScalar &&
+				contents.style === "plain" &&
+				contents.sourceMultiline === true &&
+				looksLikeDirectiveContinuation;
+			// K54U: `---<TAB>scalar` source needs `...` terminator. libyaml's
+			// canonical emitter is conservative when a tab follows `---` —
+			// downstream tooling that re-tokenises might mis-handle the tab,
+			// so the explicit document-end marker keeps things unambiguous.
+			const needsTerminatorForDocStartTab = ctx.forceDefaultStyles && doc.hasDocumentStartTab === true;
 			const docEnd =
-				doc.hasDocumentEnd || needsTerminatorForKeepChomp || needsTerminatorForAnchoredPlainScalar ? "...\n" : "";
+				doc.hasDocumentEnd ||
+				needsTerminatorForKeepChomp ||
+				needsTerminatorForAnchoredPlainScalar ||
+				needsTerminatorForMultilinePlainScalar ||
+				needsTerminatorForDocStartTab
+					? "...\n"
+					: "";
 
 			if (doc.hasDocumentStart) {
 				const rootTag = contents && "tag" in contents ? contents.tag : undefined;
