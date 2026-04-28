@@ -1102,7 +1102,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	const lines: string[] = [];
 	for (const pair of items) {
 		// Explicit `? key\n: value` syntax is required when:
-		// - Key is a non-scalar (sequence/mapping)
+		// - Key is a YamlMap (mapping-as-key always uses `? ` so the inner
+		//   pair's `:` is not confused with the outer pair's `:`)
+		// - Key is a YamlSeq whose rendered form spans multiple lines (block
+		//   style or multi-line flow). Single-line flow seqs (e.g. empty
+		//   `[]`) can be implicit `[]: value` (M2N8/01).
 		// - Key is a scalar whose value contains a newline (cannot be expressed
 		//   as an implicit `key: value` line in block form)
 		// - Key is a block-style scalar (block-literal/block-folded) whose
@@ -1112,7 +1116,13 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			((typeof pair.key.value === "string" && pair.key.value.includes("\n")) ||
 				pair.key.style === "block-literal" ||
 				pair.key.style === "block-folded");
-		const isComplexKey = pair.key instanceof YamlMap || pair.key instanceof YamlSeq || keyIsScalarWithNewline;
+		// A non-empty collection (YamlMap or YamlSeq) used as a key forces
+		// explicit `? ` form because its block-rendered representation cannot
+		// be inlined safely. Empty collections render as `[]` / `{}` on one
+		// line and CAN be implicit (M2N8/01: `[]: x`).
+		const keyIsNonEmptyCollection =
+			(pair.key instanceof YamlMap || pair.key instanceof YamlSeq) && pair.key.items.length > 0;
+		const isComplexKey = keyIsNonEmptyCollection || keyIsScalarWithNewline;
 		if (isComplexKey) {
 			const keyLines = stringifyNodeLines(pair.key, ctx);
 			// Emit "? " followed by the key

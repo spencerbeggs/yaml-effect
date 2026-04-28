@@ -1492,14 +1492,37 @@ function flattenBlockMapChildren(
 		}
 		if (child.type === "whitespace") {
 			if (child.source === "?") {
-				// Explicit key indicator (YAML §8.2.1). The "?" simply marks
-				// that the next content node is the key of this mapping entry.
-				// We don't need to push a semantic item because the node that
-				// follows will naturally be in key position (before value-sep).
-				// Track the column of `?` since the entry's indent is the
-				// `?` column, not the key scalar's column.
-				pendingExplicitKeyCol = lineCol(state.text, child.offset).column;
+				// Explicit key indicator (YAML §8.2.1). The "?" introduces
+				// the key of this mapping entry. The key spans until the
+				// matching `:` at the same column as `?`; if no such `:`
+				// exists, the rest of the mapping scope is the key.
+				const qCol = lineCol(state.text, child.offset).column;
+				pendingExplicitKeyCol = qCol;
 				afterValueSep = false;
+				// Detect inline-implicit-map keys (M2N8/00, M2N8/01): when
+				// there's no matching `:` at `qCol` but there IS a `:` at a
+				// deeper column, the entire slice forms a compact inline
+				// implicit map that IS the explicit key.
+				const lookahead = scanExplicitKeyShape(children, i, qCol, state.text);
+				if (lookahead.kind === "inline-implicit-map") {
+					const sliceChildren = children.slice(i + 1, lookahead.endIdx);
+					const innerItems = flattenBlockMapChildren(sliceChildren, state);
+					const innerPairs: YamlPair[] = [];
+					buildPairs(innerItems, innerPairs, state.text);
+					const firstC = findFirstContent(sliceChildren);
+					const lastC = findLastContent(sliceChildren);
+					const innerOffset = firstC ? firstC.offset : child.offset;
+					const innerEnd = lastC ? lastC.offset + lastC.length : child.offset + child.length;
+					const innerMap = new YamlMap({
+						items: innerPairs,
+						style: "block" as CollectionStyle,
+						offset: innerOffset,
+						length: innerEnd - innerOffset,
+					});
+					pushNode(innerMap, innerOffset);
+					i = lookahead.endIdx - 1; // outer loop will i++ to endIdx (skip the slice)
+					continue;
+				}
 				continue;
 			}
 			if (child.source === ":") {
@@ -2286,6 +2309,104 @@ function checkDuplicateKeys(pairs: YamlPair[], state: ComposerState): void {
 }
 
 /**
+ * Inspect the slice of children after a `?` indicator to decide how the
+ * explicit key should be composed.
+ *
+ * - `terminated` — found a matching `:` at `qCol`; the key is the slice
+ *   between `?` and that `:`. Existing per-node logic handles this.
+ * - `inline-implicit-map` — no matching `:` at `qCol`, but the slice
+ *   contains a `:` at a deeper column. The whole slice is a compact
+ *   inline implicit-map key (M2N8/00, M2N8/01).
+ * - `simple` — no internal `:` at all; the next content node is the
+ *   single key (KK5P, M5DY block-seq keys; plain scalar keys).
+ */
+function scanExplicitKeyShape(
+	children: readonly CstNode[],
+	qIdx: number,
+	qCol: number,
+	text: string,
+): { kind: "terminated"; matchIdx: number } | { kind: "inline-implicit-map"; endIdx: number } | { kind: "simple" } {
+	const qChild = children[qIdx];
+	const qLine = qChild ? lineCol(text, qChild.offset).line : -1;
+	let inlineColonOnQLine = false;
+	let endIdx = children.length;
+	for (let j = qIdx + 1; j < children.length; j++) {
+		const c = children[j];
+		if (!c) continue;
+		if (c.type === "whitespace" && c.source === ":") {
+			const cCol = lineCol(text, c.offset).column;
+			if (cCol === qCol) {
+				return { kind: "terminated", matchIdx: j };
+			}
+			// Only count as an inline-implicit-map indicator if it's on the
+			// same line as `?`. A `:` on a later line is a sibling pair's
+			// implicit-key separator, not part of the explicit key (7W2P,
+			// ZWK4).
+			const cLine = lineCol(text, c.offset).line;
+			if (cLine === qLine) inlineColonOnQLine = true;
+		}
+		// Stop scanning once we hit a sibling `?` at the same column — a new
+		// explicit key starts there.
+		if (c.type === "whitespace" && c.source === "?" && j > qIdx) {
+			const cCol = lineCol(text, c.offset).column;
+			if (cCol === qCol) {
+				endIdx = j;
+				break;
+			}
+		}
+	}
+	if (inlineColonOnQLine) return { kind: "inline-implicit-map", endIdx };
+	return { kind: "simple" };
+}
+
+function findFirstContent(children: readonly CstNode[]): CstNode | undefined {
+	for (const c of children) {
+		if (!c) continue;
+		if (c.type === "whitespace" && (c.source === " " || c.source === "\t")) continue;
+		if (c.type === "newline") continue;
+		return c;
+	}
+	return undefined;
+}
+
+function findLastContent(children: readonly CstNode[]): CstNode | undefined {
+	for (let i = children.length - 1; i >= 0; i--) {
+		const c = children[i];
+		if (!c) continue;
+		if (c.type === "whitespace" && (c.source === " " || c.source === "\t")) continue;
+		if (c.type === "newline") continue;
+		return c;
+	}
+	return undefined;
+}
+
+/**
+ * Returns true if a value at the given offset was introduced by a `?`
+ * explicit-key indicator. Scans backward through whitespace and newlines
+ * looking for a `?` at the start of a line (not part of a scalar).
+ */
+function isExplicitKey(text: string, offset: number): boolean {
+	let i = offset - 1;
+	while (i >= 0) {
+		const ch = text[i];
+		if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+			i--;
+			continue;
+		}
+		// Found a non-whitespace char. If it's `?` and either at offset 0
+		// or preceded by whitespace/newline, this is the explicit-key
+		// indicator.
+		if (ch === "?") {
+			if (i === 0) return true;
+			const prev = text[i - 1];
+			return prev === " " || prev === "\t" || prev === "\n" || prev === "\r";
+		}
+		return false;
+	}
+	return false;
+}
+
+/**
  * Validate that implicit mapping keys do not span multiple lines.
  * YAML 1.2 §7.4.2 requires implicit keys to fit on a single line.
  */
@@ -2322,9 +2443,12 @@ function checkMultilineImplicitKeys(
 			continue;
 		}
 		// Flow collections (YamlMap/YamlSeq with style=flow) cannot be used as
-		// implicit keys when their source spans multiple lines (C2SP).
+		// implicit keys when their source spans multiple lines (C2SP). Skip
+		// when the key was introduced by an explicit `?` indicator — explicit
+		// keys are allowed to span multiple lines (M5DY).
 		if (key._tag === "YamlMap" || key._tag === "YamlSeq") {
 			if (key.style !== "flow") continue;
+			if (isExplicitKey(state.text, key.offset)) continue;
 			const keySource = state.text.slice(key.offset, key.offset + key.length);
 			if (keySource.includes("\n") || keySource.includes("\r")) {
 				const lc = lineCol(state.text, key.offset);
