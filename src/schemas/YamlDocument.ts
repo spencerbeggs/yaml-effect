@@ -14,13 +14,16 @@ import { YamlNode } from "./YamlAstNodes.js";
  * or `%TAG ! tag:yaml.org,2002:`).
  *
  * @remarks
- * - `name` — either `"YAML"` (version directive) or `"TAG"` (tag directive).
+ * - `name` — the directive name. `"YAML"` and `"TAG"` are the YAML 1.2
+ *   spec-defined directives with semantic meaning. Any other name is a
+ *   *reserved* directive (per YAML 1.2 §6.8.1) which YAML processors must
+ *   ignore semantically but should preserve for round-trip fidelity.
  * - `parameters` — the directive's parameter tokens as raw strings.
  *
  * @public
  */
 export class YamlDirective extends Schema.Class<YamlDirective>("YamlDirective")({
-	name: Schema.Literal("YAML", "TAG"),
+	name: Schema.String,
 	parameters: Schema.Array(Schema.String),
 }) {}
 

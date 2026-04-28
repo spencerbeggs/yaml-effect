@@ -61,7 +61,6 @@ export const SKIP_ASSERTIONS: Record<string, string[]> = {
 	"9MQT/00": ["output"],
 	B3HG: ["output"],
 	K54U: ["output"],
-	K858: ["output"],
 	PUW8: ["output"],
 	"VJP3/01": ["output"],
 	XLQ9: ["output"],

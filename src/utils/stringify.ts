@@ -310,7 +310,12 @@ function renderSingleQuotedMultiline(s: string, indent: string): string | null {
  * `keep` (`+`) and `strip` (`-`) preserve trailing-newline semantics that
  * cannot be inferred from the resolved value alone.
  */
-function renderBlockLiteral(s: string, indent: string, explicitChomp?: "strip" | "clip" | "keep"): string {
+function renderBlockLiteral(
+	s: string,
+	indent: string,
+	explicitChomp?: "strip" | "clip" | "keep",
+	parentPosition?: "block-map-value" | "block-seq-item",
+): string {
 	// Compute chomp indicator from the value's trailing-newline structure.
 	// `+` (keep) is required when the value retains more than one trailing
 	// newline OR when the value consists solely of newlines (otherwise `|`
@@ -333,12 +338,17 @@ function renderBlockLiteral(s: string, indent: string, explicitChomp?: "strip" |
 	// - First content line starts with space (reader would misdetect indent)
 	// - Value starts with empty lines AND has actual content (reader can't
 	//   auto-detect indent from leading blanks).
-	// When there is no content at all (only newlines), the indicator is needed
-	// only for keep-chomp (`|+`) since the trailing blanks form the value and
-	// the reader otherwise has no way to detect block indentation.
+	// - Newline-only body with keep-chomp under a block-map value (K858):
+	//   libyaml's canonical emitter emits `|2+` here since the parent's value
+	//   indent is already established by sibling pairs and the empty body is
+	//   ambiguous without an explicit indicator. Block-seq items (JEF9) do
+	//   not get the indicator — there the `-` already anchors the entry.
 	let indentIndicator = "";
 	const firstContent = lines.find((l) => l !== "");
-	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "" && firstContent !== undefined)) {
+	const hasContent = firstContent !== undefined;
+	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "" && hasContent)) {
+		indentIndicator = String(indent.length);
+	} else if (!hasContent && chomp === "+" && parentPosition === "block-map-value" && indent.length > 0) {
 		indentIndicator = String(indent.length);
 	}
 	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
@@ -461,6 +471,7 @@ function renderString(
 	ignoreType = false,
 	canonical = false,
 	explicitChomp?: "strip" | "clip" | "keep",
+	parentPosition?: "block-map-value" | "block-seq-item",
 ): string {
 	if (s.includes("\n")) {
 		// If the value contains C0 control chars (except tab) or carriage
@@ -498,7 +509,7 @@ function renderString(
 			}
 		}
 		// Multi-line: prefer block styles
-		if (style === "block-literal") return renderBlockLiteral(s, indent, explicitChomp);
+		if (style === "block-literal") return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
 		// In canonical mode, prefer single-quoted with fold encoding for plain
 		// and single-quoted multi-line scalars — matches libyaml canonical form.
@@ -507,7 +518,7 @@ function renderString(
 				const sq = renderSingleQuotedMultiline(s, indent);
 				if (sq !== null) return sq;
 			}
-			return renderBlockLiteral(s, indent, explicitChomp);
+			return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		}
 		return renderDoubleQuoted(s, canonical);
 	}
@@ -541,7 +552,7 @@ function renderString(
 		case "double-quoted":
 			return renderDoubleQuoted(s, canonical);
 		case "block-literal":
-			return renderBlockLiteral(s, indent, explicitChomp);
+			return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		case "block-folded":
 			return renderBlockFolded(s, indent);
 	}
@@ -611,6 +622,13 @@ interface StringifyContext {
 	sortKeys: boolean;
 	forceDefaultStyles: boolean;
 	seen: Set<object>;
+	/**
+	 * Position of the current node within its parent. Used by canonical-mode
+	 * stringifier rules that need to differentiate "block-map value position"
+	 * from "block-seq item position" (e.g., K858 explicit indent indicator
+	 * for empty keep-chomp scalars only fires under block-map values).
+	 */
+	parentPosition?: "block-map-value" | "block-seq-item";
 }
 
 /**
@@ -1047,7 +1065,15 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 		lines = [node.raw !== undefined ? node.raw : renderNumber(val)];
 	} else if (typeof val === "string") {
 		// When a tag is present, type-conflict quoting is unnecessary
-		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag, ctx.forceDefaultStyles, node.chomp);
+		const rendered = renderString(
+			val,
+			style,
+			" ".repeat(ctx.indent),
+			!!node.tag,
+			ctx.forceDefaultStyles,
+			node.chomp,
+			ctx.parentPosition,
+		);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
@@ -1210,7 +1236,8 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			lines.push(`${keyStr}${sep}`);
 			continue;
 		}
-		const valLines = stringifyNodeLines(valNode, ctx);
+		const valCtx: StringifyContext = { ...ctx, parentPosition: "block-map-value" };
+		const valLines = stringifyNodeLines(valNode, valCtx);
 		const isBlockSeqValue =
 			valNode instanceof YamlSeq &&
 			valNode.items.length > 0 &&
@@ -1342,8 +1369,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	// Block style
 	const pad = " ".repeat(ctx.indent);
 	const lines: string[] = [];
+	const itemCtx: StringifyContext = { ...ctx, parentPosition: "block-seq-item" };
 	for (const item of items) {
-		const itemLines = stringifyNodeLines(item, ctx);
+		const itemLines = stringifyNodeLines(item, itemCtx);
 		if (itemLines.length === 1) {
 			// Empty value: just `-` with no trailing space
 			lines.push(itemLines[0] === "" ? "-" : `- ${itemLines[0]}`);

@@ -4157,11 +4157,14 @@ function parseDirective(source: string): YamlDirective | null {
 	if (!trimmed.startsWith("%")) return null;
 	const parts = trimmed.slice(1).split(/\s+/);
 	const name = parts[0];
-	const parameters = parts.slice(1);
-	if (name === "YAML" || name === "TAG") {
-		return new YamlDirective({ name, parameters });
+	if (!name) return null;
+	// Strip trailing comments from parameters (e.g. `%FOO bar # comment`).
+	const parameters: string[] = [];
+	for (const p of parts.slice(1)) {
+		if (p.startsWith("#")) break;
+		parameters.push(p);
 	}
-	return null;
+	return new YamlDirective({ name, parameters });
 }
 
 /**
