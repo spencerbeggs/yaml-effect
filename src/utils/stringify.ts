@@ -310,7 +310,12 @@ function renderSingleQuotedMultiline(s: string, indent: string): string | null {
  * `keep` (`+`) and `strip` (`-`) preserve trailing-newline semantics that
  * cannot be inferred from the resolved value alone.
  */
-function renderBlockLiteral(s: string, indent: string, explicitChomp?: "strip" | "clip" | "keep"): string {
+function renderBlockLiteral(
+	s: string,
+	indent: string,
+	explicitChomp?: "strip" | "clip" | "keep",
+	parentPosition?: "block-map-value" | "block-seq-item",
+): string {
 	// Compute chomp indicator from the value's trailing-newline structure.
 	// `+` (keep) is required when the value retains more than one trailing
 	// newline OR when the value consists solely of newlines (otherwise `|`
@@ -333,12 +338,17 @@ function renderBlockLiteral(s: string, indent: string, explicitChomp?: "strip" |
 	// - First content line starts with space (reader would misdetect indent)
 	// - Value starts with empty lines AND has actual content (reader can't
 	//   auto-detect indent from leading blanks).
-	// When there is no content at all (only newlines), the indicator is needed
-	// only for keep-chomp (`|+`) since the trailing blanks form the value and
-	// the reader otherwise has no way to detect block indentation.
+	// - Newline-only body with keep-chomp under a block-map value (K858):
+	//   libyaml's canonical emitter emits `|2+` here since the parent's value
+	//   indent is already established by sibling pairs and the empty body is
+	//   ambiguous without an explicit indicator. Block-seq items (JEF9) do
+	//   not get the indicator — there the `-` already anchors the entry.
 	let indentIndicator = "";
 	const firstContent = lines.find((l) => l !== "");
-	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "" && firstContent !== undefined)) {
+	const hasContent = firstContent !== undefined;
+	if (firstContent?.startsWith(" ") || (lines.length > 0 && lines[0] === "" && hasContent)) {
+		indentIndicator = String(indent.length);
+	} else if (!hasContent && chomp === "+" && parentPosition === "block-map-value" && indent.length > 0) {
 		indentIndicator = String(indent.length);
 	}
 	return `|${indentIndicator}${chomp}\n${lines.map((l) => (l === "" ? "" : `${indent}${l}`)).join("\n")}`;
@@ -461,6 +471,7 @@ function renderString(
 	ignoreType = false,
 	canonical = false,
 	explicitChomp?: "strip" | "clip" | "keep",
+	parentPosition?: "block-map-value" | "block-seq-item",
 ): string {
 	if (s.includes("\n")) {
 		// If the value contains C0 control chars (except tab) or carriage
@@ -498,7 +509,7 @@ function renderString(
 			}
 		}
 		// Multi-line: prefer block styles
-		if (style === "block-literal") return renderBlockLiteral(s, indent, explicitChomp);
+		if (style === "block-literal") return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		if (style === "block-folded") return renderBlockFolded(s, indent);
 		// In canonical mode, prefer single-quoted with fold encoding for plain
 		// and single-quoted multi-line scalars — matches libyaml canonical form.
@@ -507,7 +518,7 @@ function renderString(
 				const sq = renderSingleQuotedMultiline(s, indent);
 				if (sq !== null) return sq;
 			}
-			return renderBlockLiteral(s, indent, explicitChomp);
+			return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		}
 		return renderDoubleQuoted(s, canonical);
 	}
@@ -541,7 +552,7 @@ function renderString(
 		case "double-quoted":
 			return renderDoubleQuoted(s, canonical);
 		case "block-literal":
-			return renderBlockLiteral(s, indent, explicitChomp);
+			return renderBlockLiteral(s, indent, explicitChomp, parentPosition);
 		case "block-folded":
 			return renderBlockFolded(s, indent);
 	}
@@ -611,6 +622,13 @@ interface StringifyContext {
 	sortKeys: boolean;
 	forceDefaultStyles: boolean;
 	seen: Set<object>;
+	/**
+	 * Position of the current node within its parent. Used by canonical-mode
+	 * stringifier rules that need to differentiate "block-map value position"
+	 * from "block-seq item position" (e.g., K858 explicit indent indicator
+	 * for empty keep-chomp scalars only fires under block-map values).
+	 */
+	parentPosition?: "block-map-value" | "block-seq-item";
 }
 
 /**
@@ -900,6 +918,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			comment: node.comment,
 			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
 			...(node.raw !== undefined ? { raw: node.raw } : {}),
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -918,6 +937,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			tag: norm(node.tag),
 			anchor: node.anchor,
 			comment: node.comment,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -929,6 +949,7 @@ function normalizeNodeTags(node: YamlNode, tagMap: Map<string, string>): YamlNod
 			tag: norm(node.tag),
 			anchor: node.anchor,
 			comment: node.comment,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -953,6 +974,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			anchor: node.anchor,
 			...(node.chomp !== undefined ? { chomp: node.chomp } : {}),
 			...(node.raw !== undefined ? { raw: node.raw } : {}),
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -969,6 +991,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			style: node.style,
 			tag: node.tag,
 			anchor: node.anchor,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -979,6 +1002,7 @@ export function stripNodeComments(node: YamlNode): YamlNode {
 			style: node.style,
 			tag: node.tag,
 			anchor: node.anchor,
+			...(node.sourceMultiline !== undefined ? { sourceMultiline: node.sourceMultiline } : {}),
 			offset: node.offset,
 			length: node.length,
 		});
@@ -1047,7 +1071,15 @@ function stringifyScalarNodeLines(node: InstanceType<typeof YamlScalar>, ctx: St
 		lines = [node.raw !== undefined ? node.raw : renderNumber(val)];
 	} else if (typeof val === "string") {
 		// When a tag is present, type-conflict quoting is unnecessary
-		const rendered = renderString(val, style, " ".repeat(ctx.indent), !!node.tag, ctx.forceDefaultStyles, node.chomp);
+		const rendered = renderString(
+			val,
+			style,
+			" ".repeat(ctx.indent),
+			!!node.tag,
+			ctx.forceDefaultStyles,
+			node.chomp,
+			ctx.parentPosition,
+		);
 		lines = rendered.split("\n");
 	} else {
 		lines = [renderDoubleQuoted(String(val))];
@@ -1102,7 +1134,11 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 	const lines: string[] = [];
 	for (const pair of items) {
 		// Explicit `? key\n: value` syntax is required when:
-		// - Key is a non-scalar (sequence/mapping)
+		// - Key is a YamlMap (mapping-as-key always uses `? ` so the inner
+		//   pair's `:` is not confused with the outer pair's `:`)
+		// - Key is a YamlSeq whose rendered form spans multiple lines (block
+		//   style or multi-line flow). Single-line flow seqs (e.g. empty
+		//   `[]`) can be implicit `[]: value` (M2N8/01).
 		// - Key is a scalar whose value contains a newline (cannot be expressed
 		//   as an implicit `key: value` line in block form)
 		// - Key is a block-style scalar (block-literal/block-folded) whose
@@ -1112,7 +1148,13 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			((typeof pair.key.value === "string" && pair.key.value.includes("\n")) ||
 				pair.key.style === "block-literal" ||
 				pair.key.style === "block-folded");
-		const isComplexKey = pair.key instanceof YamlMap || pair.key instanceof YamlSeq || keyIsScalarWithNewline;
+		// A non-empty collection (YamlMap or YamlSeq) used as a key forces
+		// explicit `? ` form because its block-rendered representation cannot
+		// be inlined safely. Empty collections render as `[]` / `{}` on one
+		// line and CAN be implicit (M2N8/01: `[]: x`).
+		const keyIsNonEmptyCollection =
+			(pair.key instanceof YamlMap || pair.key instanceof YamlSeq) && pair.key.items.length > 0;
+		const isComplexKey = keyIsNonEmptyCollection || keyIsScalarWithNewline;
 		if (isComplexKey) {
 			const keyLines = stringifyNodeLines(pair.key, ctx);
 			// Emit "? " followed by the key
@@ -1185,7 +1227,29 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 			continue;
 		}
 
-		const keyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
+		// 5T43: in canonical mode, drop quotes from a quoted key whose content
+		// is a simple identifier when the source map was a SINGLE-line flow
+		// collection. The quotes were structurally needed in flow source
+		// (e.g. `"key":value` cannot be `key:value` because flow tokens are
+		// delimiter-tight) but in the converted block form an unquoted plain
+		// key is unambiguous. Restricted to identifier-style content
+		// (alphanumeric+underscore, no spaces) so multi-word quoted keys
+		// like `"single line"` are kept (9BXH).
+		let resolvedKeyStr: string;
+		if (
+			ctx.forceDefaultStyles &&
+			node.style === "flow" &&
+			node.sourceMultiline !== true &&
+			pair.key instanceof YamlScalar &&
+			(pair.key.style === "single-quoted" || pair.key.style === "double-quoted") &&
+			typeof pair.key.value === "string" &&
+			/^[A-Za-z_][A-Za-z0-9_]*$/.test(pair.key.value)
+		) {
+			resolvedKeyStr = pair.key.value;
+		} else {
+			resolvedKeyStr = pair.key ? stringifyNodeLines(pair.key, ctx).join(" ") : "null";
+		}
+		const keyStr = resolvedKeyStr;
 		// Alias keys need a space before the colon to avoid the alias name
 		// absorbing the `:`. Empty scalar keys whose only rendering is an
 		// anchor or tag (e.g. `&a` or `!!str`) need the same disambiguation.
@@ -1197,10 +1261,25 @@ function stringifyMapNodeLines(node: InstanceType<typeof YamlMap>, ctx: Stringif
 		const sep = pair.key instanceof YamlAlias || keyIsAnchoredOrTaggedEmpty ? " :" : ":";
 		const valNode = pair.value;
 		if (!valNode) {
-			lines.push(`${keyStr}${sep}`);
+			// 4ABK: when the document ROOT is a multi-line flow map AND the
+			// pair has a non-empty plain key, emit `key: null` rather than
+			// `key:` so the null is unambiguous in canonical (block) form.
+			// Restricted to root via `ctx.parentPosition === undefined` so
+			// nested flow maps (8KB6: flow inside a block-seq item) keep
+			// `key:`. Single-line flow root keeps `key:` too — only
+			// multi-line flow root triggers the explicit-null form.
+			const isPlainKey = pair.key instanceof YamlScalar && pair.key.style === "plain";
+			const keyIsNonEmpty = pair.key instanceof YamlScalar && pair.key.length > 0;
+			const isRootFlowMap = ctx.parentPosition === undefined && node.style === "flow" && node.sourceMultiline === true;
+			if (ctx.forceDefaultStyles && isRootFlowMap && isPlainKey && keyIsNonEmpty) {
+				lines.push(`${keyStr}${sep} null`);
+			} else {
+				lines.push(`${keyStr}${sep}`);
+			}
 			continue;
 		}
-		const valLines = stringifyNodeLines(valNode, ctx);
+		const valCtx: StringifyContext = { ...ctx, parentPosition: "block-map-value" };
+		const valLines = stringifyNodeLines(valNode, valCtx);
 		const isBlockSeqValue =
 			valNode instanceof YamlSeq &&
 			valNode.items.length > 0 &&
@@ -1332,8 +1411,9 @@ function stringifySeqNodeLines(node: InstanceType<typeof YamlSeq>, ctx: Stringif
 	// Block style
 	const pad = " ".repeat(ctx.indent);
 	const lines: string[] = [];
+	const itemCtx: StringifyContext = { ...ctx, parentPosition: "block-seq-item" };
 	for (const item of items) {
-		const itemLines = stringifyNodeLines(item, ctx);
+		const itemLines = stringifyNodeLines(item, itemCtx);
 		if (itemLines.length === 1) {
 			// Empty value: just `-` with no trailing space
 			lines.push(itemLines[0] === "" ? "-" : `- ${itemLines[0]}`);
@@ -1539,8 +1619,35 @@ export function stringifyDocument(
 				contents.style === "plain" &&
 				contents.anchor !== undefined &&
 				!contents.tag;
+			// XLQ9: a multi-line plain scalar root whose folded value contains
+			// a `%`-introduced directive-like substring (e.g. "scalar %YAML 1.2")
+			// needs `...` so a follow-on parser cannot re-interpret the trailing
+			// `%XXX` as a directive in some other YAML stream context. libyaml's
+			// canonical emitter is conservative here. Other multi-line plain
+			// roots (3MYT, EX5H, EXG3) without a `%` continuation render
+			// without `...`.
+			const looksLikeDirectiveContinuation =
+				contents instanceof YamlScalar && typeof contents.value === "string" && / %[A-Z]/.test(contents.value);
+			const needsTerminatorForMultilinePlainScalar =
+				ctx.forceDefaultStyles &&
+				doc.hasDocumentStart &&
+				contents instanceof YamlScalar &&
+				contents.style === "plain" &&
+				contents.sourceMultiline === true &&
+				looksLikeDirectiveContinuation;
+			// K54U: `---<TAB>scalar` source needs `...` terminator. libyaml's
+			// canonical emitter is conservative when a tab follows `---` —
+			// downstream tooling that re-tokenises might mis-handle the tab,
+			// so the explicit document-end marker keeps things unambiguous.
+			const needsTerminatorForDocStartTab = ctx.forceDefaultStyles && doc.hasDocumentStartTab === true;
 			const docEnd =
-				doc.hasDocumentEnd || needsTerminatorForKeepChomp || needsTerminatorForAnchoredPlainScalar ? "...\n" : "";
+				doc.hasDocumentEnd ||
+				needsTerminatorForKeepChomp ||
+				needsTerminatorForAnchoredPlainScalar ||
+				needsTerminatorForMultilinePlainScalar ||
+				needsTerminatorForDocStartTab
+					? "...\n"
+					: "";
 
 			if (doc.hasDocumentStart) {
 				const rootTag = contents && "tag" in contents ? contents.tag : undefined;

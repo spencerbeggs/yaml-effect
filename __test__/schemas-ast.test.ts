@@ -471,13 +471,13 @@ describe("YamlDirective", () => {
 		expect(d.name).toBe("TAG");
 	});
 
-	it("rejects invalid directive name", () => {
-		expect(() =>
-			Schema.decodeUnknownSync(YamlDirective)({
-				name: "INVALID",
-				parameters: [],
-			}),
-		).toThrow();
+	it("accepts reserved directive names (per YAML 1.2 §6.8.1)", () => {
+		const d = Schema.decodeUnknownSync(YamlDirective)({
+			name: "FOO",
+			parameters: ["bar", "baz"],
+		});
+		expect(d.name).toBe("FOO");
+		expect(d.parameters).toEqual(["bar", "baz"]);
 	});
 });
 

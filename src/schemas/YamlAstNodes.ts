@@ -48,6 +48,13 @@ export class YamlScalar extends Schema.TaggedClass<YamlScalar>()("YamlScalar", {
 	comment: Schema.optional(Schema.String),
 	chomp: Schema.optional(Schema.Literal("strip", "clip", "keep")),
 	raw: Schema.optional(Schema.String),
+	/**
+	 * `true` when the source span of this scalar covers two or more lines.
+	 * Used by the canonical stringifier to make decisions that depend on
+	 * source-shape (e.g. multi-line plain or DQ scalar root needing a `...`
+	 * terminator). Optional; absent on synthetic nodes produced by user code.
+	 */
+	sourceMultiline: Schema.optional(Schema.Boolean),
 	offset: Schema.Int.pipe(Schema.nonNegative()),
 	length: Schema.Int.pipe(Schema.nonNegative()),
 }) {}
@@ -181,6 +188,14 @@ export class YamlMap extends Schema.TaggedClass<YamlMap>()("YamlMap", {
 	anchor: Schema.optional(Schema.String),
 	style: CollectionStyle,
 	comment: Schema.optional(Schema.String),
+	/**
+	 * `true` when the source span of this mapping covers two or more lines.
+	 * Used by the canonical stringifier — flow-style maps that span multiple
+	 * lines in source signal "this was a complex flow construct" and trigger
+	 * different canonical output rules (e.g. emit `---` for VJP3/01). Optional;
+	 * absent on synthetic nodes.
+	 */
+	sourceMultiline: Schema.optional(Schema.Boolean),
 	offset: Schema.Int.pipe(Schema.nonNegative()),
 	length: Schema.Int.pipe(Schema.nonNegative()),
 }) {}
@@ -224,6 +239,13 @@ export class YamlSeq extends Schema.TaggedClass<YamlSeq>()("YamlSeq", {
 	anchor: Schema.optional(Schema.String),
 	style: CollectionStyle,
 	comment: Schema.optional(Schema.String),
+	/**
+	 * `true` when the source span of this sequence covers two or more lines.
+	 * Mirrors the same field on {@link YamlMap}; used by canonical-stringifier
+	 * decisions that need to differentiate single-line flow source from
+	 * multi-line flow source. Optional; absent on synthetic nodes.
+	 */
+	sourceMultiline: Schema.optional(Schema.Boolean),
 	offset: Schema.Int.pipe(Schema.nonNegative()),
 	length: Schema.Int.pipe(Schema.nonNegative()),
 }) {}
