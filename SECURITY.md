@@ -6,8 +6,9 @@
 | --- | --- |
 | Latest | Yes |
 
-This package is pre-1.0 and only the latest published version receives security
-fixes.
+This package is pre-1.0 and only the latest published version receives
+security fixes. Breaking changes may land between minor versions (0.x to
+0.y) until 1.0.0 ships, so pin and review the changelog before upgrading.
 
 ## Reporting a Vulnerability
 
