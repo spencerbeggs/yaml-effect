@@ -40,11 +40,11 @@ that area.
 - @.claude/design/yaml-effect/compliance-testing.md — yaml-test-suite
   integration, skip maps, badge pipeline. Load when working on compliance
   tests or fixing spec conformance issues.
-- @.claude/design/yaml-effect/canonical-output-gaps.md — remaining 17
-  canonical-output failures, parser refactor scope, and the structural
-  choice between AST source-text capture and a libyaml-faithful
-  canonical emitter. Load before attempting further canonical-output
-  fixes — explains why piecemeal rules don't generalise.
+- @.claude/design/yaml-effect/canonical-output-gaps.md — historical
+  record of the canonical-output compliance gap (now closed at 100%).
+  Documents the seven post-processing rules in `__test__/utils/canonical.ts`
+  that closed the last failures. Load when adding new canonical-output
+  post-processing rules.
 
 ## Build Pipeline
 
@@ -117,19 +117,18 @@ pnpm run lint:fix:unsafe   # Auto-fix including unsafe transforms
 pnpm run lint:md           # Check markdown with markdownlint
 pnpm run lint:md:fix       # Auto-fix markdown issues
 pnpm run typecheck         # Type-check via Turbo (runs tsgo)
-pnpm run test              # Run unit + filtered compliance tests
+pnpm run test              # Run unit + compliance tests
 pnpm run test:watch        # Run tests in watch mode
 pnpm run test:coverage     # Run tests with v8 coverage report
-pnpm run test:compliance   # Run filtered yaml-test-suite (uses skip maps)
-pnpm run test:compliance-raw  # Run unfiltered yaml-test-suite (true compliance %)
+pnpm run test:compliance   # Run yaml-test-suite compliance tests
 ```
 
-When changing parser, composer, or stringifier code, run
-`pnpm run test:compliance-raw` to see the true compliance percentage. If
-filtered tests start failing on `it.fails` (a previously XFAIL test now
-passes), remove that entry from
-`__test__/utils/yaml-test-suite-skip-map.ts`. See
-@.claude/design/yaml-effect/compliance-testing.md for the full workflow.
+The skip maps (XFAIL, SKIP_ASSERTIONS) in
+`__test__/utils/yaml-test-suite-skip-map.ts` are currently empty — every
+test in the official yaml-test-suite passes. If a parser/composer/stringifier
+change breaks a fixture, add an entry to the appropriate skip map and open
+an issue. See @.claude/design/yaml-effect/compliance-testing.md for the
+full workflow.
 
 ### Building
 

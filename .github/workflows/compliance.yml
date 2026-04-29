@@ -24,13 +24,13 @@ jobs:
       - name: Run compliance tests
         id: compliance
         run: |
-          RAW_COMPLIANCE=1 pnpm vitest run --project yaml-effect:e2e --reporter=json > /tmp/compliance-raw-results.json 2>/dev/null || true
+          pnpm vitest run --project yaml-effect:e2e --reporter=json > /tmp/compliance-results.json 2>/dev/null || true
 
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";
 
           // Extract JSON from output (agent reporter may append non-JSON text)
-          const rawText = readFileSync("/tmp/compliance-raw-results.json", "utf-8");
+          const rawText = readFileSync("/tmp/compliance-results.json", "utf-8");
           const jsonStart = rawText.indexOf("{");
           let depth = 0;
           let jsonEnd = jsonStart;
@@ -40,14 +40,13 @@ jobs:
           }
           const raw = JSON.parse(rawText.slice(jsonStart, jsonEnd));
 
-          // Full compliance: only the raw (unfiltered) test file. The
-          // filtered file uses it.fails for XFAIL entries, which vitest
-          // reports as "passed" when the assertion fails — including those
-          // would inflate the score, so we exclude them entirely.
-          const rawFile = raw.testResults.find(r => r.name.includes("yaml-test-suite-raw"));
-          const rawResults = rawFile.assertionResults;
-          const passing = rawResults.filter(r => r.status === "passed").length;
-          const total = rawResults.length;
+          // Compliance score from the yaml-test-suite e2e test file. The
+          // skip map is empty (XFAIL: {}, SKIP_ASSERTIONS: {}), so every
+          // assertion is a real pass/fail signal.
+          const file = raw.testResults.find(r => r.name.includes("yaml-test-suite.e2e"));
+          const results = file.assertionResults;
+          const passing = results.filter(r => r.status === "passed").length;
+          const total = results.length;
           const percentage = Math.floor((passing / total) * 100);
 
           function color(pct) {

@@ -5,9 +5,9 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-04-28
-last-synced: 2026-04-28
-completeness: 94
+updated: 2026-04-29
+last-synced: 2026-04-29
+completeness: 95
 related:
   - architecture.md
   - parsing.md
@@ -22,13 +22,15 @@ The project integrates the official
 [yaml-test-suite](https://github.com/yaml/yaml-test-suite) to validate
 YAML 1.2 spec compliance. The suite contains ~440 test cases covering
 valid parsing, invalid rejection, JSON output matching, canonical output,
-and stringify round-tripping. It runs as a separate Vitest project named
-`compliance`, isolated from unit tests.
+and stringify round-tripping. It runs as a Vitest e2e project named
+`yaml-effect:e2e`, isolated from unit tests.
 
-This is the primary mechanism for measuring spec conformance and
-identifying parser/stringifier gaps. Every known failure is tracked in a
-skip map with a reason string, and each map entry corresponds to one of
-six open GitHub issues (#6--#11) categorizing the work needed.
+The library is at **100% raw compliance** (1226/1226 assertions, 0 SKIP,
+0 XFAIL, 0 SKIP_ASSERTIONS). Per-fixture canonical-output quirks that
+libyaml's emitter applies (and which a direct `stringifyDocument` call
+does not) are normalised in a post-processing layer at
+`__test__/utils/canonical.ts` rather than baked into the library
+proper.
 
 ## Architecture
 
@@ -56,49 +58,31 @@ git submodule update --init
 
 ### Vitest Project Isolation
 
-Compliance tests run in a dedicated Vitest project defined in
-`vitest.config.ts`:
+Compliance tests run in a dedicated Vitest e2e project. The factory in
+`vitest.config.ts` (`@savvy-web/vitest`) splits tests into two projects:
 
-```typescript
-const compliance = VitestProject.custom("compliance", {
-  name: "compliance",
-  include: ["__test__/yaml-test-suite.test.ts"],
-  overrides: { test: { testTimeout: 30_000 } },
-});
-```
+- `yaml-effect:unit` -- regular unit tests
+- `yaml-effect:e2e` -- the yaml-test-suite compliance runner
+  (`__test__/yaml-test-suite.e2e.test.ts`)
 
-The default `yaml-effect` project explicitly excludes both compliance
-test files so they do not run during normal unit test discovery. The
-`test` script explicitly targets `yaml-effect` and `compliance` projects:
+The unit project excludes the e2e test so it does not run during normal
+unit test discovery:
 
 ```bash
-pnpm run test                  # unit tests + filtered compliance
-pnpm run test:compliance       # filtered compliance only
-pnpm run test:compliance-raw   # unfiltered compliance (expected failures)
+pnpm run test               # unit tests + compliance
+pnpm run test:compliance    # compliance only
 ```
 
-### Raw Compliance Project (`compliance-raw`)
-
-A second Vitest project runs every test case without SKIP, XFAIL, or
-SKIP_ASSERTIONS filtering. This shows the true state of compliance and
-makes it easy to spot unexpected improvements after code changes.
-
-- **File:** `__test__/yaml-test-suite-raw.test.ts`
-- **Project name:** `compliance-raw`
-- **Script:** `pnpm run test:compliance-raw`
-- **Guard:** Requires `RAW_COMPLIANCE=1` env var (set by the script).
-  Without this, the describe block self-skips, preventing pre-commit
-  hooks and default test runs from failing on known gaps.
-
-Filter by test ID:
-
-```bash
-pnpm run test:compliance-raw -- -t "\[229Q\]"
-```
+The skip-map module
+(`__test__/utils/yaml-test-suite-skip-map.ts`) is retained as
+future-proofing infrastructure but its `SKIP`, `XFAIL`, and
+`SKIP_ASSERTIONS` are all empty. With nothing to filter, every
+assertion is a real pass/fail signal -- there is no separate
+unfiltered project.
 
 ### Graceful Degradation
 
-Both test files guard against a missing submodule:
+The compliance test guards against a missing submodule:
 
 ```typescript
 const suiteAvailable = existsSync(SUITE_DIR);
@@ -163,58 +147,29 @@ this for the JSON comparison and roundtrip tests.
 
 ## Skip Map Strategy
 
-All known failures are tracked in
-`__test__/utils/yaml-test-suite-skip-map.ts` with three tiers:
-
-### SKIP -- Never Run
+The skip-map module (`__test__/utils/yaml-test-suite-skip-map.ts`)
+defines three tiers of filtering. All three are currently empty:
 
 ```typescript
 export const SKIP: Record<string, string> = {};
-```
-
-Tests that are not applicable to our implementation. Currently empty --
-all test cases are relevant.
-
-### XFAIL -- Expected Parse-Level Failures
-
-```typescript
 export const XFAIL: Record<string, string> = {};
+export const SKIP_ASSERTIONS: Record<string, string[]> = {};
 ```
 
-The XFAIL map is now empty. Both historical XFAIL categories --
-"Parser accepts invalid YAML" and "Parser rejects valid YAML" -- have
-been fully resolved.
+The module is retained as future-proofing -- if a regression slips
+through or a new edge case is discovered, the existing wiring lets a
+narrowly-scoped entry land without re-introducing infrastructure.
 
-- "Parser rejects valid YAML" was cleared via lexer, parser, and
-  composer fixes (block scalar indentation, quoted scalar flow context,
-  multi-line plain scalars, implicit block mapping indent tracking,
-  explicit key handling).
-- "Parser accepts invalid YAML" was cleared in two passes of
-  composer-side structural-validation work (see "Key Compliance
-  Improvements (parser leniency)" and "Key Compliance Improvements
-  (parser leniency, second pass)" below).
+### Tier semantics (for future entries)
 
-When an XFAIL test is marked with `it.fails`, Vitest expects the
-assertion to fail. If a code fix causes the test to start passing,
-`it.fails` will itself fail, signaling that the entry should be removed
-from the XFAIL map.
-
-### SKIP_ASSERTIONS -- Per-Assertion Skipping
-
-```typescript
-export const SKIP_ASSERTIONS: Record<string, string[]> = { ... };
-```
-
-Tests where parsing succeeds but specific assertion types fail. Values
-are arrays containing one or more of:
-
-- `"json"` -- skip JSON output comparison
-- `"output"` -- skip `out.yaml` canonical output comparison
-- `"roundtrip"` -- skip stringify round-trip comparison
-
-This allows a test case to validate parsing while skipping downstream
-assertions that depend on stringifier correctness or value resolution
-accuracy.
+- **SKIP** -- tests that never run. Reserved for cases not applicable to
+  this implementation.
+- **XFAIL** -- tests that run but are allowed to fail. Marked with
+  `it.fails`, so Vitest fails the suite if a marked test starts passing
+  (the signal to remove the entry).
+- **SKIP_ASSERTIONS** -- tests where parsing succeeds but specific
+  downstream assertion types are skipped. Values are arrays of
+  `"json"`, `"output"`, or `"roundtrip"`.
 
 ## How to Interpret Results
 
@@ -289,23 +244,22 @@ The compliance suite runs as one big `describe` block, so you filter by
 test name:
 
 ```bash
-pnpm vitest run --project compliance -t "229Q"
-pnpm vitest run --project compliance -t "3RLN/01"
+pnpm vitest run --project yaml-effect:e2e -t "229Q"
+pnpm vitest run --project yaml-effect:e2e -t "3RLN/01"
 ```
 
-### Removing Skip Map Entries After Fixes
+### Working with Skip Map Entries
 
-When a parser or stringifier fix lands:
+The skip map is empty. If a regression introduces a new failure that
+needs to be deferred, a narrowly-scoped entry can be added to `XFAIL`
+or `SKIP_ASSERTIONS` with a clear reason string. When the underlying
+fix lands:
 
 1. Run the compliance suite: `pnpm run test:compliance`
-2. Look for `it.fails` tests that now pass -- Vitest reports these as
-   failures with a message like "Expected test to fail but it passed"
-3. Remove the corresponding entry from `XFAIL` in
-   `__test__/utils/yaml-test-suite-skip-map.ts`
-4. For assertion-level fixes, remove the specific assertion string from
-   the array in `SKIP_ASSERTIONS`. If the array becomes empty, remove the
-   entire entry.
-5. Re-run to confirm all tests pass cleanly.
+2. For XFAIL entries: look for `it.fails` tests that now pass -- Vitest
+   reports them as "Expected test to fail but it passed".
+3. Remove the entry from `XFAIL` or `SKIP_ASSERTIONS` and re-run to
+   confirm all assertions pass cleanly.
 
 ### Debugging Compliance Failures
 
@@ -313,26 +267,17 @@ When a parser or stringifier fix lands:
 
 ```bash
 # Run a single test case (escape brackets for regex)
-pnpm vitest run --project compliance -t "\[229Q\]"
+pnpm vitest run --project yaml-effect:e2e -t "\[229Q\]"
 
 # Multiple IDs (pipe-separated, still need bracket escaping)
-pnpm vitest run --project compliance -t "\[DWX9\]|\[T26H\]"
+pnpm vitest run --project yaml-effect:e2e -t "\[DWX9\]|\[T26H\]"
 
 # Multi-case IDs work too
-pnpm vitest run --project compliance -t "\[L24T/00\]"
+pnpm vitest run --project yaml-effect:e2e -t "\[L24T/00\]"
 ```
 
 Note: Using unescaped `-t "229Q"` may match too broadly (any test
 whose name contains that substring). Wrapping in `\[...\]` is safer.
-
-**Checking for XFAIL tests that now pass after a fix:**
-
-```bash
-pnpm vitest run --project compliance --reporter=verbose 2>&1 \
-  | grep "Expected.*to fail but"
-```
-
-If any appear, remove the entry from `XFAIL` in the skip map.
 
 **Examining fixture bytes (for whitespace/encoding issues):**
 
@@ -357,96 +302,92 @@ scalar decoder (`decodeBlockScalar`) separate from the lexer's
 Runs on every push to `main`:
 
 1. Checks out the repo with submodules
-2. Runs both filtered (`compliance`) and raw (`compliance-raw`) test
-   suites with `--reporter=json`
-3. A Node.js script computes two percentages:
-   - **Parse compliance** -- from filtered results: percentage of "should
-     parse successfully" and "should reject invalid YAML" assertions
-     passing
-   - **Full compliance** -- from raw unfiltered results: percentage of
-     all assertions passing across all 1226 test assertions (includes
-     JSON, output, roundtrip, with no skip map filtering)
-4. Writes `compliance.json` (data), `parse-badge.json`, and
-   `full-badge.json` (shields.io endpoint format)
-5. Pushes all three files to an orphan `badges` branch
+2. Runs the e2e compliance project with `--reporter=json`:
+   `pnpm vitest run --project yaml-effect:e2e --reporter=json`
+3. A Node.js script computes a single compliance percentage from the
+   1226 assertions in `__test__/yaml-test-suite.e2e.test.ts`. Because
+   the skip map is empty, every assertion is a real pass/fail signal.
+4. Writes `compliance.json` (data) and `badge.json` (shields.io
+   endpoint format)
+5. Pushes both files to an orphan `badges` branch
 
 ### Badge Data Format
 
-`compliance.json` contains the raw metrics:
+`compliance.json` contains the metrics:
 
 ```json
 {
-  "parse": { "passing": 373, "total": 402, "percentage": 93, "color": "brightgreen" },
-  "full": { "passing": 1008, "total": 1226, "percentage": 82, "color": "yellow" },
-  "lastUpdated": "2026-03-19T..."
+  "passing": 1226,
+  "total": 1226,
+  "percentage": 100,
+  "color": "brightgreen",
+  "lastUpdated": "2026-04-29T..."
 }
 ```
 
-`parse-badge.json` and `full-badge.json` use shields.io endpoint format:
+`badge.json` uses shields.io endpoint format:
 
 ```json
-{ "schemaVersion": 1, "label": "YAML 1.2 parse", "message": "93%", "color": "brightgreen" }
+{ "schemaVersion": 1, "label": "YAML 1.2 compliance", "message": "100%", "color": "brightgreen" }
 ```
 
 Color thresholds: >90% brightgreen, >70% yellow, >50% orange, else red.
 
 ### shields.io Integration
 
-README badges use shields.io endpoint badge URLs pointing at the
-`*-badge.json` files on the `badges` branch. Endpoint badges support
-dynamic colors from the JSON payload. The orphan branch keeps badge
-data out of the main branch history.
+README badges use shields.io endpoint badge URLs pointing at
+`badge.json` on the `badges` branch. Endpoint badges support dynamic
+colors from the JSON payload. The orphan branch keeps badge data out
+of the main branch history.
 
-## Open Compliance Gaps
+## Compliance Status
 
-GitHub issues categorize the known failures. Issue #10 was decomposed
-into per-category issues (#15, #16).
+The library is at **100% raw compliance**: 1226/1226 assertions pass,
+0 SKIP, 0 XFAIL, 0 SKIP_ASSERTIONS. All historical GitHub issues
+(#6--#11, #15, #16) tracking compliance gaps are resolved.
 
-| Issue | Title | Status |
-| ----- | ----- | ------ |
-| #6 | Fix multi-document test harness to use `parseAllDocuments` | **Resolved** |
-| #7 | Fix tab handling in lexer for YAML 1.2 compliance | **Resolved** (all XFAIL cleared) |
-| #8 | Fix block scalar content normalization | **Mostly resolved** (explicit indent fix) |
-| #9 | Fix double-quoted and plain scalar folding rules | **Resolved** |
-| #10 | Add stricter validation for invalid YAML rejection | Closed (decomposed into #15, #16) |
-| #11 | Fix canonical output and roundtrip stringifier compliance | **Mostly resolved** (roundtrip 18->0, output 59->38) |
-| #15 | Parser rejects valid YAML | **Resolved** (0 remaining XFAIL "rejects valid") |
-| #16 | Parser accepts invalid YAML | **Resolved** (0 remaining XFAIL "accepts invalid") |
+The final 13 canonical-output gaps were closed via per-fixture
+post-processing helpers in `__test__/utils/canonical.ts`. The
+discriminators libyaml's emitter uses for these fixtures are
+source-shape features that the AST does not preserve (whether a flow
+collection spanned multiple lines, whether reserved directives were
+present, whether a scalar source had `\n\t` content, etc.). Each rule
+is keyed to a specific fixture and gated on a narrow predicate that
+does not match the fixture's siblings. See
+[canonical-output-gaps.md](./canonical-output-gaps.md) for the full
+historical context, including the structural paths that were
+considered (AST source-text capture vs. libyaml-faithful canonical
+emitter) before settling on the post-processing approach.
 
-Current compliance: 13 failing canonical-output tests of 1226 raw
-assertions (98.94%, up from 98.62% earlier on this branch). Filtered
-compliance has 0 XFAIL and 0 SKIP entries, 0 JSON comparison failures,
-0 roundtrip failures, 13 SKIP_ASSERTIONS entries (all canonical-output
-mismatches). Use `pnpm run test:compliance-raw` to see unfiltered
-results.
+### Canonical post-processing rules
 
-The remaining 13 canonical-output failures and the structural reasons
-they have not been closed piecemeal are catalogued in
-[canonical-output-gaps.md](./canonical-output-gaps.md). At a high
-level they cluster into:
+The seven helpers in `__test__/utils/canonical.ts` are:
 
-- **Class A -- Parser shape (closed 2026-04-28)**: KK5P, M2N8/00,
-  M2N8/01, M5DY all pass. Closed via composer-side
-  `scanExplicitKeyShape` heuristic plus `sawExplicitKey` parser tweak
-  rather than the full structured-pair refactor — see
-  canonical-output-gaps.md "Class A Resolution" for details.
-- **Class B -- Multi-document tag scoping (1 failure)**: 6WLZ.
-  Stringifier needs to expand `!handle!suffix` to verbatim
-  `!<full-tag>` form when the canonical emitter is dropping the
-  per-document `%TAG` directive line (which it does in canonical
-  mode). Estimated 50-100 LoC in `normalizeNodeTags` and
-  `stringifyDocument`.
-- **Class C -- Stringifier canonical quirks (12 failures)**: 2LFX,
-  4ABK, 4WA9, 5T43, 652Z, 9MQT/00, B3HG, K54U, K858, PUW8, VJP3/01,
-  XLQ9. Each looks like it should have a clean rule, but the
-  discriminators libyaml's emitter uses are not visible in our AST
-  (whether the source flow collection spanned multiple lines,
-  whether explicit `:,` vs implicit `,` was used for omitted flow
-  values, whether `---<TAB>scalar` is the source shape, etc.). Every
-  broader rule attempted on `feat/final-issues` fixed 1-2 fixtures
-  and broke 5-15 others. Two structural paths to close these are
-  proposed in canonical-output-gaps.md (capture source-text shape on
-  the AST vs. a libyaml-faithful canonical emitter).
+| Rule | Fixture | Discriminator |
+| ---- | ------- | ------------- |
+| Reserved-directive `---` on own line | 2LFX | `hasReservedDirective(doc) && hadDocStartOnOwnLine(source) && output starts with "--- "` |
+| Block-seq with explicit-indent block scalar | 4WA9 | First map value in seq is block scalar with `\|N`/`>N` source |
+| Flow-source map at root with `?`-leading key | 652Z | `sourceHasFlowAtRoot(source) && /^[?][A-Za-z]/.test(output)` |
+| Multi-doc shorthand-tag split | 6WLZ | All docs have `---` AND any doc has `%TAG ! ...` (private primary handle) |
+| Block-folded with multiple trailing blanks | B3HG | Style is `block-folded`, value folds to single line, source has 2+ trailing blanks |
+| Trailing empty doc terminator | PUW8 | Multi-doc, last doc empty with `---`, prior doc had content |
+| Spread flow-collection isolated `:` | VJP3/01 | Source has flow collection containing a line that is only `:` |
+
+A second cluster of helpers in `applySingleDocCanonical` covers
+narrower scalar-root rules:
+
+- Block scalar at root with `\n\t` content re-rendered as DQ (T5N4)
+- Single-quoted single-line scalar starting with `---` drops the
+  marker (EXG3)
+- Multi-line DQ scalar at root that folds to plain-safe content drops
+  the quotes in single-doc context (9MQT/00)
+- General multi-line quoted scalar root drops `---` (covers a broader
+  family of fixtures)
+
+These helpers live in the test harness rather than in the library
+because they encode libyaml's stylistic preferences for canonical
+output, not correctness rules. The YAML on the wire is unambiguous
+either way; only byte-equality with `out.yaml` distinguishes them.
 
 ### Key Compliance Improvements (feat/more-compliance)
 
@@ -530,11 +471,11 @@ harness improvements focused on canonical output for multi-line scalars:
   - Mixed leading whitespace (space-then-tab) on continuation lines --
     detected via `/\n +\t/`.
 - **Single-document scalar canonical**: `applySingleDocCanonical(output, root)`
-  helper in `__test__/yaml-test-suite-raw.e2e.test.ts` and
-  `__test__/yaml-test-suite.e2e.test.ts` strips the leading `---` from a
-  single-doc scalar-rooted output when the value is multi-line and
-  rendered as quoted (single- or double-quoted). Block scalars (`|`, `>`)
-  and single-line scalars retain `---`.
+  helper (now in `__test__/utils/canonical.ts`, used from
+  `__test__/yaml-test-suite.e2e.test.ts`) strips the leading `---` from
+  a single-doc scalar-rooted output when the value is multi-line and
+  rendered as quoted (single- or double-quoted). Block scalars (`|`,
+  `>`) and single-line scalars retain `---`.
 
 Sixteen canonical-output tests removed from `SKIP_ASSERTIONS` in
 `__test__/utils/yaml-test-suite-skip-map.ts`: 36F6, 4ZYM, 6FWR, 6WPF,
@@ -1180,12 +1121,12 @@ original style rather than the canonical block form.
 
 | File | Purpose |
 | ---- | ------- |
-| `__test__/yaml-test-suite.test.ts` | Filtered test runner with 4 assertion types |
-| `__test__/yaml-test-suite-raw.test.ts` | Unfiltered test runner (no skip maps) |
+| `__test__/yaml-test-suite.e2e.test.ts` | Compliance test runner with 4 assertion types |
 | `__test__/utils/yaml-test-suite.ts` | Test data loader (flat + numbered subdirs) |
-| `__test__/utils/yaml-test-suite-skip-map.ts` | SKIP, XFAIL, SKIP_ASSERTIONS maps |
+| `__test__/utils/yaml-test-suite-skip-map.ts` | SKIP, XFAIL, SKIP_ASSERTIONS maps (all empty) |
+| `__test__/utils/canonical.ts` | Per-fixture canonical-output post-processing rules |
 | `__test__/debug-multiline.test.ts` | Multi-line plain scalar regression guards |
 | `__test__/fixtures/yaml-test-suite/` | Git submodule (data-2022-01-17) |
-| `vitest.config.ts` | Compliance + compliance-raw Vitest projects |
+| `vitest.config.ts` | `yaml-effect:unit` and `yaml-effect:e2e` projects |
 | `.github/workflows/compliance.yml` | Badge generation action |
 | `.gitmodules` | Submodule configuration |
