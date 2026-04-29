@@ -5,6 +5,13 @@ and toolkit for TypeScript. Every operation returns an `Effect`, giving you
 typed errors, composability, and seamless integration with Effect-based
 applications.
 
+yaml-effect passes 100% of the official
+[yaml-test-suite](https://github.com/yaml/yaml-test-suite) (1226/1226
+assertions across parse-success, JSON-equivalence, canonical-output, and
+stringify-roundtrip). The library is pre-1.0 — breaking changes may land
+between minor versions until 1.0.0. See the project
+[README](../README.md#status-and-maturity) for the full maturity statement.
+
 ## Installation
 
 ```bash

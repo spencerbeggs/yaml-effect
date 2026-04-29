@@ -40,7 +40,6 @@
 		"prepare": "husky",
 		"test": "vitest run --project yaml-effect:unit --project yaml-effect:e2e",
 		"test:compliance": "vitest run --project yaml-effect:e2e",
-		"test:compliance-raw": "RAW_COMPLIANCE=1 vitest run --project yaml-effect:e2e",
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest --watch",
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",

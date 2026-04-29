@@ -6,7 +6,7 @@ provides guidelines and instructions for development.
 ## Prerequisites
 
 - Node.js 24.x
-- pnpm 10.32.1
+- pnpm 10.33.2
 
 ## Development Setup
 
@@ -84,24 +84,28 @@ The following checks run automatically:
 
 Tests are organized into two Vitest projects:
 
-- **yaml-effect** (unit tests) — `__test__/*.test.ts` exercises individual
-  modules: lexer, parser, composer, stringifier, formatting, equality, etc.
-- **compliance** (integration tests) — `__test__/yaml-test-suite.test.ts` runs
-  the official [yaml-test-suite](https://github.com/yaml/yaml-test-suite)
-  against our parser.
+- **yaml-effect:unit** — `__test__/*.test.ts` exercises individual modules:
+  lexer, parser, composer, stringifier, formatting, equality, etc.
+- **yaml-effect:e2e** — `__test__/yaml-test-suite.e2e.test.ts` runs the
+  official [yaml-test-suite](https://github.com/yaml/yaml-test-suite)
+  against our pipeline.
 
 The compliance suite lives in a git submodule at
 `__test__/fixtures/yaml-test-suite/` pinned to the `data-2022-01-17` tag. If
 the submodule is missing, run `git submodule update --init`.
 
-Known failures are tracked in `__test__/utils/yaml-test-suite-skip-map.ts`:
+The library currently passes 100% of the yaml-test-suite (1226/1226
+assertions). The `SKIP`, `XFAIL`, and `SKIP_ASSERTIONS` maps in
+`__test__/utils/yaml-test-suite-skip-map.ts` are all empty, and CI will fail
+if any assertion regresses. When adding new tests or making parser changes:
 
-- **XFAIL** — tests that run but are expected to fail (parse-level gaps).
-- **SKIP_ASSERTIONS** — tests where specific assertion types (JSON match,
-  canonical output, roundtrip) are skipped.
-
-If you fix a parser bug that causes an XFAIL test to start passing, remove its
-entry from the skip map so CI catches any future regressions.
+- Run `pnpm run test:compliance` to confirm the suite still passes.
+- If a fix causes a previously-skipped fixture to start passing, the empty
+  skip maps mean nothing needs to be removed — but please add a unit-test
+  regression guard in `__test__/` for the specific behavior fixed.
+- If you intentionally add a new XFAIL or SKIP entry (e.g., for an unfixed
+  bug surfaced by a new test corpus), document the reason and reference an
+  open issue.
 
 ## Submitting Changes
 

@@ -20,12 +20,41 @@ If you just need to parse YAML into a JavaScript object, use [yaml](https://www.
 
 This library is for Effect-based programs that need deeper introspection and manipulation of YAML documents: typed parse errors you can `catchTag`, Schema pipelines that validate YAML strings into domain types, AST and CST access, non-destructive formatting and path-based modification, semantic equality comparisons, and SAX-style visitor streams that are composable in Effect pipelines.
 
-> **Note:** yaml-effect is new and may introduce breaking changes before a
-> 1.0.0 release. The library is validated against the official
-> [yaml-test-suite](https://github.com/yaml/yaml-test-suite) — current
-> compliance is tracked in the badge above. A small number of canonical
-> stringifier output cases (explicit `?` syntax for complex keys, multi-doc
-> `...` end markers) are still being addressed.
+## Spec Compliance
+
+yaml-effect passes 100% of the official
+[yaml-test-suite](https://github.com/yaml/yaml-test-suite) (1226 of 1226
+assertions). Every assertion in the suite is exercised, with no skipped
+tests and no expected failures, across all four assertion families:
+
+- Parse-success and parse-rejection (correct accept/reject behavior)
+- JSON equivalence of parsed values
+- Canonical-output byte-equality against libyaml's reference emitter
+- Stringify roundtrip (`parse(stringify(parse(x))) === parse(x)`)
+
+This reflects YAML 1.2 spec compliance as exercised by the yaml-test-suite.
+It is not a formal certification, and "spec-correct" should not be read as
+"production hardened" — see the maturity note below.
+
+## Status and Maturity
+
+yaml-effect is pre-1.0. While the library is spec-correct against the
+yaml-test-suite, a 1.0.0 release is intentionally being deferred. Expect
+the following before stabilization:
+
+- **Expanded test coverage.** The regression corpus will grow beyond the
+  official yaml-test-suite — additional parser fuzzing, real-world fixtures
+  (CI configs, lockfiles, k8s manifests), and adversarial inputs.
+- **Performance work.** The parser, composer, and stringifier have not been
+  micro-benchmarked or hot-path optimized. Internal data structures and
+  algorithms may change for throughput and memory.
+- **API surface evolution.** Likely additions include incremental and
+  streaming parse APIs, deeper Effect Schema integration, and more
+  ergonomic format and modify helpers.
+- **Breaking changes between minor versions.** Until 1.0.0 ships, breaking
+  changes may land between 0.x and 0.y, not just at major version
+  boundaries. Pin to an exact version (or a tight range) and review
+  [CHANGELOG.md](./CHANGELOG.md) before upgrading.
 
 ## Installation
 

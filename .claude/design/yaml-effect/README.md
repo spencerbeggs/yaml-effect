@@ -20,7 +20,7 @@ split by concern to enable progressive context loading.
 | [schema-integration.md](./schema-integration.md) | Effect Schema integration (YamlFromString, makeYamlSchema, etc.) |
 | [errors.md](./errors.md) | Error taxonomy and handling |
 | [compliance-testing.md](./compliance-testing.md) | yaml-test-suite integration, skip maps, badge pipeline |
-| [canonical-output-gaps.md](./canonical-output-gaps.md) | Remaining 17 yaml-test-suite canonical-output failures: parser refactor scope, multi-doc tag preservation, and the structural choice between AST source-text capture and a libyaml-faithful canonical emitter |
+| [canonical-output-gaps.md](./canonical-output-gaps.md) | Historical record of the canonical-output compliance gap (now closed at 100%) and the per-fixture post-processing rules in `__test__/utils/canonical.ts` that closed it |
 
 ## How to Use These Docs
 

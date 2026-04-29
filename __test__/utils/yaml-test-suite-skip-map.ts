@@ -51,12 +51,4 @@ export const XFAIL: Record<string, string> = {};
  * - "output" — skip out.yaml canonical output comparison
  * - "roundtrip" — skip stringify roundtrip comparison
  */
-export const SKIP_ASSERTIONS: Record<string, string[]> = {
-	"2LFX": ["output"],
-	"4WA9": ["output"],
-	"652Z": ["output"],
-	"6WLZ": ["output"],
-	B3HG: ["output"],
-	PUW8: ["output"],
-	"VJP3/01": ["output"],
-};
+export const SKIP_ASSERTIONS: Record<string, string[]> = {};

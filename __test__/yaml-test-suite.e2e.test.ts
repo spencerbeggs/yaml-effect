@@ -12,7 +12,7 @@ import { Effect, Either } from "effect";
 import { describe, expect, it } from "vitest";
 import { parse, parseAllDocuments, parseDocument, stringify, stringifyDocument } from "../src/index.js";
 import { buildAnchorMap, getNodeValue } from "../src/utils/composer.js";
-import { applySingleDocCanonical } from "./utils/canonical.js";
+import { applyMultiDocCanonical, applySingleDocCanonical } from "./utils/canonical.js";
 import { SUITE_DIR, loadAllTestCases } from "./utils/yaml-test-suite.js";
 import { SKIP, SKIP_ASSERTIONS, XFAIL } from "./utils/yaml-test-suite-skip-map.js";
 
@@ -142,7 +142,8 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 							}
 							const docs = Either.getOrThrow(docsResult);
 							const parts = docs.map((doc) => Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true })));
-							const stringified = parts.join("");
+							const joined = parts.join("");
+							const stringified = applyMultiDocCanonical(joined, docs);
 							expect(stringified).toBe(tc.outYaml);
 						} else {
 							const docResult = Effect.runSync(Effect.either(parseDocument(tc.yaml, { uniqueKeys: false })));
@@ -152,7 +153,7 @@ describe.skipIf(!suiteAvailable)("yaml-test-suite compliance", () => {
 							}
 							const doc = Either.getOrThrow(docResult);
 							const raw = Effect.runSync(stringifyDocument(doc, { forceDefaultStyles: true }));
-							const stringified = applySingleDocCanonical(raw, doc.contents);
+							const stringified = applySingleDocCanonical(raw, doc, tc.yaml);
 							expect(stringified).toBe(tc.outYaml);
 						}
 					});
