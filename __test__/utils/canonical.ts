@@ -245,7 +245,7 @@ function splitMultiDocOutput(output: string, docs: ReadonlyArray<YamlDocument>):
 			segments.push(output.slice(pos));
 			break;
 		}
-		const next = output.indexOf("---", pos + (i === 0 ? 3 : 0));
+		const next = output.indexOf("---", pos + 3);
 		if (next < 0) return null;
 		segments.push(output.slice(pos, next));
 		pos = next;
