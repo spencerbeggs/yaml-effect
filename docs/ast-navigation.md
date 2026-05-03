@@ -1,4 +1,4 @@
-# AST Navigation
+# AST navigation
 
 Path-based and offset-based navigation within parsed YAML AST trees. All
 navigation functions support both direct and pipeline calling conventions.
@@ -11,7 +11,7 @@ node if found, `Option.None` otherwise.
 
 This function is a dual.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect, Option } from "effect";
@@ -35,7 +35,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, Option, pipe } from "effect";
@@ -64,7 +64,7 @@ outside the tree.
 
 This function is a dual.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect, Option } from "effect";
@@ -86,7 +86,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, Option, pipe } from "effect";
@@ -112,7 +112,7 @@ The path is an array of string keys and numeric indices.
 
 This function is a dual.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect, Option } from "effect";
@@ -134,7 +134,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, Option, pipe } from "effect";
@@ -190,7 +190,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Type Guards
+## Type guards
 
 Type guards narrow an unknown value to a specific AST node type.
 
@@ -231,7 +231,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Available Type Guards
+### Available type guards
 
 | Guard | Matches |
 | ----- | ------- |
@@ -243,7 +243,7 @@ Effect.runSync(program);
 | `isNode(node)` | Any of the four AST node types |
 | `isDocument(node)` | `YamlDocument` instance |
 
-## AST Node Types
+## AST node types
 
 ### `YamlScalar`
 

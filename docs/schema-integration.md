@@ -1,7 +1,7 @@
-# Schema Integration
+# Schema integration
 
-`yaml-effect` integrates with Effect Schema to provide fully typed YAML
-decode/encode pipelines. Parse YAML strings directly into typed domain objects
+`yaml-effect` integrates with Effect Schema to provide typed YAML
+decode/encode pipelines. Parse YAML strings into typed domain objects
 and encode them back.
 
 ## `YamlFromString`
@@ -32,9 +32,10 @@ Effect.runSync(program);
 
 ## `makeYamlSchema(targetSchema, options?)`
 
-Creates a fully typed Schema that decodes YAML strings into a domain type `A`
-and encodes `A` values back into YAML strings. This is the primary integration
-point for typed YAML processing.
+Creates a typed Schema that decodes YAML strings into a domain type `A`
+and encodes `A` values back into YAML strings. Use this when you have a
+domain schema and want a single Schema that goes from YAML text to that
+type.
 
 ```typescript
 import { Effect, Schema } from "effect";
@@ -65,7 +66,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Custom Parse and Stringify Options
+### Custom parse and stringify options
 
 Pass options to control parsing and stringification behavior.
 
@@ -204,7 +205,7 @@ Effect.runSync(program);
 YAML schemas compose naturally with `@effect/platform` HTTP services and
 file system operations.
 
-### Reading YAML Configuration Files
+### Reading YAML configuration files
 
 ```typescript
 import { Effect, Schema } from "effect";
@@ -233,7 +234,7 @@ const program = Effect.gen(function* () {
 NodeRuntime.runMain(program.pipe(Effect.provide(NodeContext.layer)));
 ```
 
-## Round-Trip Encoding and Decoding
+## Round-trip encoding and decoding
 
 All schema functions support bidirectional transformation. Decode YAML into
 typed values, transform them, and encode back to YAML.
@@ -270,7 +271,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Schema decode/encode failures surface as `ParseError` from the Effect Schema
 library. The error message includes the underlying YAML parse or stringify

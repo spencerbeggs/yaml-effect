@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 ## Installation
 
@@ -17,7 +17,7 @@ yarn add yaml-effect effect
 
 `effect` version `^3.19.19` or later is required as a peer dependency.
 
-## TypeScript Setup
+## TypeScript setup
 
 `yaml-effect` is written in TypeScript and ships with full type declarations.
 Enable `strict` mode in your `tsconfig.json` for the best experience:
@@ -35,7 +35,7 @@ Enable `strict` mode in your `tsconfig.json` for the best experience:
 The library is ESM-only. Ensure your project uses `"type": "module"` in
 `package.json` or `.mts` file extensions.
 
-## Basic Parsing
+## Basic parsing
 
 The `parse` function converts a YAML string into a plain JavaScript value. It
 returns an `Effect` so errors are tracked in the type system.
@@ -62,7 +62,7 @@ YAML 1.2 Core Schema type resolution is applied automatically:
 - Float literals, `.inf`, `-.inf`, `.nan` resolve to `number`
 - Everything else remains a `string`
 
-## Basic Stringification
+## Basic stringification
 
 The `stringify` function converts a JavaScript value back into YAML text.
 
@@ -87,7 +87,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Every function in `yaml-effect` returns an `Effect` with a typed error channel.
 Use `Effect.catchTag` to handle specific error types.
@@ -129,7 +129,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Round-Trip Example
+## Round-trip example
 
 Parse a YAML document, modify it, and stringify it back.
 
@@ -159,7 +159,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Next Steps
+## Next steps
 
 - [Parsing](./parsing.md) -- detailed parse options and multi-document support
 - [Stringification](./stringify.md) -- output formatting and scalar styles

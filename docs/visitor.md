@@ -1,10 +1,10 @@
 # Visitor
 
 SAX-style streaming traversal of YAML documents at both the AST and CST levels.
-Visitors emit a `Stream` of events in document order, enabling lazy processing
-with early termination.
+Visitors emit a `Stream` of events in document order. The stream is lazy and
+supports early termination.
 
-## AST Visitor
+## AST visitor
 
 ### `visit(text, options?)`
 
@@ -54,7 +54,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### AST Event Types
+### AST event types
 
 | Event | Description | Key Fields |
 | ----- | ----------- | ---------- |
@@ -73,7 +73,7 @@ Effect.runSync(program);
 All events carry `path` (an array of string keys and numeric indices from the
 document root) and `depth` (zero-based nesting level).
 
-### AST Type Guards
+### AST type guards
 
 Use these functions to narrow a `YamlVisitorEvent` to a specific variant.
 
@@ -95,7 +95,7 @@ Available type guards:
 - `isCommentEvent`
 - `isDirectiveEvent`
 
-## CST Visitor
+## CST visitor
 
 ### `visitCST(text)`
 
@@ -146,7 +146,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### CST Event Types
+### CST event types
 
 | Event | Description | Key Fields |
 | ----- | ----------- | ---------- |
@@ -166,7 +166,7 @@ Effect.runSync(program);
 
 All CST events carry `path` and `depth` fields, same as AST events.
 
-### CST Type Guards
+### CST type guards
 
 - `isCstDocumentStartEvent`
 - `isCstDocumentEndEvent`
@@ -182,12 +182,12 @@ All CST events carry `path` and `depth` fields, same as AST events.
 - `isCstDirectiveEvent`
 - `isCstErrorEvent`
 
-## Stream Composition Patterns
+## Stream composition patterns
 
 Because `visit` and `visitCST` return Effect `Stream` values, you can compose
 them with standard stream operators.
 
-### Taking the First N Events
+### Taking the first N events
 
 ```typescript
 import { Effect, Stream } from "effect";
@@ -205,7 +205,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Filtering Events
+### Filtering events
 
 ```typescript
 import { Effect, Stream } from "effect";
@@ -226,7 +226,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Extracting with filterMap
+### Extracting with `filterMap`
 
 ```typescript
 import { Effect, Option, Stream } from "effect";
@@ -250,9 +250,9 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Real-World Examples
+## Real-world examples
 
-### Extracting All Keys from a Document
+### Extracting all keys from a document
 
 ```typescript
 import { Effect, Option } from "effect";
@@ -280,7 +280,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Finding Values by Pattern
+### Finding values by pattern
 
 ```typescript
 import { Effect, Option } from "effect";

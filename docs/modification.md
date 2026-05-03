@@ -2,7 +2,7 @@
 
 Insert, replace, or remove values at specific paths within a YAML document.
 Modifications work through AST manipulation: parse, navigate to the target
-path, apply the change, and stringify back.
+path, apply the change and stringify back.
 
 ## `modify(text, path, value)`
 
@@ -13,7 +13,7 @@ property or element.
 This function is a dual -- it can be called with all three arguments directly,
 or partially applied with path and value first.
 
-### Replacing a Value
+### Replacing a value
 
 ```typescript
 import { Effect } from "effect";
@@ -32,7 +32,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Inserting a New Key
+### Inserting a new key
 
 ```typescript
 import { Effect } from "effect";
@@ -51,7 +51,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Removing a Key
+### Removing a key
 
 Pass `undefined` as the value to remove a key.
 
@@ -71,7 +71,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, pipe } from "effect";
@@ -95,7 +95,7 @@ Same as `modify` followed by `applyEdits`, but without computing a diff.
 
 This function is a dual -- it supports both direct and partial application.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect } from "effect";
@@ -113,7 +113,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, pipe } from "effect";
@@ -129,12 +129,12 @@ const program = pipe(
 Effect.runSync(program);
 ```
 
-## Path Navigation
+## Path navigation
 
 Paths are arrays of string keys (for mappings) and numeric indices (for
 sequences).
 
-### String Keys for Mappings
+### String keys for mappings
 
 ```typescript
 import { Effect } from "effect";
@@ -153,7 +153,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Numeric Indices for Sequences
+### Numeric indices for sequences
 
 ```typescript
 import { Effect } from "effect";
@@ -170,9 +170,9 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Array Element Manipulation
+## Array element manipulation
 
-### Replace an Element
+### Replace an element
 
 ```typescript
 import { Effect } from "effect";
@@ -188,7 +188,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Remove an Element
+### Remove an element
 
 ```typescript
 import { Effect } from "effect";
@@ -205,7 +205,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Append an Element
+### Append an element
 
 Use an index equal to or greater than the array length to append.
 
@@ -223,7 +223,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Modification can fail with `YamlModificationError` when the path does not
 exist or the document cannot be parsed.

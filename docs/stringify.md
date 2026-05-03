@@ -103,7 +103,7 @@ style fall back to the defaults in `options`.
 | `sortKeys` | `boolean` | `false` | Sort mapping keys alphabetically |
 | `finalNewline` | `boolean` | `true` | Append trailing newline to output |
 
-### Example: Custom Options
+### Example: custom options
 
 ```typescript
 import { Effect } from "effect";
@@ -126,7 +126,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Scalar Styles
+## Scalar styles
 
 The `defaultScalarStyle` option controls how string values are rendered.
 
@@ -138,7 +138,7 @@ The `defaultScalarStyle` option controls how string values are rendered.
 | `"block-literal"` | Pipe indicator, preserves newlines | see below |
 | `"block-folded"` | Greater-than indicator, folds newlines | see below |
 
-### Block Literal (`|`)
+### Block literal (`|`)
 
 Preserves newlines exactly as written.
 
@@ -161,7 +161,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Block Folded (`>`)
+### Block folded (`>`)
 
 Folds single newlines into spaces; blank lines become paragraph breaks.
 
@@ -184,12 +184,12 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Collection Styles
+## Collection styles
 
 The `defaultCollectionStyle` option controls how mappings and sequences are
 rendered.
 
-### Block Style (default)
+### Block style (default)
 
 ```typescript
 import { Effect } from "effect";
@@ -208,7 +208,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Flow Style
+### Flow style
 
 ```typescript
 import { Effect } from "effect";
@@ -226,7 +226,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 `stringify` fails with `YamlStringifyError` when it encounters an
 unstringifiable value, such as a circular reference.

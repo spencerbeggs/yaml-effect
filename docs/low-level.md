@@ -1,11 +1,11 @@
-# Low-Level APIs
+# Low-level APIs
 
 The low-level APIs expose the individual stages of the YAML processing pipeline:
-lexing (tokenization), scanning (pull-based token access), and CST (Concrete
+lexing (tokenization), scanning (pull-based token access) and CST (Concrete
 Syntax Tree) construction. Most users should use the high-level `parse`,
-`stringify`, and `format` functions instead.
+`stringify` and `format` functions instead.
 
-## When to Use Low-Level APIs
+## When to use low-level APIs
 
 Use the low-level APIs when you need to:
 
@@ -69,7 +69,7 @@ while (kind !== null) {
 }
 ```
 
-### `YamlScanner` Interface
+### `YamlScanner` interface
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
@@ -83,7 +83,7 @@ while (kind !== null) {
 | `getPosition()` | `number` | Current scanner position |
 | `setPosition(pos)` | `void` | Reset scanner to a character offset |
 
-### Repositioning the Scanner
+### Repositioning the scanner
 
 The `setPosition` method resets the scanner to a specific character offset and
 clears all internal state (indentation tracking, flow depth, pending tokens).
@@ -140,7 +140,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Token Types
+## Token types
 
 The 22 token kinds produced by the YAML lexer:
 
@@ -169,7 +169,7 @@ The 22 token kinds produced by the YAML lexer:
 | `byte-order-mark` | Unicode BOM |
 | `error` | Lexer error token |
 
-## CST Node Types
+## CST node types
 
 The 15 node types produced by the CST parser:
 
@@ -191,7 +191,7 @@ The 15 node types produced by the CST parser:
 | `newline` | A line break |
 | `error` | An error node |
 
-### `CstNode` Fields
+### `CstNode` fields
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |

@@ -1,7 +1,7 @@
 # Formatting
 
-Re-indent, sort keys, strip comments, and apply consistent formatting to YAML
-documents. All formatting operations use an AST-based approach: parse, transform,
+Re-indent, sort keys, strip comments and apply consistent formatting to YAML
+documents. All formatting operations use an AST-based approach: parse, transform
 and stringify.
 
 ## `format(text, options?)`
@@ -59,7 +59,7 @@ offsets.
 
 This function is a dual -- it can be called directly or partially applied.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import type { ReadonlyArray } from "effect";
@@ -80,7 +80,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, pipe } from "effect";
@@ -100,7 +100,7 @@ Effect.runSync(program);
 
 Removes all comments from a YAML document.
 
-### Removal Mode (default)
+### Removal mode (default)
 
 Without `replaceCh`, parses the document, removes all comment fields from the
 AST, and stringifies back. Full-line comments are removed entirely.
@@ -121,7 +121,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Replacement Mode
+### Replacement mode
 
 With `replaceCh` (a single character), replaces each character of comment text
 (including the `#` marker) with the given character. This preserves character
@@ -170,7 +170,7 @@ const options: RawFormatOptions = {
 };
 ```
 
-## Range-Restricted Formatting
+## Range-restricted formatting
 
 When `range` is set, only edits within that byte range are returned. This is
 useful for formatting a selected region of a document without affecting the
@@ -194,7 +194,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Formatting can fail with `YamlFormatError` when the input YAML is malformed.
 

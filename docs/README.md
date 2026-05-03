@@ -1,9 +1,8 @@
-# yaml-effect Documentation
+# yaml-effect documentation
 
 A pure [Effect](https://effect.website)-based YAML 1.2 parser, stringifier,
-and toolkit for TypeScript. Every operation returns an `Effect`, giving you
-typed errors, composability, and seamless integration with Effect-based
-applications.
+and toolkit for TypeScript. Every operation returns an `Effect`. You get
+typed errors, composability and integration with Effect-based applications.
 
 yaml-effect passes 100% of the official
 [yaml-test-suite](https://github.com/yaml/yaml-test-suite) (1226/1226
@@ -21,7 +20,7 @@ npm install yaml-effect effect
 > **Peer dependency:** `effect` (>= 3.x) must be installed alongside
 > yaml-effect.
 
-## Quick Start
+## Quick start
 
 ```typescript
 import { Effect } from "effect";
@@ -54,9 +53,9 @@ Effect.runSync(program);
 | [Low-Level APIs](./low-level.md) | `lex`, `createScanner`, `parseCST`, token and CST node types |
 | [Errors](./errors.md) | Error taxonomy, error codes, `Effect.catchTag` patterns |
 
-## API at a Glance
+## API at a glance
 
-### Core Operations
+### Core operations
 
 - `parse(text)` -- Parse YAML to a plain JavaScript value
 - `parseDocument(text)` -- Parse to a full `YamlDocument` AST
@@ -64,14 +63,14 @@ Effect.runSync(program);
 - `stringify(value)` -- Convert a JavaScript value to YAML
 - `stringifyDocument(doc)` -- Serialize a `YamlDocument` AST to YAML
 
-### Schema Integration
+### Schema integration
 
 - `YamlFromString` -- Schema: YAML string to/from unknown
 - `makeYamlSchema(schema)` -- Compose a typed Schema from YAML to domain type
 - `YamlAllFromString` -- Schema: multi-document YAML string to/from unknown[]
 - `makeYamlDocumentSchema()` -- Schema: YAML string to/from `YamlDocument`
 
-### Formatting and Modification
+### Formatting and modification
 
 - `format(text, opts)` / `formatAndApply(text, opts)` -- Reformat YAML
 - `modify(text, path, value)` / `modifyAndApply(text, path, value)` -- Edit by path
@@ -83,31 +82,31 @@ Effect.runSync(program);
 - `equals(a, b)` -- Semantic equality (ignores formatting, key order)
 - `equalsValue(yaml, value)` -- Compare YAML string against a JS value
 
-### Visitor Pattern
+### Visitor pattern
 
 - `visit(text)` -- Stream of AST visitor events
 - `visitCollect(text, pred)` -- Collect matching AST events
 - `visitCST(text)` -- Stream of CST visitor events
 - `visitCSTCollect(text, pred)` -- Collect matching CST events
 
-### AST Navigation
+### AST navigation
 
 - `findNode(root, path)` -- Navigate to a node by path
 - `findNodeAtOffset(root, offset)` -- Find the deepest node at a character offset
 - `getNodePath(root, offset)` -- Get the path to a node at an offset
 - `getNodeValue(node)` -- Extract a plain JS value from an AST node
 
-### Type Guards
+### Type guards
 
 `isScalar`, `isMap`, `isSeq`, `isPair`, `isAlias`, `isNode`, `isDocument`
 
-### Low-Level
+### Low-level
 
 - `lex(text)` -- Stream of YAML tokens
 - `createScanner(text)` -- Pull-based incremental scanner
 - `parseCST(text)` -- Stream of CST document nodes
 
-## Error Types
+## Error types
 
 All errors extend `Data.TaggedError` and can be caught with `Effect.catchTag`:
 
@@ -122,7 +121,7 @@ All errors extend `Data.TaggedError` and can be caught with `Effect.catchTag`:
 | `YamlNodeNotFoundError` | AST path navigation failures |
 | `YamlSchemaError` | Schema validation failures |
 
-## Pipeline Architecture
+## Pipeline architecture
 
 ```text
 YAML text
@@ -139,7 +138,7 @@ YAML text
   +-- stringifyDocument() -- Effect<string>  (from YamlDocument AST)
 ```
 
-## Dual Calling Convention
+## Dual calling convention
 
 Functions built with `Fn.dual` support both direct and pipeline styles:
 

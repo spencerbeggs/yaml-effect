@@ -1,10 +1,12 @@
 # yaml-effect
 
-[![npm version](https://img.shields.io/npm/v/yaml-effect)](https://www.npmjs.com/package/yaml-effect)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm](https://img.shields.io/npm/v/yaml-effect?label=npm&color=cb3837)](https://www.npmjs.com/package/yaml-effect)
+[![License: MIT](https://img.shields.io/badge/License-MIT-4caf50.svg)](https://opensource.org/licenses/MIT)
+[![Node.js 24.11.0](https://img.shields.io/badge/Node.js-24.11.0-5fa04e.svg)](https://nodejs.org/)
+[![TypeScript 5.9.3](https://img.shields.io/badge/TypeScript-5.9.3-3178c6.svg)](https://www.typescriptlang.org/)
 [![YAML 1.2 compliance](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fspencerbeggs%2Fyaml-effect%2Fbadges%2Fbadge.json)](https://github.com/spencerbeggs/yaml-effect/blob/badges/compliance.json)
 
-A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect — no wrappers, no ports, just a clean-room YAML 1.2 implementation designed for the Effect ecosystem.
+A pure Effect-based YAML 1.2 parser, stringifier, and toolkit for TypeScript. Zero runtime dependencies beyond Effect. The implementation is clean-room — it does not wrap or port another YAML library.
 
 ## Features
 
@@ -20,7 +22,7 @@ If you just need to parse YAML into a JavaScript object, use [yaml](https://www.
 
 This library is for Effect-based programs that need deeper introspection and manipulation of YAML documents: typed parse errors you can `catchTag`, Schema pipelines that validate YAML strings into domain types, AST and CST access, non-destructive formatting and path-based modification, semantic equality comparisons, and SAX-style visitor streams that are composable in Effect pipelines.
 
-## Spec Compliance
+## Spec compliance
 
 yaml-effect passes 100% of the official
 [yaml-test-suite](https://github.com/yaml/yaml-test-suite) (1226 of 1226
@@ -36,7 +38,7 @@ This reflects YAML 1.2 spec compliance as exercised by the yaml-test-suite.
 It is not a formal certification, and "spec-correct" should not be read as
 "production hardened" — see the maturity note below.
 
-## Status and Maturity
+## Status and maturity
 
 yaml-effect is pre-1.0. While the library is spec-correct against the
 yaml-test-suite, a 1.0.0 release is intentionally being deferred. Expect
@@ -64,7 +66,7 @@ npm install yaml-effect effect
 
 > **Peer dependency:** `effect` (>= 3.x) must be installed alongside `yaml-effect`.
 
-## Quick Start
+## Quick start
 
 ```typescript
 import { Effect } from "effect";
@@ -83,7 +85,17 @@ Effect.runSync(program);
 
 ## Documentation
 
-For API reference, configuration options, and advanced usage, see [docs](./docs/).
+- [Getting started](./docs/getting-started.md) — install, first parse and stringify, error handling
+- [Parsing](./docs/parsing.md) — `parse`, `parseDocument`, `parseAllDocuments` and YAML 1.2 type resolution
+- [Stringification](./docs/stringify.md) — `stringify`, `stringifyDocument`, scalar and collection styles
+- [Schema integration](./docs/schema-integration.md) — Effect Schema composition for typed YAML round-trips
+- [Formatting](./docs/formatting.md) — `format`, `formatAndApply`, `stripComments`, range formatting
+- [Modification](./docs/modification.md) — `modify`, `modifyAndApply`, path-based insert/replace/remove
+- [Equality](./docs/equality.md) — `equals`, `equalsValue`, semantic comparison
+- [Visitor](./docs/visitor.md) — AST and CST streaming traversal with `visit` and `visitCST`
+- [AST navigation](./docs/ast-navigation.md) — `findNode`, `findNodeAtOffset`, `getNodePath`, type guards
+- [Low-level APIs](./docs/low-level.md) — `lex`, `createScanner`, `parseCST`, token and CST node types
+- [Errors](./docs/errors.md) — error taxonomy, error codes, `Effect.catchTag` patterns
 
 ## License
 

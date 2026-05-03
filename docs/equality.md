@@ -1,7 +1,8 @@
 # Equality
 
-Semantic equality comparisons for YAML documents. Compares parsed values,
-ignoring comments, whitespace, formatting, and mapping key ordering.
+Semantic equality comparisons for YAML documents. The comparison parses
+both inputs and ignores comments, whitespace, formatting and mapping key
+ordering.
 
 ## `equals(a, b)`
 
@@ -11,7 +12,7 @@ then deep-compared.
 This function is a dual -- it can be called with both arguments directly, or
 partially applied with one argument for pipeline use.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect } from "effect";
@@ -28,7 +29,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, pipe } from "effect";
@@ -52,7 +53,7 @@ Only the YAML string is parsed; the JS value is used as-is.
 
 This function is a dual -- it supports both direct and pipeline calling.
 
-### Direct Style
+### Direct style
 
 ```typescript
 import { Effect } from "effect";
@@ -69,7 +70,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-### Pipeline Style
+### Pipeline style
 
 ```typescript
 import { Effect, pipe } from "effect";
@@ -85,7 +86,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Key-Order Insensitivity
+## Key-order insensitivity
 
 Mapping key order is not significant in YAML. Two mappings with the same keys
 and values are equal regardless of key ordering, at all nesting levels.
@@ -105,7 +106,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Sequence Order Significance
+## Sequence order significance
 
 Unlike mappings, sequence (array) order IS significant. Two sequences with the
 same elements in different order are NOT equal.
@@ -131,7 +132,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## NaN Handling
+## NaN handling
 
 `NaN` values are treated as equal to each other, which differs from JavaScript's
 `===` operator but matches the expected YAML semantics where two `.nan` values
@@ -149,7 +150,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Both `equals` and `equalsValue` can fail with `YamlComposerError` if either
 input string contains invalid YAML.

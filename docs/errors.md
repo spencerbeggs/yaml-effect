@@ -1,10 +1,10 @@
 # Errors
 
 All `yaml-effect` functions return `Effect` values with typed error channels.
-Errors are structured using `Data.TaggedError` from the Effect library, enabling
-precise error handling with `Effect.catchTag`.
+Errors are structured using `Data.TaggedError` from the Effect library, so
+you can use `Effect.catchTag` for precise error handling.
 
-## Error Taxonomy
+## Error taxonomy
 
 | Error Type | Tag | Raised By |
 | ---------- | --- | --------- |
@@ -17,7 +17,7 @@ precise error handling with `Effect.catchTag`.
 | `YamlNodeNotFoundError` | `"YamlNodeNotFoundError"` | AST navigation functions |
 | `YamlSchemaError` | `"YamlSchemaError"` | Schema validation |
 
-## The `YamlError` Union Type
+## The `YamlError` union type
 
 The `YamlError` type is a union of all eight error types. Use it when you want
 to handle any YAML error generically.
@@ -41,9 +41,9 @@ information.
 | `line` | `number` | Zero-based line number |
 | `column` | `number` | Zero-based column within the line |
 
-## Error Codes by Stage
+## Error codes by stage
 
-### Lex Error Codes
+### Lex error codes
 
 | Code | Description |
 | ---- | ----------- |
@@ -58,7 +58,7 @@ information.
 | `InvalidAnchorName` | Invalid anchor name |
 | `UnexpectedByteOrderMark` | BOM in unexpected position |
 
-### Parse Error Codes
+### Parse error codes
 
 | Code | Description |
 | ---- | ----------- |
@@ -71,7 +71,7 @@ information.
 | `InvalidBlockStructure` | Block structure is malformed |
 | `MalformedFlowCollection` | Flow collection syntax error |
 
-### Composer Error Codes
+### Composer error codes
 
 | Code | Description |
 | ---- | ----------- |
@@ -85,7 +85,7 @@ information.
 | `TabIndentation` | Tab used for indentation (YAML 1.2 forbids this) |
 | `UnexpectedToken` | Mapping starts on the document-start (`---`) line, or other structural violation |
 
-## Handling Errors with `Effect.catchTag`
+## Handling errors with `Effect.catchTag`
 
 Each error type has a unique `_tag` field, enabling precise pattern matching.
 
@@ -107,7 +107,7 @@ const program = parse("a: *undefined_alias").pipe(
 Effect.runSync(program);
 ```
 
-### Handling Multiple Error Types
+### Handling multiple error types
 
 ```typescript
 import { Effect } from "effect";
@@ -124,7 +124,7 @@ const program = modifyAndApply("name: John\n", ["address", "street"], "Main St")
 Effect.runSync(program);
 ```
 
-## Inspecting Errors with `Effect.either`
+## Inspecting errors with `Effect.either`
 
 Use `Effect.either` to convert the error channel into an `Either` value for
 inspection without crashing.
@@ -151,7 +151,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Error Type Details
+## Error type details
 
 ### `YamlLexError`
 

@@ -69,7 +69,7 @@ function parseDocument(
 ): Effect.Effect<YamlDocument, YamlComposerError>
 ```
 
-### `YamlDocument` Fields
+### `YamlDocument` fields
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
@@ -137,12 +137,12 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## YAML 1.2 Core Schema Type Resolution
+## YAML 1.2 Core Schema type resolution
 
 Plain scalars are resolved according to the YAML 1.2 Core Schema
 (spec section 10.3.2).
 
-### Null Values
+### Null values
 
 | YAML | JavaScript |
 | ---- | ---------- |
@@ -152,14 +152,14 @@ Plain scalars are resolved according to the YAML 1.2 Core Schema
 | `~` | `null` |
 | (empty) | `null` |
 
-### Boolean Values
+### Boolean values
 
 | YAML | JavaScript |
 | ---- | ---------- |
 | `true`, `True`, `TRUE` | `true` |
 | `false`, `False`, `FALSE` | `false` |
 
-### Integer Values
+### Integer values
 
 | YAML | JavaScript |
 | ---- | ---------- |
@@ -169,7 +169,7 @@ Plain scalars are resolved according to the YAML 1.2 Core Schema
 | `0o17` | `15` (octal) |
 | `0xff` | `255` (hex) |
 
-### Float Values
+### Float values
 
 | YAML | JavaScript |
 | ---- | ---------- |
@@ -180,7 +180,7 @@ Plain scalars are resolved according to the YAML 1.2 Core Schema
 | `-.inf` | `-Infinity` |
 | `.nan` | `NaN` |
 
-### String Values
+### String values
 
 Any plain scalar that does not match the patterns above is left as a string.
 Quoted scalars (single or double) are always strings regardless of content.
@@ -210,7 +210,7 @@ const program = Effect.gen(function* () {
 Effect.runSync(program);
 ```
 
-## Anchor and Alias Support
+## Anchor and alias support
 
 YAML anchors (`&name`) and aliases (`*name`) are resolved during composition.
 
@@ -253,7 +253,7 @@ const program = parse("a: *lots_of_aliases", { maxAliasCount: 10 }).pipe(
 Effect.runSync(program);
 ```
 
-## Error Handling
+## Error handling
 
 Parsing can fail with `YamlComposerError`, which contains an array of
 `YamlErrorDetail` entries with precise position information.
@@ -276,7 +276,7 @@ const program = parse("a: *missing_anchor").pipe(
 Effect.runSync(program);
 ```
 
-### Composer Error Codes
+### Composer error codes
 
 | Code | Description |
 | ---- | ----------- |
