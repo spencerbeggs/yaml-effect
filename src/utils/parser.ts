@@ -268,7 +268,7 @@ function parseBlockScalar(state: ParserState): CstNode {
  */
 function isBlockScalarToken(state: ParserState): boolean {
 	const token = peek(state);
-	if (!token || token.kind !== "scalar") return false;
+	if (token?.kind !== "scalar") return false;
 	const ch = state.text[token.offset];
 	return ch === "|" || ch === ">";
 }

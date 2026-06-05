@@ -236,7 +236,7 @@ function foldFlowLines(text: string): string {
  */
 function collectMultilineKey(children: readonly CstNode[], startIdx: number): { value: string; nextIdx: number } {
 	const first = children[startIdx];
-	if (!first || first.type !== "flow-scalar") {
+	if (first?.type !== "flow-scalar") {
 		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1 };
 	}
 
@@ -329,7 +329,7 @@ function collectMultilinePlainScalar(
 	sourceText?: string,
 ): { value: string; nextIdx: number; partsCount: number } {
 	const first = children[startIdx];
-	if (!first || first.type !== "flow-scalar") {
+	if (first?.type !== "flow-scalar") {
 		return { value: first?.source.trim() ?? "", nextIdx: startIdx + 1, partsCount: 1 };
 	}
 
@@ -2477,12 +2477,12 @@ function checkMultilineImplicitKeys(
 		if (!item) continue;
 		if (item.kind !== "node" && item.kind !== "key") continue;
 		const node = item.node;
-		if (!node || node._tag !== "YamlScalar" || node.length === 0) continue;
+		if (node?._tag !== "YamlScalar" || node.length === 0) continue;
 		// Look ahead for value-sep
 		let j = i + 1;
 		while (j < items.length && items[j]?.kind === "comment") j++;
 		const next = items[j];
-		if (!next || next.kind !== "value-sep" || next.offset === undefined) continue;
+		if (next?.kind !== "value-sep" || next.offset === undefined) continue;
 		const keyEndLine = lineCol(state.text, node.offset + node.length - 1).line;
 		const sepLine = lineCol(state.text, next.offset).line;
 		if (keyEndLine !== sepLine) {
