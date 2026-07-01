@@ -37,6 +37,7 @@
 		"lint:md:fix": "markdownlint-cli2 --config './lib/configs/.markdownlint-cli2.jsonc' --fix",
 		"prepare": "husky",
 		"test": "vitest run --passWithNoTests",
+		"test:compliance": "vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false",
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest --watch",
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",

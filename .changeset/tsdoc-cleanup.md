@@ -24,3 +24,11 @@ Resolve all TSDoc / api-extractor warnings surfaced by the `@savvy-web/bundler`
 Upgrade to the `@savvy-web/bundler` 1.1 flat `build()` entrypoint and align the
 toolchain dev dependencies (`typescript`, `@types/node`,
 `@typescript/native-preview`) with the silk catalog.
+
+Repair the compliance badge workflow after the `@vitest-agent/plugin`
+migration. The single-project + test-tag model retired the old
+`yaml-effect:e2e` named project, so `.github/workflows/compliance.yml` now runs
+the `.e2e.test.ts` file directly (writing clean JSON via `--outputFile`), and
+the removed `test:compliance` script is restored. Refresh the stale test-setup
+references in `CLAUDE.md`, `CONTRIBUTING.md`, and the compliance-testing design
+doc.
