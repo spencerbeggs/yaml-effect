@@ -91,7 +91,7 @@ export type YamlErrorCode = Schema.Schema.Type<typeof YamlErrorCode>;
  * message, and the exact position within the source document.
  *
  * @remarks
- * - `code` — a {@link YamlErrorCode} identifying the error kind.
+ * - `code` — a `YamlErrorCode` identifying the error kind.
  * - `message` — a descriptive message suitable for display.
  * - `offset` — zero-based character offset where the error occurred.
  * - `length` — character length of the problematic span.

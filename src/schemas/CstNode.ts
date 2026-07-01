@@ -41,7 +41,7 @@ export type CstNodeType = Schema.Schema.Type<typeof CstNodeType>;
  * source text span, position, and optional recursive children.
  *
  * @remarks
- * - `type` — a {@link CstNodeType} identifying the node kind.
+ * - `type` — a {@link (CstNodeType:type)} identifying the node kind.
  * - `source` — the raw text slice from the source document.
  * - `offset` — zero-based character offset where the node begins.
  * - `length` — character length of the node span.

@@ -3,7 +3,7 @@
  *
  * @remarks
  * `visit()` walks a YAML text string and emits a `Stream` of
- * {@link YamlVisitorEvent} values in document order.  `visitCollect()` is a
+ * {@link (YamlVisitorEvent:type)} values in document order.  `visitCollect()` is a
  * convenience wrapper that runs the stream to completion and returns only the
  * events matched by a caller-supplied predicate.
  *
@@ -209,7 +209,7 @@ function* walkDocument(doc: YamlDocument): Generator<YamlVisitorEvent> {
 // ---------------------------------------------------------------------------
 
 /**
- * Walk a YAML text string and emit a `Stream` of {@link YamlVisitorEvent}
+ * Walk a YAML text string and emit a `Stream` of {@link (YamlVisitorEvent:type)}
  * values in document order.
  *
  * @remarks
@@ -270,7 +270,7 @@ export function visit(
 
 /**
  * Walk a YAML text string and collect the results of applying `predicate` to
- * each {@link YamlVisitorEvent}.
+ * each {@link (YamlVisitorEvent:type)}.
  *
  * @remarks
  * Only events for which `predicate` returns `Option.some(value)` are included

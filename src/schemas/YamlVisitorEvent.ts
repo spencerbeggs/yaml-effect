@@ -5,7 +5,7 @@
  * Each event is a {@link Schema.TaggedClass} carrying the visitor `path` (an
  * ordered list of string keys / numeric indices from the document root to the
  * current node) and `depth` (the zero-based nesting level).  All eleven event
- * types are collected into the {@link YamlVisitorEvent} discriminated union and
+ * types are collected into the {@link (YamlVisitorEvent:type)} discriminated union and
  * individual type-guard helpers are exported for each variant.
  *
  * @packageDocumentation
@@ -285,7 +285,7 @@ export const YamlVisitorEvent = Schema.Union(
 /**
  * The union of all YAML visitor event types.
  *
- * @see {@link YamlVisitorEvent}
+ * @see {@link (YamlVisitorEvent:type)}
  *
  * @public
  */

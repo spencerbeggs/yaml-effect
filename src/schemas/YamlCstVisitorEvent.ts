@@ -6,7 +6,7 @@
  * ordered list of string keys / numeric indices from the document root to the
  * current node) and `depth` (the zero-based nesting level).  All content
  * fields are raw source strings — no type resolution occurs at the CST level.
- * All thirteen event types are collected into the {@link YamlCstVisitorEvent}
+ * All thirteen event types are collected into the {@link (YamlCstVisitorEvent:type)}
  * discriminated union and individual type-guard helpers are exported for each
  * variant.
  *
@@ -307,7 +307,7 @@ export const YamlCstVisitorEvent = Schema.Union(
 /**
  * The union of all YAML CST visitor event types.
  *
- * @see {@link YamlCstVisitorEvent}
+ * @see {@link (YamlCstVisitorEvent:type)}
  *
  * @public
  */

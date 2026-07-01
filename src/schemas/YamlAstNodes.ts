@@ -124,8 +124,8 @@ export type YamlNode = Schema.Schema.Type<typeof YamlNode>;
  * A YAML key-value pair AST node, representing one entry within a mapping.
  *
  * @remarks
- * - `key` — the {@link YamlNode} serving as the mapping key.
- * - `value` — the {@link YamlNode} serving as the mapping value, or `null`
+ * - `key` — the {@link (YamlNode:type)} serving as the mapping key.
+ * - `value` — the {@link (YamlNode:type)} serving as the mapping value, or `null`
  *   when the value is absent (e.g., `key:` with no value).
  * - `comment` — optional trailing or inline comment text.
  *
@@ -208,7 +208,7 @@ export class YamlMap extends Schema.TaggedClass<YamlMap>()("YamlMap", {
  * A YAML sequence AST node, representing an ordered list of values.
  *
  * @remarks
- * - `items` — the array of {@link YamlNode} values in this sequence.
+ * - `items` — the array of {@link (YamlNode:type)} values in this sequence.
  * - `style` — the presentation style: `"block"` or `"flow"`.
  * - `tag` — optional explicit YAML tag (e.g., `!!seq`).
  * - `anchor` — optional anchor name for aliasing.

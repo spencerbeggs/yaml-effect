@@ -32,7 +32,7 @@ export class YamlDirective extends Schema.Class<YamlDirective>("YamlDirective")(
  * warnings, YAML directives, and an optional document-level comment.
  *
  * @remarks
- * - `contents` — the root {@link YamlNode} of the document, or `null` for an
+ * - `contents` — the root {@link (YamlNode:type)} of the document, or `null` for an
  *   empty document.
  * - `errors` — {@link YamlErrorDetail} entries produced during parsing.
  * - `warnings` — non-fatal {@link YamlErrorDetail} entries produced during
