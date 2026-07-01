@@ -24,7 +24,7 @@ jobs:
       - name: Run compliance tests
         id: compliance
         run: |
-          pnpm vitest run --project yaml-effect:e2e --reporter=json > /tmp/compliance-results.json 2>/dev/null || true
+          pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --reporter=json --outputFile=/tmp/compliance-results.json --coverage.enabled=false 2>/dev/null || true
 
           node --input-type=module <<'SCRIPT'
           import { readFileSync, writeFileSync } from "node:fs";

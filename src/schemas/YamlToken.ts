@@ -48,7 +48,7 @@ export type YamlTokenKind = Schema.Schema.Type<typeof YamlTokenKind>;
  * value, and exact source position.
  *
  * @remarks
- * - `kind` — a {@link YamlTokenKind} identifying the token type.
+ * - `kind` — a {@link (YamlTokenKind:type)} identifying the token type.
  * - `value` — the raw text slice from the source document.
  * - `offset` — zero-based character offset where the token begins.
  * - `length` — character length of the token span.

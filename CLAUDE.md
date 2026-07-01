@@ -101,7 +101,6 @@ installed source.
 | commitlint | Conventional commit + DCO enforcement | [savvy-web/commitlint](https://github.com/savvy-web/commitlint) | `node_modules/@savvy-web/commitlint/` |
 | changesets | Versioning, changelogs, release management | [savvy-web/changesets](https://github.com/savvy-web/changesets) | `node_modules/@savvy-web/changesets/` |
 | lint-staged | Pre-commit file linting via Biome | [savvy-web/lint-staged](https://github.com/savvy-web/lint-staged) | `node_modules/@savvy-web/lint-staged/` |
-| vitest | Vitest config factory with project support | [savvy-web/vitest](https://github.com/savvy-web/vitest) | `node_modules/@savvy-web/vitest/` |
 
 TypeScript configuration extends from rslib-builder:
 `@savvy-web/rslib-builder/tsconfig/ecma/lib.json`
@@ -198,6 +197,5 @@ workflow. The GitHub Action is at
 
 - **Framework**: [Vitest](https://vitest.dev/) with v8 coverage provider
 - **Pool**: Uses `forks` (not threads) for broader compatibility
-- **Config**: `vitest.config.ts` uses the `VitestConfig.create()` factory from
-  `@savvy-web/vitest`, which supports project-based filtering via `--project`
+- **Config**: `vitest.config.ts` uses [`@vitest-agent/plugin`](https://www.npmjs.com/package/@vitest-agent/plugin)'s `AgentPlugin.discover()`, producing a single `yaml-effect` project with `unit`/`int`/`e2e` test tags derived from the `*.e2e.test.ts` filename convention (no `--project` filtering). Installed source: `node_modules/@vitest-agent/plugin/`
 - **CI**: `pnpm run ci:test` sets `CI=true` and enables coverage

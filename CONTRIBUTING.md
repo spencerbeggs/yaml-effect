@@ -82,13 +82,18 @@ The following checks run automatically:
 
 ## Testing
 
-Tests are organized into two Vitest projects:
+Tests run in a single Vitest project named `yaml-effect`, discovered via
+`@vitest-agent/plugin`'s `AgentPlugin.discover()`. Individual tests are
+distinguished by tags rather than separate projects:
 
-- **yaml-effect:unit** — `__test__/*.test.ts` exercises individual modules:
-  lexer, parser, composer, stringifier, formatting, equality, etc.
-- **yaml-effect:e2e** — `__test__/yaml-test-suite.e2e.test.ts` runs the
-  official [yaml-test-suite](https://github.com/yaml/yaml-test-suite)
-  against our pipeline.
+- **unit** — `__test__/*.test.ts` exercises individual modules: lexer,
+  parser, composer, stringifier, formatting, equality, etc.
+- **int** — integration tests spanning multiple modules.
+- **e2e** — derived from the `*.e2e.test.ts` filename convention. The
+  compliance runner `__test__/yaml-test-suite.e2e.test.ts` carries this tag
+  and runs the official
+  [yaml-test-suite](https://github.com/yaml/yaml-test-suite) against our
+  pipeline.
 
 The compliance suite lives in a git submodule at
 `__test__/fixtures/yaml-test-suite/` pinned to the `data-2022-01-17` tag. If

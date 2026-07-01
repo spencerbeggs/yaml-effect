@@ -3,7 +3,7 @@
  *
  * @remarks
  * `visitCST()` walks YAML source text and emits a `Stream` of
- * {@link YamlCstVisitorEvent} values in document order.  `visitCSTCollect()`
+ * {@link (YamlCstVisitorEvent:type)} values in document order.  `visitCSTCollect()`
  * is a convenience wrapper that runs the stream to completion and returns only
  * the events matched by a caller-supplied predicate.
  *
@@ -475,7 +475,7 @@ function* walkDocument(doc: CstNode): Generator<YamlCstVisitorEvent> {
 
 /**
  * Walk YAML source text at the CST level and emit a `Stream` of
- * {@link YamlCstVisitorEvent} values in document order.
+ * {@link (YamlCstVisitorEvent:type)} values in document order.
  *
  * @remarks
  * The stream emits events for every CST node encountered during traversal,
@@ -528,7 +528,7 @@ export function visitCST(text: string): Stream.Stream<YamlCstVisitorEvent, never
 
 /**
  * Walk YAML source text at the CST level and collect the results of applying
- * `predicate` to each {@link YamlCstVisitorEvent}.
+ * `predicate` to each {@link (YamlCstVisitorEvent:type)}.
  *
  * @remarks
  * Only events for which `predicate` returns `Option.some(value)` are included

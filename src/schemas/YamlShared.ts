@@ -15,7 +15,7 @@ export const ScalarStyle = Schema.Literal("plain", "single-quoted", "double-quot
 /**
  * The union of all scalar style string literals.
  *
- * @see {@link ScalarStyle}
+ * @see {@link (ScalarStyle:variable)}
  *
  * @public
  */
@@ -30,7 +30,7 @@ export const CollectionStyle = Schema.Literal("block", "flow");
 /**
  * The union of all collection style string literals.
  *
- * @see {@link CollectionStyle}
+ * @see {@link (CollectionStyle:variable)}
  *
  * @public
  */

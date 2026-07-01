@@ -47,7 +47,7 @@ export interface YamlScanner {
 	 * @remarks
 	 * All block-structure state (indentation, flow depth, pending tokens) is
 	 * reset. For reliable results, pass an offset previously returned by
-	 * {@link getTokenOffset} rather than an arbitrary mid-token position.
+	 * {@link YamlScanner.getTokenOffset} rather than an arbitrary mid-token position.
 	 */
 	setPosition(pos: number): void;
 }
@@ -1512,7 +1512,7 @@ export function createScanner(text: string): YamlScanner {
 // ---------------------------------------------------------------------------
 
 /**
- * Tokenize a YAML source string into an Effect {@link Stream} of {@link YamlToken}.
+ * Tokenize a YAML source string into an Effect `Stream` of {@link YamlToken}.
  *
  * @remarks
  * Lexer errors are embedded as `"error"` tokens in the success channel; the

@@ -5,8 +5,8 @@ status: current
 module: yaml-effect
 category: testing
 created: 2026-03-14
-updated: 2026-04-29
-last-synced: 2026-04-29
+updated: 2026-07-01
+last-synced: 2026-07-01
 completeness: 95
 related:
   - architecture.md
@@ -22,8 +22,8 @@ The project integrates the official
 [yaml-test-suite](https://github.com/yaml/yaml-test-suite) to validate
 YAML 1.2 spec compliance. The suite contains ~440 test cases covering
 valid parsing, invalid rejection, JSON output matching, canonical output,
-and stringify round-tripping. It runs as a Vitest e2e project named
-`yaml-effect:e2e`, isolated from unit tests.
+and stringify round-tripping. It runs inside the single `yaml-effect`
+Vitest project, distinguished from unit tests by the `e2e` test tag.
 
 The library is at **100% raw compliance** (1226/1226 assertions, 0 SKIP,
 0 XFAIL, 0 SKIP_ASSERTIONS). Per-fixture canonical-output quirks that
@@ -56,21 +56,32 @@ git clone --recurse-submodules https://github.com/spencerbeggs/yaml-effect.git
 git submodule update --init
 ```
 
-### Vitest Project Isolation
+### Vitest Project and Test Tags
 
-Compliance tests run in a dedicated Vitest e2e project. The factory in
-`vitest.config.ts` (`@savvy-web/vitest`) splits tests into two projects:
+`vitest.config.ts` uses `@vitest-agent/plugin`. It awaits
+`AgentPlugin.discover()` to obtain `{ projects, tags }`, then wires the
+result into `defineConfig` with `plugins: [AgentPlugin({...})]`,
+`pool: "forks"` and coverage thresholds from `AgentPlugin.COVERAGE_LEVELS`.
+Discovery produces a single Vitest project named `yaml-effect` (confirm
+with `pnpm exec vitest list`) -- there is no separate `:unit` / `:e2e`
+project split.
 
-- `yaml-effect:unit` -- regular unit tests
-- `yaml-effect:e2e` -- the yaml-test-suite compliance runner
-  (`__test__/yaml-test-suite.e2e.test.ts`)
+Test types are distinguished by tags rather than project names. Discovery
+defines three tags: `unit`, `int` (timeout 60000) and `e2e` (timeout
+120000, retry 0). The `e2e` tag is derived from the `*.e2e.test.ts`
+filename convention, so `__test__/yaml-test-suite.e2e.test.ts` carries the
+`e2e` tag.
 
-The unit project excludes the e2e test so it does not run during normal
-unit test discovery:
+Coverage is always enabled in the config (thresholds from
+`AgentPlugin.COVERAGE_LEVELS`). Running only the e2e file trips the global
+coverage threshold and exits non-zero, so compliance-only invocations must
+pass `--coverage.enabled=false`. The `test:compliance` package script
+encodes this:
+`vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false`.
 
 ```bash
-pnpm run test               # unit tests + compliance
-pnpm run test:compliance    # compliance only
+pnpm run test               # all tests (unit + compliance)
+pnpm run test:compliance    # compliance only (coverage disabled)
 ```
 
 The skip-map module
@@ -244,8 +255,8 @@ The compliance suite runs as one big `describe` block, so you filter by
 test name:
 
 ```bash
-pnpm vitest run --project yaml-effect:e2e -t "229Q"
-pnpm vitest run --project yaml-effect:e2e -t "3RLN/01"
+pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false -t "229Q"
+pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false -t "3RLN/01"
 ```
 
 ### Working with Skip Map Entries
@@ -267,13 +278,13 @@ fix lands:
 
 ```bash
 # Run a single test case (escape brackets for regex)
-pnpm vitest run --project yaml-effect:e2e -t "\[229Q\]"
+pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false -t "\[229Q\]"
 
 # Multiple IDs (pipe-separated, still need bracket escaping)
-pnpm vitest run --project yaml-effect:e2e -t "\[DWX9\]|\[T26H\]"
+pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false -t "\[DWX9\]|\[T26H\]"
 
 # Multi-case IDs work too
-pnpm vitest run --project yaml-effect:e2e -t "\[L24T/00\]"
+pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --coverage.enabled=false -t "\[L24T/00\]"
 ```
 
 Note: Using unescaped `-t "229Q"` may match too broadly (any test
@@ -302,8 +313,10 @@ scalar decoder (`decodeBlockScalar`) separate from the lexer's
 Runs on every push to `main`:
 
 1. Checks out the repo with submodules
-2. Runs the e2e compliance project with `--reporter=json`:
-   `pnpm vitest run --project yaml-effect:e2e --reporter=json`
+2. Runs the e2e compliance file with `--reporter=json`, writing clean JSON
+   to an output file rather than stdout (which the agent console reporter
+   would otherwise pollute):
+   `pnpm exec vitest run __test__/yaml-test-suite.e2e.test.ts --reporter=json --outputFile=/tmp/compliance-results.json --coverage.enabled=false`
 3. A Node.js script computes a single compliance percentage from the
    1226 assertions in `__test__/yaml-test-suite.e2e.test.ts`. Because
    the skip map is empty, every assertion is a real pass/fail signal.
@@ -1127,6 +1140,6 @@ original style rather than the canonical block form.
 | `__test__/utils/canonical.ts` | Per-fixture canonical-output post-processing rules |
 | `__test__/debug-multiline.test.ts` | Multi-line plain scalar regression guards |
 | `__test__/fixtures/yaml-test-suite/` | Git submodule (data-2022-01-17) |
-| `vitest.config.ts` | `yaml-effect:unit` and `yaml-effect:e2e` projects |
+| `vitest.config.ts` | Single `yaml-effect` project; `unit`/`int`/`e2e` test tags via `@vitest-agent/plugin` |
 | `.github/workflows/compliance.yml` | Badge generation action |
 | `.gitmodules` | Submodule configuration |
