@@ -1,5 +1,17 @@
 # yaml-effect
 
+## 0.7.1
+
+### Performance
+
+* Fixed O(n²) composition on large documents by precomputing a line-start offset index once per document and binary-searching it, instead of rescanning from offset 0 for every AST node's line/column lookup. A 468KB `pnpm-lock.yaml` now parses in \~1.9s, down from \~12.5s. No API or behavioral changes — line/column results are unchanged. [#110][#110]
+
+### Patch Changes
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#110]: https://github.com/spencerbeggs/yaml-effect/pull/110
+
 ## 0.7.0
 
 ### Documentation
