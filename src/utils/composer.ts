@@ -22,18 +22,39 @@ import { parseCSTAll } from "./parser.js";
 // Line/column computation
 // ---------------------------------------------------------------------------
 
+// Single-entry memo keyed on the text reference: composition issues one
+// lineCol call per AST node against the same document string, so scanning
+// from offset 0 on every call made composition O(nodes × length). The index
+// is rebuilt only when a different text arrives (issue #108).
+let lineStartsText: string | undefined;
+let lineStartsCache: ReadonlyArray<number> = [];
+
+function getLineStarts(text: string): ReadonlyArray<number> {
+	if (lineStartsText === text) return lineStartsCache;
+	const starts = [0];
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] === "\n") starts.push(i + 1);
+	}
+	lineStartsText = text;
+	lineStartsCache = starts;
+	return starts;
+}
+
 function lineCol(text: string, offset: number): { line: number; column: number } {
-	let line = 0;
-	let column = 0;
-	for (let i = 0; i < offset && i < text.length; i++) {
-		if (text[i] === "\n") {
-			line++;
-			column = 0;
+	const starts = getLineStarts(text);
+	const pos = Math.min(Math.max(offset, 0), text.length);
+	// Binary search for the greatest line start <= pos.
+	let lo = 0;
+	let hi = starts.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (starts[mid] <= pos) {
+			lo = mid;
 		} else {
-			column++;
+			hi = mid - 1;
 		}
 	}
-	return { line, column };
+	return { line: lo, column: pos - starts[lo] };
 }
 
 // ---------------------------------------------------------------------------

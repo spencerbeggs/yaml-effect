@@ -364,6 +364,16 @@ structure. State and helpers:
   or an empty block-seq placeholder (length 0) or a `?`-only block-map
   sentinel. Used by the stray-dash check to allow KK5P-style explicit
   keys (`? - a`) where the parser shape includes such placeholders.
+- `lineCol(text, offset)` (shared helper) -- resolves an offset to
+  line/column via a module-level single-entry memo (`getLineStarts`):
+  line-start offsets are built in one O(n) pass and each call
+  binary-searches for the greatest line start `<= offset`, rebuilding
+  only when a different text string arrives. It previously scanned
+  from character 0 on every call (one per AST node), making
+  composition quadratic on large documents (issue #108). Offsets are
+  clamped to `[0, text.length]`; results are identical to the old
+  scan. `lineIndentColumn` is unaffected -- it only scans back to its
+  own line start.
 - `lineIndentColumn(text, offset)` (shared helper) -- returns the
   column of the first non-whitespace character on the line containing
   `offset`. Used in place of `lineCol(text, offset).column` whenever
