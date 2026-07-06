@@ -1,5 +1,15 @@
 # yaml-effect
 
+## 0.7.2
+
+### Bug Fixes
+
+* Force patch release to deprecate broken 0.7.1 version.
+
+### Patch Changes
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
 ## 0.7.1
 
 ### Performance
